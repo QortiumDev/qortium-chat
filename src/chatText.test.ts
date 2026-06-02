@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
 
 function base64(value: string) {
-  return Buffer.from(value, 'utf8').toString('base64');
+  return btoa(value);
 }
 
 describe('chat text helpers', () => {
