@@ -1,0 +1,28 @@
+{
+  "name": "qortium-chat",
+  "version": "0.1.0",
+  "private": true,
+  "license": "0BSD",
+  "description": "A small QDN chat app for Qortium Home.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "qdn:publish": "node scripts/publish-qdn.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "vite": "^7.2.4",
+    "typescript": "^5.9.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.6",
+    "@types/react-dom": "^19.2.3",
+    "vitest": "^4.0.17"
+  }
+}
