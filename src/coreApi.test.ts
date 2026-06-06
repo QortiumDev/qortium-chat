@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildActiveChatsPath,
-  buildDirectMessagesPath,
   buildGroupMessagesPath,
   buildGroupsPath,
   buildMemberGroupsPath,
@@ -42,9 +41,6 @@ describe('Core API path builders', () => {
   it('builds chat message paths', () => {
     expect(buildGroupMessagesPath(7)).toBe(
       '/chat/messages?txGroupId=7&encoding=BASE64&haschatreference=false&limit=100&reverse=true',
-    );
-    expect(buildDirectMessagesPath('Qone', 'Qtwo')).toBe(
-      '/chat/messages?encoding=BASE64&haschatreference=false&involving=Qone&limit=100&reverse=true&involving=Qtwo',
     );
   });
 
@@ -163,6 +159,13 @@ describe('Core API path builders', () => {
     });
   });
 
+  it('fails closed for closed-group message reads when private bridge support is absent', async () => {
+    await expect(
+      getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES']),
+    ).rejects.toThrow('Closed group chat reads require Qortium Home private group chat support.');
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
   it('routes direct private message reads through the direct bridge action', async () => {
     qdnRequestMock.mockResolvedValueOnce([
       { sender: 'Qb', timestamp: 20, txGroupId: 0 },
@@ -184,7 +187,7 @@ describe('Core API path builders', () => {
   });
 
   it('rejects direct private reads when direct bridge support is absent', async () => {
-    await expect(getDirectMessages('Qpeer', [])).rejects.toThrow(
+    await expect(getDirectMessages('Qpeer', ['FETCH_NODE_API'])).rejects.toThrow(
       'Direct private chat reads require Qortium Home direct chat support.',
     );
     expect(qdnRequestMock).not.toHaveBeenCalled();

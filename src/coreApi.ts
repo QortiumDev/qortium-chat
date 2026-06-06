@@ -73,20 +73,6 @@ export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIM
   return `/chat/messages?${query.toString()}`;
 }
 
-export function buildDirectMessagesPath(address: string, peerAddress: string, limit = DEFAULT_LIST_LIMIT) {
-  const query = new URLSearchParams({
-    encoding: 'BASE64',
-    haschatreference: 'false',
-    involving: address,
-    limit: String(limit),
-    reverse: 'true',
-  });
-
-  query.append('involving', peerAddress);
-
-  return `/chat/messages?${query.toString()}`;
-}
-
 export async function fetchNodeApiData<T>(path: string, label: string, maxBytes = DEFAULT_MAX_BYTES) {
   const result = await qdnRequest<NodeApiFetchResult<T>>({
     action: 'FETCH_NODE_API',
@@ -171,7 +157,11 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
     reverse: true,
   };
 
-  if (group.isOpen === false && hasBridgeAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')) {
+  if (group.isOpen === false) {
+    if (!hasBridgeAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')) {
+      throw new Error('Closed group chat reads require Qortium Home private group chat support.');
+    }
+
     const messages = await qdnRequest<ChatMessage[]>({
       action: 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
       ...messageRequest,
@@ -194,7 +184,7 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
   return sortMessages(messages);
 }
 
-export async function getDirectMessages(otherAddress: string, actions?: QdnAction[], accountAddress?: string) {
+export async function getDirectMessages(otherAddress: string, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
     const messages = await qdnRequest<ChatMessage[]>({
       action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
@@ -208,16 +198,7 @@ export async function getDirectMessages(otherAddress: string, actions?: QdnActio
     return sortMessages(messages);
   }
 
-  if (!accountAddress) {
-    throw new Error('Direct private chat reads require Qortium Home direct chat support.');
-  }
-
-  const messages = await fetchNodeApiData<ChatMessage[]>(
-    buildDirectMessagesPath(accountAddress, otherAddress),
-    'Direct messages',
-  );
-
-  return sortMessages(messages);
+  throw new Error('Direct private chat reads require Qortium Home direct chat support.');
 }
 
 export async function joinGroup(groupId: number) {

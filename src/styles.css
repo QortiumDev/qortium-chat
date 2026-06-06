@@ -90,6 +90,12 @@ input {
   background: #eaf6ec;
 }
 
+.status-pill--warning {
+  border-color: #d2b567;
+  color: #665017;
+  background: #fff6d7;
+}
+
 .layout {
   flex: 1;
   display: grid;
