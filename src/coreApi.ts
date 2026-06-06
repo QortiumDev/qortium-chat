@@ -4,11 +4,14 @@ import type {
   ChatActionResult,
   ChatMessage,
   GroupData,
+  GroupJoinRequest,
   GroupMember,
   GroupMembersResponse,
+  GroupWithJoinRequests,
   NodeApiFetchResult,
   NodeStatus,
   QdnAction,
+  TransactionStatus,
 } from './types';
 
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
@@ -74,6 +77,22 @@ export function buildGroupMembersPath(groupId: number, limit = DEFAULT_LIST_LIMI
   });
 
   return `/groups/members/${encodeURIComponent(String(groupId))}?${query.toString()}`;
+}
+
+export function buildAccountGroupJoinRequestsPath(address: string) {
+  return `/groups/joinrequests/address/${encodeURIComponent(address)}`;
+}
+
+export function buildAdminGroupJoinRequestsPath(address: string) {
+  return `/groups/joinrequests/admin/${encodeURIComponent(address)}`;
+}
+
+export function buildGroupJoinRequestsPath(groupId: number) {
+  return `/groups/joinrequests/${encodeURIComponent(String(groupId))}`;
+}
+
+export function buildTransactionStatusPath(signature: string) {
+  return `/transactions/signature/${encodeURIComponent(signature)}`;
 }
 
 export function buildActiveChatsPath(address: string) {
@@ -178,6 +197,43 @@ export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
   );
 }
 
+export async function getAccountGroupJoinRequests(address: string, actions?: QdnAction[]) {
+  if (hasBridgeAction(actions, 'GET_ACCOUNT_GROUP_JOIN_REQUESTS')) {
+    return qdnRequest<GroupJoinRequest[]>({
+      action: 'GET_ACCOUNT_GROUP_JOIN_REQUESTS',
+      address,
+    });
+  }
+
+  return fetchNodeApiData<GroupJoinRequest[]>(buildAccountGroupJoinRequestsPath(address), 'Join requests');
+}
+
+export async function getAdminGroupJoinRequests(address: string, actions?: QdnAction[]) {
+  if (hasBridgeAction(actions, 'GET_ADMIN_GROUP_JOIN_REQUESTS')) {
+    return qdnRequest<GroupWithJoinRequests[]>({
+      action: 'GET_ADMIN_GROUP_JOIN_REQUESTS',
+      address,
+    });
+  }
+
+  return fetchNodeApiData<GroupWithJoinRequests[]>(buildAdminGroupJoinRequestsPath(address), 'Admin join requests');
+}
+
+export async function getGroupJoinRequests(groupId: number, actions?: QdnAction[]) {
+  if (hasBridgeAction(actions, 'GET_GROUP_JOIN_REQUESTS')) {
+    return qdnRequest<GroupJoinRequest[]>({
+      action: 'GET_GROUP_JOIN_REQUESTS',
+      groupId,
+    });
+  }
+
+  return fetchNodeApiData<GroupJoinRequest[]>(buildGroupJoinRequestsPath(groupId), 'Group join requests');
+}
+
+export async function getTransactionStatus(signature: string) {
+  return fetchNodeApiData<TransactionStatus>(buildTransactionStatusPath(signature), 'Transaction status');
+}
+
 export async function getActiveChats(address: string, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_ACTIVE_CHATS')) {
     return qdnRequest<ActiveChats>({
@@ -261,6 +317,14 @@ export async function joinGroup(groupId: number) {
   return qdnRequest<ChatActionResult>({
     action: 'JOIN_GROUP',
     groupId,
+  });
+}
+
+export async function approveGroupJoinRequest(groupId: number, joiner: string) {
+  return qdnRequest<ChatActionResult>({
+    action: 'APPROVE_GROUP_JOIN_REQUEST',
+    groupId,
+    joiner,
   });
 }
 

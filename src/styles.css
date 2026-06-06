@@ -359,6 +359,52 @@ input {
   border-radius: 6px;
 }
 
+.join-requests {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #d6dbd1;
+  padding-top: 12px;
+}
+
+.join-requests__header,
+.join-request {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.join-requests__header strong {
+  font-size: 13px;
+}
+
+.join-requests__header span {
+  flex: 0 0 auto;
+}
+
+.join-request {
+  border: 1px solid #d5dcd2;
+  border-radius: 6px;
+  padding: 7px;
+  background: #ffffff;
+}
+
+.join-request span {
+  min-width: 0;
+  overflow: hidden;
+  color: #334138;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.join-request .button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 9px;
+}
+
 .message-list {
   min-height: 0;
   overflow: auto;
@@ -396,6 +442,55 @@ input {
 .message__body {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.tx-status-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0 0;
+}
+
+.tx-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 10px;
+  border: 1px solid #d5dcd2;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #ffffff;
+}
+
+.tx-status--pending {
+  border-left-color: #bf8b20;
+}
+
+.tx-status--confirmed {
+  border-left-color: #3f7d53;
+}
+
+.tx-status--failed {
+  border-left-color: #9b372d;
+}
+
+.tx-status strong {
+  font-size: 12px;
+}
+
+.tx-status span {
+  min-width: 0;
+  color: #334138;
+  font-size: 13px;
+}
+
+.tx-status small {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  color: #65716a;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer {

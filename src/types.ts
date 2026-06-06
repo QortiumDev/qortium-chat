@@ -67,6 +67,16 @@ export type GroupMembersResponse = {
   members?: GroupMember[];
 };
 
+export type GroupJoinRequest = {
+  groupId: number;
+  joiner: string;
+};
+
+export type GroupWithJoinRequests = {
+  group: GroupData;
+  joinRequests: GroupJoinRequest[];
+};
+
 export type ActiveGroupChat = {
   data?: string | null;
   groupId: number;
@@ -115,11 +125,21 @@ export type ChatMessage = {
 
 export type ChatActionResult = {
   accepted: boolean;
-  action: 'JOIN_GROUP' | 'SEND_CHAT_MESSAGE';
+  action: 'APPROVE_GROUP_JOIN_REQUEST' | 'JOIN_GROUP' | 'SEND_CHAT_MESSAGE';
   direct?: boolean;
   encrypted?: boolean;
   groupId?: number;
   groupName?: string | null;
+  invitee?: string;
   recipientAddress?: string;
   result: unknown;
+  transactionSignature?: string;
+};
+
+export type TransactionStatus = {
+  approvalStatus?: string;
+  blockHeight?: number | null;
+  signature?: string;
+  timestamp?: number;
+  type?: string;
 };

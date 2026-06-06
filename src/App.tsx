@@ -2,11 +2,15 @@ import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
+  approveGroupJoinRequest,
   getActiveChats,
+  getAccountGroupJoinRequests,
+  getAdminGroupJoinRequests,
   getDirectMessages,
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
+  getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
   searchGroups,
@@ -21,6 +25,8 @@ import type {
   BridgeState,
   ChatMessage,
   GroupData,
+  GroupJoinRequest,
+  GroupWithJoinRequests,
   GroupMember,
   QdnSelectedAccount,
 } from './types';
@@ -33,6 +39,8 @@ type AsyncState<T> =
 const emptyGroups: GroupData[] = [];
 const emptyMembers: GroupMember[] = [];
 const emptyMessages: ChatMessage[] = [];
+const emptyJoinRequests: GroupJoinRequest[] = [];
+const emptyAdminJoinRequests: GroupWithJoinRequests[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
 
 type SelectedChat =
@@ -44,6 +52,17 @@ type SelectedChat =
       direct: ActiveDirectChat;
       kind: 'direct';
     };
+
+type TrackedTransaction = {
+  action: 'approve' | 'join';
+  groupId: number;
+  groupName: string;
+  id: string;
+  joiner?: string;
+  message: string;
+  phase: 'confirmed' | 'failed' | 'pending';
+  signature?: string;
+};
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -314,6 +333,10 @@ export default function App() {
   const [accountError, setAccountError] = useState('');
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [groupMembers, setGroupMembers] = useState<AsyncState<GroupMember[]>>(createState(emptyMembers));
+  const [accountJoinRequests, setAccountJoinRequests] =
+    useState<AsyncState<GroupJoinRequest[]>>(createState(emptyJoinRequests));
+  const [adminJoinRequests, setAdminJoinRequests] =
+    useState<AsyncState<GroupWithJoinRequests[]>>(createState(emptyAdminJoinRequests));
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
@@ -322,9 +345,11 @@ export default function App() {
   const [draft, setDraft] = useState('');
   const [directAddress, setDirectAddress] = useState('');
   const [joinPending, setJoinPending] = useState(false);
+  const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
   const [writeError, setWriteError] = useState('');
   const [membersOpen, setMembersOpen] = useState(true);
+  const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
 
   const joinedIds = useMemo(
     () => new Set(memberGroups.value.map((group) => group.groupId)),
@@ -335,6 +360,28 @@ export default function App() {
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
   const selectedDirectAddress = selectedDirect?.address ?? null;
+  const pendingJoinGroupIds = useMemo(
+    () => new Set(accountJoinRequests.value.map((request) => request.groupId)),
+    [accountJoinRequests.value],
+  );
+  const pendingTrackedJoinGroupIds = useMemo(
+    () =>
+      new Set(
+        Object.values(trackedTransactions)
+          .filter((transaction) => transaction.action === 'join' && transaction.phase === 'pending')
+          .map((transaction) => transaction.groupId),
+      ),
+    [trackedTransactions],
+  );
+  const adminJoinRequestGroups = useMemo(
+    () => new Map(adminJoinRequests.value.map((entry) => [entry.group.groupId, entry])),
+    [adminJoinRequests.value],
+  );
+  const selectedAdminJoinRequests =
+    selectedGroupId === null ? [] : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
+  const selectedTransactions = Object.values(trackedTransactions).filter(
+    (transaction) => selectedGroupId !== null && transaction.groupId === selectedGroupId,
+  );
   const selectedChatKey = selectedChat
     ? selectedChat.kind === 'group'
       ? `group:${selectedChat.group.groupId}`
@@ -343,6 +390,7 @@ export default function App() {
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
   const canJoinGroup = hasAction(actions, 'JOIN_GROUP');
+  const canApproveGroupJoinRequests = hasAction(actions, 'APPROVE_GROUP_JOIN_REQUEST');
   const canSendGroupChat = hasAction(actions, 'SEND_CHAT_MESSAGE');
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
@@ -350,7 +398,10 @@ export default function App() {
   const canSendDirectChat = canSendGroupChat;
   const canOpenDirectChat = !!account && (canReadPrivateDirectChat || canSendDirectChat);
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
-  const isJoinableGroup = selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup;
+  const hasPendingJoinRequest = selectedGroupId !== null && pendingJoinGroupIds.has(selectedGroupId);
+  const hasPendingJoinTransaction = selectedGroupId !== null && pendingTrackedJoinGroupIds.has(selectedGroupId);
+  const isJoinableGroup =
+    selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && !hasPendingJoinRequest && !hasPendingJoinTransaction;
   const canSubmitJoin = !!account && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
   const canComposeMessage =
     !!account &&
@@ -412,8 +463,10 @@ export default function App() {
     }
   }
 
-  async function loadGroupMembers(group: GroupData, actionList = actions) {
-    setGroupMembers({ phase: 'loading', value: groupMembers.value });
+  async function loadGroupMembers(group: GroupData, actionList = actions, options: { quiet?: boolean } = {}) {
+    if (!options.quiet) {
+      setGroupMembers({ phase: 'loading', value: groupMembers.value });
+    }
 
     try {
       setGroupMembers({ phase: 'ready', value: await getGroupMembers(group.groupId, actionList) });
@@ -422,6 +475,52 @@ export default function App() {
         error: getBridgeErrorMessage(error, 'Unable to load group members.'),
         phase: 'error',
         value: groupMembers.value,
+      });
+    }
+  }
+
+  async function loadAccountJoinRequests(
+    selectedAccount: QdnSelectedAccount,
+    actionList = actions,
+    options: { quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setAccountJoinRequests({ phase: 'loading', value: accountJoinRequests.value });
+    }
+
+    try {
+      setAccountJoinRequests({
+        phase: 'ready',
+        value: await getAccountGroupJoinRequests(selectedAccount.address, actionList),
+      });
+    } catch (error) {
+      setAccountJoinRequests({
+        error: getBridgeErrorMessage(error, 'Unable to load pending join requests.'),
+        phase: 'error',
+        value: accountJoinRequests.value,
+      });
+    }
+  }
+
+  async function loadAdminJoinRequests(
+    selectedAccount: QdnSelectedAccount,
+    actionList = actions,
+    options: { quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setAdminJoinRequests({ phase: 'loading', value: adminJoinRequests.value });
+    }
+
+    try {
+      setAdminJoinRequests({
+        phase: 'ready',
+        value: await getAdminGroupJoinRequests(selectedAccount.address, actionList),
+      });
+    } catch (error) {
+      setAdminJoinRequests({
+        error: getBridgeErrorMessage(error, 'Unable to load group join approvals.'),
+        phase: 'error',
+        value: adminJoinRequests.value,
       });
     }
   }
@@ -454,6 +553,9 @@ export default function App() {
         value: activeChats.value,
       });
     }
+
+    void loadAccountJoinRequests(selectedAccount, actionList);
+    void loadAdminJoinRequests(selectedAccount, actionList);
   }
 
   async function loadMessages(chat: SelectedChat | null, actionList = actions) {
@@ -502,8 +604,14 @@ export default function App() {
     setWriteError('');
 
     try {
-      await joinGroup(selectedGroup.groupId);
-      await loadGroups(search);
+      const result = await joinGroup(selectedGroup.groupId);
+
+      trackTransaction({
+        action: 'join',
+        group: selectedGroup,
+        message: selectedGroup.isOpen === false ? 'Join request submitted' : 'Join submitted',
+        result,
+      });
 
       if (account) {
         await loadAccountData(account);
@@ -514,6 +622,65 @@ export default function App() {
     } finally {
       setJoinPending(false);
     }
+  }
+
+  async function handleApproveJoinRequest(request: GroupJoinRequest) {
+    if (!selectedGroup || !canApproveGroupJoinRequests || approvePendingJoiner) {
+      return;
+    }
+
+    setApprovePendingJoiner(request.joiner);
+    setWriteError('');
+
+    try {
+      const result = await approveGroupJoinRequest(request.groupId, request.joiner);
+
+      trackTransaction({
+        action: 'approve',
+        group: selectedGroup,
+        joiner: request.joiner,
+        message: 'Approval submitted',
+        result,
+      });
+
+      if (account) {
+        await loadAdminJoinRequests(account);
+      }
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, 'Unable to approve join request.'));
+    } finally {
+      setApprovePendingJoiner(null);
+    }
+  }
+
+  function trackTransaction({
+    action,
+    group,
+    joiner,
+    message,
+    result,
+  }: {
+    action: TrackedTransaction['action'];
+    group: GroupData;
+    joiner?: string;
+    message: string;
+    result: { transactionSignature?: string };
+  }) {
+    const id = result.transactionSignature || `${action}:${group.groupId}:${Date.now()}`;
+
+    setTrackedTransactions((current) => ({
+      ...current,
+      [id]: {
+        action,
+        groupId: group.groupId,
+        groupName: getGroupTitle(group),
+        id,
+        joiner,
+        message: result.transactionSignature ? message : `${message}; waiting for node status`,
+        phase: 'pending',
+        signature: result.transactionSignature,
+      },
+    }));
   }
 
   async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
@@ -588,6 +755,8 @@ export default function App() {
       setAccount(null);
       setAccountError(getBridgeErrorMessage(error, 'Selected account unavailable.'));
       setMemberGroups({ phase: 'ready', value: emptyGroups });
+      setAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
+      setAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
       setActiveChats({ phase: 'ready', value: emptyActiveChats });
       return null;
     }
@@ -613,9 +782,88 @@ export default function App() {
     void connectSelectedAccount(nextActions);
   }
 
+  async function refreshAfterTrackedTransaction(transaction: TrackedTransaction) {
+    await loadGroups(search);
+
+    if (account) {
+      await loadAccountData(account);
+    }
+
+    if (selectedGroup?.groupId === transaction.groupId) {
+      await loadGroupMembers(selectedGroup);
+    }
+  }
+
   useEffect(() => {
     void initializeSession();
   }, []);
+
+  useEffect(() => {
+    const pendingTransactions = Object.values(trackedTransactions).filter(
+      (transaction) => transaction.phase === 'pending' && transaction.signature,
+    );
+
+    if (pendingTransactions.length === 0) {
+      return undefined;
+    }
+
+    let isDisposed = false;
+
+    async function checkPendingTransactions() {
+      for (const transaction of pendingTransactions) {
+        if (!transaction.signature) {
+          continue;
+        }
+
+        try {
+          const status = await getTransactionStatus(transaction.signature);
+
+          if (isDisposed) {
+            return;
+          }
+
+          if (typeof status.blockHeight === 'number' && status.blockHeight > 0) {
+            setTrackedTransactions((current) => ({
+              ...current,
+              [transaction.id]: {
+                ...transaction,
+                message: transaction.action === 'approve' ? 'Approval confirmed' : 'Join transaction confirmed',
+                phase: 'confirmed',
+              },
+            }));
+            void refreshAfterTrackedTransaction(transaction);
+          }
+        } catch (error) {
+          if (isDisposed) {
+            return;
+          }
+
+          const message = getBridgeErrorMessage(error, 'Unable to check transaction status.');
+
+          if (!/TRANSACTION_UNKNOWN|transaction unknown|HTTP 404/i.test(message)) {
+            setTrackedTransactions((current) => ({
+              ...current,
+              [transaction.id]: {
+                ...transaction,
+                message,
+                phase: 'failed',
+              },
+            }));
+          }
+        }
+      }
+    }
+
+    void checkPendingTransactions();
+    const interval = window.setInterval(() => {
+      void checkPendingTransactions();
+    }, 5000);
+
+    return () => {
+      isDisposed = true;
+      window.clearInterval(interval);
+    };
+  }, [Object.values(trackedTransactions).map((transaction) => `${transaction.id}:${transaction.phase}`).join('|')]);
 
   useEffect(() => {
     if (!selectedChat) {
@@ -704,6 +952,31 @@ export default function App() {
 
     return () => socket.close();
   }, [account?.address]);
+
+  useEffect(() => {
+    if (!account) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      void loadAccountJoinRequests(account, actions, { quiet: true });
+      void loadAdminJoinRequests(account, actions, { quiet: true });
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [account?.address, actionsKey]);
+
+  useEffect(() => {
+    if (!selectedGroup) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      void loadGroupMembers(selectedGroup, actions, { quiet: true });
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [selectedGroupId, actionsKey]);
 
   return (
     <main className="app-shell">
@@ -805,6 +1078,7 @@ export default function App() {
                       ? 'Closed / private read'
                       : 'Closed / private history unavailable'
                     : 'Open'}
+                  {hasPendingJoinTransaction ? ' / join pending' : hasPendingJoinRequest ? ' / request pending' : ''}
                   {typeof selectedChat.group.memberCount === 'number'
                     ? ` / ${selectedChat.group.memberCount.toLocaleString()} members`
                     : ''}
@@ -827,21 +1101,29 @@ export default function App() {
                   {membersOpen ? 'Hide members' : `Members (${groupMembers.value.length})`}
                 </button>
               ) : null}
-              {selectedChat?.kind === 'group' && isJoinableGroup && canJoinGroup ? (
+              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && canJoinGroup ? (
                 <button
                   className="button button--secondary"
                   disabled={!canSubmitJoin}
                   onClick={() => void handleJoinGroup()}
                   title={
-                    isJoinedGroup
-                      ? 'Already joined'
-                      : canJoinGroup
-                        ? 'Join group'
-                        : groupJoinUnavailableLabel
+                    hasPendingJoinTransaction
+                      ? 'Join transaction is pending'
+                      : hasPendingJoinRequest
+                        ? 'Join request is pending'
+                        : canJoinGroup
+                          ? 'Join group'
+                          : groupJoinUnavailableLabel
                   }
                   type="button"
                 >
-                  {joinPending ? 'Joining' : 'Join'}
+                  {joinPending
+                    ? 'Joining'
+                    : hasPendingJoinTransaction
+                      ? 'Join pending'
+                      : hasPendingJoinRequest
+                        ? 'Request pending'
+                        : 'Join'}
                 </button>
               ) : null}
             </div>
@@ -849,9 +1131,28 @@ export default function App() {
 
           {messages.phase === 'error' ? <p className="error">{messages.error}</p> : null}
           {writeError ? <p className="error">{writeError}</p> : null}
+          {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
+          {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
           {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">Closed group chat history requires Qortium Home private group chat support.</p>
+          ) : null}
+          {selectedTransactions.length > 0 ? (
+            <div className="tx-status-list" aria-label="Transaction status">
+              {selectedTransactions.map((transaction) => (
+                <div className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
+                  <strong>
+                    {transaction.phase === 'confirmed'
+                      ? 'Confirmed'
+                      : transaction.phase === 'failed'
+                        ? 'Failed'
+                        : 'Pending'}
+                  </strong>
+                  <span>{transaction.message}</span>
+                  {transaction.signature ? <small>{transaction.signature}</small> : null}
+                </div>
+              ))}
+            </div>
           ) : null}
 
           <MessageList messages={messages.value} />
@@ -895,6 +1196,28 @@ export default function App() {
             </div>
             {groupMembers.phase === 'error' ? <p className="error">{groupMembers.error}</p> : null}
             <GroupMemberList members={groupMembers.value} />
+            {selectedAdminJoinRequests.length > 0 ? (
+              <div className="join-requests" aria-label="Pending join requests">
+                <div className="join-requests__header">
+                  <strong>Join requests</strong>
+                  <span>{selectedAdminJoinRequests.length}</span>
+                </div>
+                {selectedAdminJoinRequests.map((request) => (
+                  <div className="join-request" key={`${request.groupId}:${request.joiner}`}>
+                    <span>{getShortAddress(request.joiner)}</span>
+                    <button
+                      className="button button--secondary"
+                      disabled={!canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
+                      onClick={() => void handleApproveJoinRequest(request)}
+                      title={canApproveGroupJoinRequests ? 'Approve join request' : 'Update Qortium Home to approve join requests'}
+                      type="button"
+                    >
+                      {approvePendingJoiner === request.joiner ? 'Approving' : 'Approve'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </aside>
         ) : null}
       </section>
