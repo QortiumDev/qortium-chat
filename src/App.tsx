@@ -1,7 +1,10 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  buildActiveChatsWebSocketUrl,
+  buildGroupMessagesWebSocketUrl,
   getActiveChats,
   getDirectMessages,
+  getGroupMembers,
   getGroupMessages,
   getMemberGroups,
   getNodeStatus,
@@ -19,6 +22,7 @@ import type {
   BridgeState,
   ChatMessage,
   GroupData,
+  GroupMember,
   NodeStatus,
   QdnSelectedAccount,
 } from './types';
@@ -29,6 +33,7 @@ type AsyncState<T> =
   | { phase: 'ready'; value: T };
 
 const emptyGroups: GroupData[] = [];
+const emptyMembers: GroupMember[] = [];
 const emptyMessages: ChatMessage[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
 
@@ -44,6 +49,37 @@ type SelectedChat =
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function getBridgeErrorMessage(error: unknown, fallback: string) {
+  const message = getErrorMessage(error, fallback).replace(
+    /^Error invoking remote method 'qdn-app:request': Error: /,
+    '',
+  );
+
+  if (message.includes('Account request was denied')) {
+    return 'Account access was not shared.';
+  }
+
+  if (message.includes('QDN write request was denied')) {
+    return 'Request was not approved in Qortium Home.';
+  }
+
+  return message;
+}
+
+function getAccountMessage(error: string, isHomeBridge: boolean) {
+  if (error.includes('No account is selected')) {
+    return 'Select an account for this tab in Qortium Home.';
+  }
+
+  if (error.includes('Account access was not shared')) {
+    return 'Share the selected account to join groups or send messages.';
+  }
+
+  return isHomeBridge
+    ? 'Share the selected account to join groups or send messages.'
+    : 'Open in Qortium Home to join groups or send messages.';
 }
 
 function createState<T>(value: T): AsyncState<T> {
@@ -62,6 +98,16 @@ function getDirectTitle(direct: ActiveDirectChat) {
   return direct.name || getShortAddress(direct.address);
 }
 
+function getMemberAddress(member: GroupMember) {
+  return member.address || member.member || '';
+}
+
+function getMemberLabel(member: GroupMember) {
+  const address = getMemberAddress(member);
+
+  return member.primaryName || member.name || (address ? getShortAddress(address) : 'Member');
+}
+
 function sortGroups(groups: GroupData[]) {
   return [...groups].sort((first, second) => {
     const firstName = getGroupTitle(first).toLocaleLowerCase();
@@ -69,6 +115,40 @@ function sortGroups(groups: GroupData[]) {
 
     return firstName.localeCompare(secondName);
   });
+}
+
+function sortMessages(messages: ChatMessage[]) {
+  return [...messages].sort((first, second) => first.timestamp - second.timestamp);
+}
+
+function getMessageKey(message: ChatMessage, index = 0) {
+  return message.signature || `${message.timestamp}-${message.sender}-${index}`;
+}
+
+function mergeMessages(currentMessages: ChatMessage[], nextMessages: ChatMessage[]) {
+  const messages = new Map<string, ChatMessage>();
+
+  for (const [index, message] of currentMessages.entries()) {
+    messages.set(getMessageKey(message, index), message);
+  }
+
+  for (const [index, message] of nextMessages.entries()) {
+    messages.set(getMessageKey(message, index), message);
+  }
+
+  return sortMessages([...messages.values()]).slice(-100);
+}
+
+function parseChatMessages(value: unknown) {
+  const parsed = typeof value === 'string' ? JSON.parse(value) as unknown : value;
+
+  return Array.isArray(parsed) ? parsed.filter((message): message is ChatMessage => !!message) : [];
+}
+
+function parseActiveChats(value: unknown) {
+  const parsed = typeof value === 'string' ? JSON.parse(value) as unknown : value;
+
+  return parsed && typeof parsed === 'object' ? parsed as ActiveChats : emptyActiveChats;
 }
 
 function formatNodeStatus(status: NodeStatus | null) {
@@ -83,7 +163,17 @@ function formatNodeStatus(status: NodeStatus | null) {
   return [phase, height ? `height ${height}` : '', percent].filter(Boolean).join(' / ') || 'Node connected';
 }
 
-function AccountSummary({ account, error }: { account: QdnSelectedAccount | null; error: string }) {
+function AccountSummary({
+  account,
+  error,
+  isHomeBridge,
+  onConnect,
+}: {
+  account: QdnSelectedAccount | null;
+  error: string;
+  isHomeBridge: boolean;
+  onConnect: () => void;
+}) {
   if (account) {
     return (
       <div className="account-summary">
@@ -102,7 +192,16 @@ function AccountSummary({ account, error }: { account: QdnSelectedAccount | null
     );
   }
 
-  return <p className="muted">{error || 'No selected account'}</p>;
+  return (
+    <div className="account-connect">
+      <p className="muted">{getAccountMessage(error, isHomeBridge)}</p>
+      {isHomeBridge ? (
+        <button className="button button--secondary" onClick={onConnect} type="button">
+          Use selected account
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 function GroupList({
@@ -185,7 +284,7 @@ function MessageList({ messages }: { messages: ChatMessage[] }) {
     <ol className="message-list">
       {messages.map((message, index) => {
         const decoded = decodeChatMessage(message);
-        const signature = message.signature || `${message.timestamp}-${index}`;
+        const signature = getMessageKey(message, index);
 
         return (
           <li className={`message message--${decoded.kind}`} key={signature}>
@@ -201,6 +300,26 @@ function MessageList({ messages }: { messages: ChatMessage[] }) {
   );
 }
 
+function GroupMemberList({ members }: { members: GroupMember[] }) {
+  if (members.length === 0) {
+    return <p className="empty">No members loaded</p>;
+  }
+
+  return (
+    <div className="member-list">
+      {members.slice(0, 24).map((member) => {
+        const address = getMemberAddress(member);
+
+        return (
+          <span className="member-chip" key={address || getMemberLabel(member)} title={address}>
+            {getMemberLabel(member)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function App() {
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({ actions: [], isHomeBridge: false, ui: 'BROWSER_DEV' }));
   const [account, setAccount] = useState<QdnSelectedAccount | null>(null);
@@ -209,6 +328,7 @@ export default function App() {
   const [nodeError, setNodeError] = useState('');
   const [isPublicNode, setIsPublicNode] = useState(false);
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
+  const [groupMembers, setGroupMembers] = useState<AsyncState<GroupMember[]>>(createState(emptyMembers));
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
@@ -235,6 +355,7 @@ export default function App() {
       : `direct:${selectedChat.direct.address}`
     : '';
   const actions = bridge.value.actions;
+  const actionsKey = actions.join('\n');
   const canJoinGroup = hasAction(actions, 'JOIN_GROUP');
   const canSendGroupChat = hasAction(actions, 'SEND_CHAT_MESSAGE');
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
@@ -252,7 +373,7 @@ export default function App() {
   const canSubmitMessage =
     canComposeMessage && draft.trim().length > 0 && !sendPending;
   const accountRequiredLabel = bridge.value.isHomeBridge
-    ? 'Approve a selected account in Qortium Home to use account-scoped chat actions.'
+    ? 'Share the selected account to use chat actions.'
     : 'Open in Qortium Home to use account-scoped chat actions.';
   const directAccessUnavailableLabel = !account
     ? accountRequiredLabel
@@ -291,7 +412,7 @@ export default function App() {
       setNodeError('');
       setNodeStatus(await getNodeStatus());
     } catch (error) {
-      setNodeError(getErrorMessage(error, 'Unable to load node status.'));
+      setNodeError(getBridgeErrorMessage(error, 'Unable to load node status.'));
     }
   }
 
@@ -320,9 +441,23 @@ export default function App() {
       }
     } catch (error) {
       setGroups({
-        error: getErrorMessage(error, 'Unable to load groups.'),
+        error: getBridgeErrorMessage(error, 'Unable to load groups.'),
         phase: 'error',
         value: groups.value,
+      });
+    }
+  }
+
+  async function loadGroupMembers(group: GroupData, actionList = actions) {
+    setGroupMembers({ phase: 'loading', value: groupMembers.value });
+
+    try {
+      setGroupMembers({ phase: 'ready', value: await getGroupMembers(group.groupId, actionList) });
+    } catch (error) {
+      setGroupMembers({
+        error: getBridgeErrorMessage(error, 'Unable to load group members.'),
+        phase: 'error',
+        value: groupMembers.value,
       });
     }
   }
@@ -335,7 +470,7 @@ export default function App() {
       setMemberGroups({ phase: 'ready', value: await getMemberGroups(selectedAccount.address, actionList) });
     } catch (error) {
       setMemberGroups({
-        error: getErrorMessage(error, 'Unable to load joined groups.'),
+        error: getBridgeErrorMessage(error, 'Unable to load joined groups.'),
         phase: 'error',
         value: memberGroups.value,
       });
@@ -350,7 +485,7 @@ export default function App() {
       setActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct } });
     } catch (error) {
       setActiveChats({
-        error: getErrorMessage(error, 'Unable to load active chats.'),
+        error: getBridgeErrorMessage(error, 'Unable to load active chats.'),
         phase: 'error',
         value: activeChats.value,
       });
@@ -387,7 +522,7 @@ export default function App() {
       setMessages({ phase: 'ready', value: nextMessages });
     } catch (error) {
       setMessages({
-        error: getErrorMessage(error, 'Unable to load messages.'),
+        error: getBridgeErrorMessage(error, 'Unable to load messages.'),
         phase: 'error',
         value: messages.value,
       });
@@ -409,8 +544,9 @@ export default function App() {
       if (account) {
         await loadAccountData(account);
       }
+      await loadGroupMembers(selectedGroup);
     } catch (error) {
-      setWriteError(getErrorMessage(error, 'Unable to join group.'));
+      setWriteError(getBridgeErrorMessage(error, 'Unable to join group.'));
     } finally {
       setJoinPending(false);
     }
@@ -443,7 +579,7 @@ export default function App() {
 
       await loadMessages(chat);
     } catch (error) {
-      setWriteError(getErrorMessage(error, 'Unable to send chat message.'));
+      setWriteError(getBridgeErrorMessage(error, 'Unable to send chat message.'));
     } finally {
       setSendPending(false);
     }
@@ -477,10 +613,25 @@ export default function App() {
     });
   }
 
-  async function refreshSession() {
+  async function connectSelectedAccount(actionList = actions) {
+    try {
+      const selectedAccount = await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' });
+      setAccount(selectedAccount);
+      setAccountError('');
+      void loadAccountData(selectedAccount, actionList);
+      return selectedAccount;
+    } catch (error) {
+      setAccount(null);
+      setAccountError(getBridgeErrorMessage(error, 'Selected account unavailable.'));
+      setMemberGroups({ phase: 'ready', value: emptyGroups });
+      setActiveChats({ phase: 'ready', value: emptyActiveChats });
+      return null;
+    }
+  }
+
+  async function initializeSession() {
     setBridge({ phase: 'loading', value: bridge.value });
     let nextActions = bridge.value.actions;
-    let nextAccount: QdnSelectedAccount | null = null;
 
     try {
       const nextBridge = await getBridgeState();
@@ -488,55 +639,109 @@ export default function App() {
       setBridge({ phase: 'ready', value: nextBridge });
     } catch (error) {
       setBridge({
-        error: getErrorMessage(error, 'Unable to inspect QDN bridge.'),
+        error: getBridgeErrorMessage(error, 'Unable to inspect QDN bridge.'),
         phase: 'error',
         value: bridge.value,
       });
     }
 
-    try {
-      nextAccount = await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' });
-      setAccount(nextAccount);
-      setAccountError('');
-    } catch (error) {
-      setAccount(null);
-      setAccountError(getErrorMessage(error, 'Selected account unavailable.'));
-      setMemberGroups({ phase: 'ready', value: emptyGroups });
-      setActiveChats({ phase: 'ready', value: emptyActiveChats });
-    }
-
     void refreshNodeStatus();
     void refreshNodeMode(nextActions);
     void loadGroups(search, nextActions);
-
-    if (nextAccount) {
-      void loadAccountData(nextAccount, nextActions);
-    }
-
-    if (selectedChat) {
-      void loadMessages(selectedChat, nextActions);
-    }
+    void connectSelectedAccount(nextActions);
   }
 
   useEffect(() => {
-    void refreshSession();
+    void initializeSession();
   }, []);
 
   useEffect(() => {
-    void loadMessages(selectedChat);
-  }, [selectedChatKey]);
-
-  useEffect(() => {
     if (!selectedChat) {
+      setMessages({ phase: 'ready', value: emptyMessages });
+      setGroupMembers({ phase: 'ready', value: emptyMembers });
       return undefined;
     }
 
-    const intervalId = window.setInterval(() => {
-      void loadMessages(selectedChat);
-    }, 15_000);
+    if (selectedChat.kind === 'group') {
+      void loadGroupMembers(selectedChat.group);
+    } else {
+      setGroupMembers({ phase: 'ready', value: emptyMembers });
+    }
 
-    return () => window.clearInterval(intervalId);
-  }, [selectedChatKey]);
+    if (selectedChat.kind !== 'group' || selectedChat.group.isOpen === false) {
+      void loadMessages(selectedChat);
+      return undefined;
+    }
+
+    const chat = selectedChat;
+    const socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId));
+    let receivedInitialMessages = false;
+
+    setMessages({ phase: 'loading', value: messages.value });
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const nextMessages = parseChatMessages(event.data);
+
+        if (!receivedInitialMessages) {
+          receivedInitialMessages = true;
+          setMessages({ phase: 'ready', value: sortMessages(nextMessages) });
+          return;
+        }
+
+        setMessages((current) => ({
+          phase: 'ready',
+          value: mergeMessages(current.value, nextMessages),
+        }));
+      } catch (error) {
+        setMessages({
+          error: getBridgeErrorMessage(error, 'Unable to read live chat messages.'),
+          phase: 'error',
+          value: messages.value,
+        });
+      }
+    });
+
+    socket.addEventListener('error', () => {
+      if (!receivedInitialMessages) {
+        void loadMessages(chat);
+      }
+    });
+
+    socket.addEventListener('close', () => {
+      if (!receivedInitialMessages) {
+        void loadMessages(chat);
+      }
+    });
+
+    return () => socket.close();
+  }, [selectedChatKey, actionsKey]);
+
+  useEffect(() => {
+    if (!account) {
+      return undefined;
+    }
+
+    const socket = new WebSocket(buildActiveChatsWebSocketUrl(account.address));
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const nextActiveChats = parseActiveChats(event.data);
+
+        setActiveChats((current) => ({
+          phase: 'ready',
+          value: {
+            ...current.value,
+            groups: nextActiveChats.groups ?? current.value.groups,
+          },
+        }));
+      } catch {
+        // Keep the last active-chat snapshot.
+      }
+    });
+
+    return () => socket.close();
+  }, [account?.address]);
 
   return (
     <main className="app-shell">
@@ -550,9 +755,6 @@ export default function App() {
             {bridge.value.isHomeBridge ? bridge.value.ui : 'Local dev'}
           </span>
           {isPublicNode ? <span className="status-pill status-pill--warning">Public node</span> : null}
-          <button className="button" onClick={() => void refreshSession()} type="button">
-            Refresh session
-          </button>
         </div>
       </header>
 
@@ -560,7 +762,12 @@ export default function App() {
         <aside className="sidebar" aria-label="Navigation">
           <section className="panel">
             <h2>Account</h2>
-            <AccountSummary account={account} error={accountError} />
+            <AccountSummary
+              account={account}
+              error={accountError}
+              isHomeBridge={bridge.value.isHomeBridge}
+              onConnect={() => void connectSelectedAccount()}
+            />
           </section>
 
           <section className="panel">
@@ -675,14 +882,6 @@ export default function App() {
                   {joinPending ? 'Joining' : 'Join'}
                 </button>
               ) : null}
-              <button
-                className="button"
-                disabled={!selectedChat}
-                onClick={() => void loadMessages(selectedChat)}
-                type="button"
-              >
-                Reload
-              </button>
             </div>
           </div>
 
@@ -692,6 +891,16 @@ export default function App() {
           {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">Closed group chat history requires Qortium Home private group chat support.</p>
+          ) : null}
+          {selectedGroup ? (
+            <section className="members-panel" aria-label="Group members">
+              <div className="members-panel__header">
+                <strong>Members</strong>
+                <span>{groupMembers.value.length}</span>
+              </div>
+              {groupMembers.phase === 'error' ? <p className="error">{groupMembers.error}</p> : null}
+              <GroupMemberList members={groupMembers.value} />
+            </section>
           ) : null}
 
           <MessageList messages={messages.value} />

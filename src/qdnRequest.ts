@@ -18,8 +18,20 @@ type QdnRequest = {
   [key: string]: unknown;
 };
 
-function getLocalNodeApiUrl() {
+export function getNodeApiUrl() {
   return (import.meta.env.VITE_QORTIUM_NODE_API_URL || DEFAULT_NODE_API_URL).replace(/\/+$/, '');
+}
+
+export function buildNodeWebSocketUrl(path: string) {
+  const baseUrl =
+    typeof window !== 'undefined' && hasHomeBridge()
+      ? window.location.origin
+      : getNodeApiUrl();
+  const url = new URL(path, baseUrl);
+
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+
+  return url.toString();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,7 +88,7 @@ function getContentLength(response: Response, bodyLength: number) {
 async function fetchLocalNodeApi(request: QdnRequest): Promise<NodeApiFetchResult> {
   const method = sanitizeReadMethod(request.method);
   const apiPath = sanitizeNodePath(request.path);
-  const response = await fetch(`${getLocalNodeApiUrl()}${apiPath}`, { method });
+  const response = await fetch(`${getNodeApiUrl()}${apiPath}`, { method });
   const contentType = response.headers.get('content-type') ?? '';
   const body = method === 'HEAD' ? '' : await response.text();
   const bodyLength = new TextEncoder().encode(body).byteLength;

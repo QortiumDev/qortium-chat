@@ -50,6 +50,23 @@ export type GroupData = {
   updated?: number | null;
 };
 
+export type GroupMember = {
+  address?: string;
+  isAdmin?: boolean;
+  joined?: number;
+  member?: string;
+  name?: string | null;
+  online?: boolean;
+  primaryName?: string | null;
+};
+
+export type GroupMembersResponse = {
+  adminCount?: number;
+  groupMembers?: GroupMember[];
+  memberCount?: number;
+  members?: GroupMember[];
+};
+
 export type ActiveGroupChat = {
   data?: string | null;
   groupId: number;

@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildActiveChatsPath,
+  buildActiveChatsWebSocketUrl,
   buildGroupMessagesPath,
+  buildGroupMessagesWebSocketUrl,
   buildGroupsPath,
+  buildGroupMembersPath,
   buildMemberGroupsPath,
   getActiveChats,
   getDirectMessages,
+  getGroupMembers,
   getGroupMessages,
   getMemberGroups,
   getPrivateDirectActiveChats,
@@ -18,6 +22,7 @@ import {
 const qdnRequestMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./qdnRequest', () => ({
+  buildNodeWebSocketUrl: (path: string) => `ws://127.0.0.1:24891${path}`,
   qdnRequest: qdnRequestMock,
 }));
 
@@ -35,12 +40,19 @@ describe('Core API path builders', () => {
 
   it('builds account scoped paths', () => {
     expect(buildMemberGroupsPath('Qabc')).toBe('/groups/member/Qabc');
+    expect(buildGroupMembersPath(7)).toBe('/groups/members/7?limit=100&reverse=false');
     expect(buildActiveChatsPath('Qabc')).toBe('/chat/active/Qabc?encoding=BASE64&haschatreference=false');
   });
 
   it('builds chat message paths', () => {
     expect(buildGroupMessagesPath(7)).toBe(
       '/chat/messages?txGroupId=7&encoding=BASE64&haschatreference=false&limit=100&reverse=true',
+    );
+    expect(buildGroupMessagesWebSocketUrl(7)).toBe(
+      'ws://127.0.0.1:24891/websockets/chat/messages?txGroupId=7&encoding=BASE64&limit=100&reverse=true',
+    );
+    expect(buildActiveChatsWebSocketUrl('Qabc')).toBe(
+      'ws://127.0.0.1:24891/websockets/chat/active/Qabc?encoding=BASE64&haschatreference=false',
     );
   });
 
@@ -104,6 +116,23 @@ describe('Core API path builders', () => {
       address: 'Qabc',
       encoding: 'BASE64',
       hasChatReference: false,
+    });
+  });
+
+  it('uses the group members bridge action when available', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      memberCount: 1,
+      members: [{ member: 'Qmember', primaryName: 'Member Name' }],
+    });
+
+    await expect(getGroupMembers(9, ['GET_GROUP_MEMBERS'])).resolves.toEqual([
+      { member: 'Qmember', primaryName: 'Member Name' },
+    ]);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'GET_GROUP_MEMBERS',
+      groupId: 9,
+      limit: 100,
+      reverse: false,
     });
   });
 
