@@ -39,10 +39,11 @@ input {
 }
 
 .topbar h1,
-.topbar p,
 .panel h2,
 .chat-pane h2,
-.chat-pane p {
+.chat-pane p,
+.members-drawer h2,
+.members-drawer p {
   margin: 0;
 }
 
@@ -51,7 +52,6 @@ input {
   font-weight: 720;
 }
 
-.topbar p,
 .chat-pane p,
 .muted,
 .empty,
@@ -60,7 +60,7 @@ input {
   color: #65716a;
 }
 
-.topbar__status,
+.topbar__account,
 .panel__header,
 .chat-pane__header,
 .chat-pane__actions,
@@ -71,36 +71,15 @@ input {
   gap: 10px;
 }
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 4px 10px;
-  border: 1px solid #b7c1b8;
-  border-radius: 999px;
-  color: #4d5b52;
-  background: #f7f7f4;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.status-pill--ready {
-  border-color: #76a984;
-  color: #265f35;
-  background: #eaf6ec;
-}
-
-.status-pill--warning {
-  border-color: #d2b567;
-  color: #665017;
-  background: #fff6d7;
-}
-
 .layout {
   flex: 1;
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   min-height: 0;
+}
+
+.layout--members-open {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(240px, 300px);
 }
 
 .sidebar {
@@ -132,6 +111,28 @@ input {
   gap: 10px;
   min-width: 0;
   margin-top: 12px;
+}
+
+.topbar__account {
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.topbar__account .account-summary {
+  max-width: min(420px, 48vw);
+  margin-top: 0;
+}
+
+.topbar__account .account-connect {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, 54vw);
+  margin-top: 0;
+}
+
+.topbar__account .account-connect .muted {
+  margin: 0;
 }
 
 .account-summary__avatar {
@@ -298,18 +299,34 @@ input {
   border-bottom: 1px solid #d6dbd1;
 }
 
-.members-panel {
+.members-drawer {
+  min-height: 0;
+  overflow: auto;
   display: grid;
-  gap: 8px;
-  padding: 12px 0;
+  align-content: start;
+  gap: 12px;
+  padding: 18px 16px;
+  border-left: 1px solid #d6dbd1;
+  background: #fbfbf8;
+}
+
+.members-drawer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
   border-bottom: 1px solid #d6dbd1;
 }
 
-.members-panel__header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: #46524a;
+.members-drawer h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.members-drawer p,
+.members-drawer__header span {
+  color: #65716a;
   font-size: 13px;
 }
 
@@ -317,6 +334,11 @@ input {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.members-drawer .member-list {
+  display: grid;
+  align-content: start;
 }
 
 .member-chip {
@@ -330,6 +352,11 @@ input {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.members-drawer .member-chip {
+  max-width: none;
+  border-radius: 6px;
 }
 
 .message-list {
@@ -394,9 +421,18 @@ input {
     display: block;
   }
 
-  .topbar__status,
+  .topbar__account,
   .chat-pane__actions {
     margin-top: 12px;
+  }
+
+  .topbar__account {
+    justify-content: flex-start;
+  }
+
+  .topbar__account .account-summary,
+  .topbar__account .account-connect {
+    max-width: none;
   }
 
   .layout {
@@ -409,5 +445,10 @@ input {
 
   .chat-pane {
     min-height: 65vh;
+  }
+
+  .members-drawer {
+    border-top: 1px solid #d6dbd1;
+    border-left: 0;
   }
 }
