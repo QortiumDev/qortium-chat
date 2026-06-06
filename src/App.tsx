@@ -7,7 +7,6 @@ import {
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
-  getNodeStatus,
   getPrivateDirectActiveChats,
   joinGroup,
   searchGroups,
@@ -23,7 +22,6 @@ import type {
   ChatMessage,
   GroupData,
   GroupMember,
-  NodeStatus,
   QdnSelectedAccount,
 } from './types';
 
@@ -151,18 +149,6 @@ function parseActiveChats(value: unknown) {
   return parsed && typeof parsed === 'object' ? parsed as ActiveChats : emptyActiveChats;
 }
 
-function formatNodeStatus(status: NodeStatus | null) {
-  if (!status) {
-    return 'Node status unavailable';
-  }
-
-  const phase = typeof status.syncPhase === 'string' ? status.syncPhase : '';
-  const height = typeof status.height === 'number' ? status.height.toLocaleString() : '';
-  const percent = typeof status.syncPercent === 'number' ? `${status.syncPercent.toFixed(1)}%` : '';
-
-  return [phase, height ? `height ${height}` : '', percent].filter(Boolean).join(' / ') || 'Node connected';
-}
-
 function AccountSummary({
   account,
   error,
@@ -175,6 +161,8 @@ function AccountSummary({
   onConnect: () => void;
 }) {
   if (account) {
+    const label = account.name || getShortAddress(account.address);
+
     return (
       <div className="account-summary">
         {account.avatarUrl ? (
@@ -185,7 +173,7 @@ function AccountSummary({
           </span>
         )}
         <div className="account-summary__text">
-          <strong>{account.name || 'Selected account'}</strong>
+          <strong>{label}</strong>
           <span>{account.address}</span>
         </div>
       </div>
@@ -324,9 +312,6 @@ export default function App() {
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({ actions: [], isHomeBridge: false, ui: 'BROWSER_DEV' }));
   const [account, setAccount] = useState<QdnSelectedAccount | null>(null);
   const [accountError, setAccountError] = useState('');
-  const [nodeStatus, setNodeStatus] = useState<NodeStatus | null>(null);
-  const [nodeError, setNodeError] = useState('');
-  const [isPublicNode, setIsPublicNode] = useState(false);
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [groupMembers, setGroupMembers] = useState<AsyncState<GroupMember[]>>(createState(emptyMembers));
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
@@ -339,6 +324,7 @@ export default function App() {
   const [joinPending, setJoinPending] = useState(false);
   const [sendPending, setSendPending] = useState(false);
   const [writeError, setWriteError] = useState('');
+  const [membersOpen, setMembersOpen] = useState(true);
 
   const joinedIds = useMemo(
     () => new Set(memberGroups.value.map((group) => group.groupId)),
@@ -406,28 +392,6 @@ export default function App() {
     selectedChat?.kind === 'direct' && !canReadPrivateDirectChat;
   const selectedClosedGroupHistoryUnavailable =
     selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !canReadPrivateGroupChat;
-
-  async function refreshNodeStatus() {
-    try {
-      setNodeError('');
-      setNodeStatus(await getNodeStatus());
-    } catch (error) {
-      setNodeError(getBridgeErrorMessage(error, 'Unable to load node status.'));
-    }
-  }
-
-  async function refreshNodeMode(actionList = actions) {
-    if (!hasAction(actionList, 'IS_USING_PUBLIC_NODE')) {
-      setIsPublicNode(false);
-      return;
-    }
-
-    try {
-      setIsPublicNode(await qdnRequest<boolean>({ action: 'IS_USING_PUBLIC_NODE' }));
-    } catch {
-      setIsPublicNode(false);
-    }
-  }
 
   async function loadGroups(nextSearch = search, actionList = actions) {
     setGroups({ phase: 'loading', value: groups.value });
@@ -645,8 +609,6 @@ export default function App() {
       });
     }
 
-    void refreshNodeStatus();
-    void refreshNodeMode(nextActions);
     void loadGroups(search, nextActions);
     void connectSelectedAccount(nextActions);
   }
@@ -746,30 +708,21 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
+        <div className="topbar__title">
           <h1>Qortium Chat</h1>
-          <p>{formatNodeStatus(nodeStatus)}</p>
         </div>
-        <div className="topbar__status">
-          <span className={`status-pill${bridge.value.isHomeBridge ? ' status-pill--ready' : ''}`}>
-            {bridge.value.isHomeBridge ? bridge.value.ui : 'Local dev'}
-          </span>
-          {isPublicNode ? <span className="status-pill status-pill--warning">Public node</span> : null}
+        <div className="topbar__account">
+          <AccountSummary
+            account={account}
+            error={accountError}
+            isHomeBridge={bridge.value.isHomeBridge}
+            onConnect={() => void connectSelectedAccount()}
+          />
         </div>
       </header>
 
-      <section className="layout">
+      <section className={`layout${selectedGroup && membersOpen ? ' layout--members-open' : ''}`}>
         <aside className="sidebar" aria-label="Navigation">
-          <section className="panel">
-            <h2>Account</h2>
-            <AccountSummary
-              account={account}
-              error={accountError}
-              isHomeBridge={bridge.value.isHomeBridge}
-              onConnect={() => void connectSelectedAccount()}
-            />
-          </section>
-
           <section className="panel">
             <div className="panel__header">
               <h2>Groups</h2>
@@ -865,6 +818,15 @@ export default function App() {
               ) : null}
             </div>
             <div className="chat-pane__actions">
+              {selectedChat?.kind === 'group' ? (
+                <button
+                  className="button button--secondary"
+                  onClick={() => setMembersOpen((current) => !current)}
+                  type="button"
+                >
+                  {membersOpen ? 'Hide members' : `Members (${groupMembers.value.length})`}
+                </button>
+              ) : null}
               {selectedChat?.kind === 'group' && isJoinableGroup && canJoinGroup ? (
                 <button
                   className="button button--secondary"
@@ -885,22 +847,11 @@ export default function App() {
             </div>
           </div>
 
-          {nodeError ? <p className="error">{nodeError}</p> : null}
           {messages.phase === 'error' ? <p className="error">{messages.error}</p> : null}
           {writeError ? <p className="error">{writeError}</p> : null}
           {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">Closed group chat history requires Qortium Home private group chat support.</p>
-          ) : null}
-          {selectedGroup ? (
-            <section className="members-panel" aria-label="Group members">
-              <div className="members-panel__header">
-                <strong>Members</strong>
-                <span>{groupMembers.value.length}</span>
-              </div>
-              {groupMembers.phase === 'error' ? <p className="error">{groupMembers.error}</p> : null}
-              <GroupMemberList members={groupMembers.value} />
-            </section>
           ) : null}
 
           <MessageList messages={messages.value} />
@@ -932,6 +883,20 @@ export default function App() {
             </button>
           </form>
         </section>
+
+        {selectedGroup && membersOpen ? (
+          <aside className="members-drawer" aria-label="Group members">
+            <div className="members-drawer__header">
+              <div>
+                <h2>Members</h2>
+                <p>{getGroupTitle(selectedGroup)}</p>
+              </div>
+              <span>{groupMembers.value.length}</span>
+            </div>
+            {groupMembers.phase === 'error' ? <p className="error">{groupMembers.error}</p> : null}
+            <GroupMemberList members={groupMembers.value} />
+          </aside>
+        ) : null}
       </section>
     </main>
   );
