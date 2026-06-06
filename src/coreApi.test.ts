@@ -2,16 +2,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildActiveChatsPath,
   buildActiveChatsWebSocketUrl,
+  buildAccountGroupJoinRequestsPath,
+  buildAdminGroupJoinRequestsPath,
   buildGroupMessagesPath,
   buildGroupMessagesWebSocketUrl,
   buildGroupsPath,
+  buildGroupJoinRequestsPath,
   buildGroupMembersPath,
   buildMemberGroupsPath,
+  buildTransactionStatusPath,
+  approveGroupJoinRequest,
   getActiveChats,
+  getAccountGroupJoinRequests,
+  getAdminGroupJoinRequests,
   getDirectMessages,
+  getGroupJoinRequests,
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
+  getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
   searchGroups,
@@ -41,6 +50,9 @@ describe('Core API path builders', () => {
   it('builds account scoped paths', () => {
     expect(buildMemberGroupsPath('Qabc')).toBe('/groups/member/Qabc');
     expect(buildGroupMembersPath(7)).toBe('/groups/members/7?limit=100&reverse=false');
+    expect(buildAccountGroupJoinRequestsPath('Qabc')).toBe('/groups/joinrequests/address/Qabc');
+    expect(buildAdminGroupJoinRequestsPath('Qabc')).toBe('/groups/joinrequests/admin/Qabc');
+    expect(buildGroupJoinRequestsPath(7)).toBe('/groups/joinrequests/7');
     expect(buildActiveChatsPath('Qabc')).toBe('/chat/active/Qabc?encoding=BASE64&haschatreference=false');
   });
 
@@ -54,6 +66,7 @@ describe('Core API path builders', () => {
     expect(buildActiveChatsWebSocketUrl('Qabc')).toBe(
       'ws://127.0.0.1:24891/websockets/chat/active/Qabc?encoding=BASE64&haschatreference=false',
     );
+    expect(buildTransactionStatusPath('sig/with+chars')).toBe('/transactions/signature/sig%2Fwith%2Bchars');
   });
 
   it('prefers native group bridge actions when available', async () => {
@@ -133,6 +146,37 @@ describe('Core API path builders', () => {
       groupId: 9,
       limit: 100,
       reverse: false,
+    });
+  });
+
+  it('uses group join-request bridge actions when available', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce([{ groupId: 12, joiner: 'Qjoiner' }])
+      .mockResolvedValueOnce([{ group: { groupId: 12, groupName: 'Private' }, joinRequests: [] }])
+      .mockResolvedValueOnce([{ groupId: 12, joiner: 'Qjoiner' }]);
+
+    await expect(getAccountGroupJoinRequests('Qabc', ['GET_ACCOUNT_GROUP_JOIN_REQUESTS'])).resolves.toEqual([
+      { groupId: 12, joiner: 'Qjoiner' },
+    ]);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'GET_ACCOUNT_GROUP_JOIN_REQUESTS',
+      address: 'Qabc',
+    });
+
+    await expect(getAdminGroupJoinRequests('Qadmin', ['GET_ADMIN_GROUP_JOIN_REQUESTS'])).resolves.toEqual([
+      { group: { groupId: 12, groupName: 'Private' }, joinRequests: [] },
+    ]);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'GET_ADMIN_GROUP_JOIN_REQUESTS',
+      address: 'Qadmin',
+    });
+
+    await expect(getGroupJoinRequests(12, ['GET_GROUP_JOIN_REQUESTS'])).resolves.toEqual([
+      { groupId: 12, joiner: 'Qjoiner' },
+    ]);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
+      action: 'GET_GROUP_JOIN_REQUESTS',
+      groupId: 12,
     });
   });
 
@@ -224,7 +268,21 @@ describe('Core API path builders', () => {
 
   it('builds Home write bridge requests for group joins and sends', async () => {
     qdnRequestMock
-      .mockResolvedValueOnce({ accepted: true, action: 'JOIN_GROUP', groupId: 9, result: true })
+      .mockResolvedValueOnce({
+        accepted: true,
+        action: 'JOIN_GROUP',
+        groupId: 9,
+        result: true,
+        transactionSignature: 'sig',
+      })
+      .mockResolvedValueOnce({
+        accepted: true,
+        action: 'APPROVE_GROUP_JOIN_REQUEST',
+        groupId: 9,
+        invitee: 'Qjoiner',
+        result: true,
+        transactionSignature: 'sig2',
+      })
       .mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', groupId: 9, result: true })
       .mockResolvedValueOnce({
         accepted: true,
@@ -240,12 +298,24 @@ describe('Core API path builders', () => {
       groupId: 9,
     });
 
+    await expect(approveGroupJoinRequest(9, 'Qjoiner')).resolves.toMatchObject({
+      accepted: true,
+      action: 'APPROVE_GROUP_JOIN_REQUEST',
+      groupId: 9,
+      invitee: 'Qjoiner',
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'APPROVE_GROUP_JOIN_REQUEST',
+      groupId: 9,
+      joiner: 'Qjoiner',
+    });
+
     await expect(sendChatMessage(9, 'hello')).resolves.toMatchObject({
       accepted: true,
       action: 'SEND_CHAT_MESSAGE',
       groupId: 9,
     });
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
       action: 'SEND_CHAT_MESSAGE',
       groupId: 9,
       message: 'hello',
@@ -257,10 +327,28 @@ describe('Core API path builders', () => {
       direct: true,
       recipientAddress: 'Qpeer',
     });
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(4, {
       action: 'SEND_CHAT_MESSAGE',
       message: 'hello direct',
       recipientAddress: 'Qpeer',
+    });
+  });
+
+  it('fetches transaction status through FETCH_NODE_API', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      body: '{"blockHeight":123}',
+      contentType: 'application/json',
+      data: { blockHeight: 123, signature: 'sig' },
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getTransactionStatus('sig')).resolves.toEqual({ blockHeight: 123, signature: 'sig' });
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/transactions/signature/sig',
     });
   });
 });
