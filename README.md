@@ -33,6 +33,28 @@ By default the publish helper uploads `dist/` as
 the ignored preview API key and local preview account files under
 `~/git/qortium/preview`.
 
+## Qortium Home Smoke Check
+
+Before publishing a new QDN build:
+
+```sh
+npm test
+npm run build
+```
+
+Then open `qdn://APP/QortiumHomeTest/qortium-chat` in Qortium Home with a local
+node selected and an unlocked tab account. Confirm that the status pill reports
+Home, account approval succeeds, group search loads, joined groups and active
+direct chats load, group join/send requests open Home approval prompts, direct
+chat can be opened by address, and direct private send/read requests use Home's
+approval bridge.
+
+For a publish pass, confirm the local Core is fully synchronized before running
+`npm run qdn:publish`. The expected identified render URL is
+`http://127.0.0.1:24891/render/APP/QortiumHomeTest?identifier=qortium-chat`,
+and the published resource should report `READY` at
+`/arbitrary/resource/status/APP/QortiumHomeTest/qortium-chat?build=true`.
+
 ## Current Limits
 
 This app does not handle private keys or transaction signing directly. Group
