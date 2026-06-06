@@ -1,9 +1,11 @@
-import { qdnRequest } from './qdnRequest';
+import { buildNodeWebSocketUrl, qdnRequest } from './qdnRequest';
 import type {
   ActiveChats,
   ChatActionResult,
   ChatMessage,
   GroupData,
+  GroupMember,
+  GroupMembersResponse,
   NodeApiFetchResult,
   NodeStatus,
   QdnAction,
@@ -36,6 +38,14 @@ function sortMessages(messages: ChatMessage[]) {
   return [...messages].sort((first, second) => first.timestamp - second.timestamp);
 }
 
+function normalizeGroupMembers(response: GroupMember[] | GroupMembersResponse) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  return response.members ?? response.groupMembers ?? [];
+}
+
 export function buildGroupsPath(search: string, limit = DEFAULT_LIST_LIMIT) {
   const trimmedSearch = search.trim();
   const query = new URLSearchParams();
@@ -57,6 +67,15 @@ export function buildMemberGroupsPath(address: string) {
   return `/groups/member/${encodeURIComponent(address)}`;
 }
 
+export function buildGroupMembersPath(groupId: number, limit = DEFAULT_LIST_LIMIT) {
+  const query = new URLSearchParams({
+    limit: String(limit),
+    reverse: 'false',
+  });
+
+  return `/groups/members/${encodeURIComponent(String(groupId))}?${query.toString()}`;
+}
+
 export function buildActiveChatsPath(address: string) {
   return `/chat/active/${encodeURIComponent(address)}?encoding=BASE64&haschatreference=false`;
 }
@@ -71,6 +90,26 @@ export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIM
   });
 
   return `/chat/messages?${query.toString()}`;
+}
+
+export function buildGroupMessagesWebSocketUrl(groupId: number, limit = DEFAULT_LIST_LIMIT) {
+  const query = new URLSearchParams({
+    txGroupId: String(groupId),
+    encoding: 'BASE64',
+    limit: String(limit),
+    reverse: 'true',
+  });
+
+  return buildNodeWebSocketUrl(`/websockets/chat/messages?${query.toString()}`);
+}
+
+export function buildActiveChatsWebSocketUrl(address: string) {
+  const query = new URLSearchParams({
+    encoding: 'BASE64',
+    haschatreference: 'false',
+  });
+
+  return buildNodeWebSocketUrl(`/websockets/chat/active/${encodeURIComponent(address)}?${query.toString()}`);
 }
 
 export async function fetchNodeApiData<T>(path: string, label: string, maxBytes = DEFAULT_MAX_BYTES) {
@@ -120,6 +159,23 @@ export async function getMemberGroups(address: string, actions?: QdnAction[]) {
   }
 
   return fetchNodeApiData<GroupData[]>(buildMemberGroupsPath(address), 'Member groups');
+}
+
+export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
+  if (hasBridgeAction(actions, 'GET_GROUP_MEMBERS')) {
+    const response = await qdnRequest<GroupMember[] | GroupMembersResponse>({
+      action: 'GET_GROUP_MEMBERS',
+      groupId,
+      limit: DEFAULT_LIST_LIMIT,
+      reverse: false,
+    });
+
+    return normalizeGroupMembers(response);
+  }
+
+  return normalizeGroupMembers(
+    await fetchNodeApiData<GroupMember[] | GroupMembersResponse>(buildGroupMembersPath(groupId), 'Group members'),
+  );
 }
 
 export async function getActiveChats(address: string, actions?: QdnAction[]) {

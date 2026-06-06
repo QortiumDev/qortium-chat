@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getBridgeState, hasAction, LOCAL_READ_ACTIONS, qdnRequest } from './qdnRequest';
+import { buildNodeWebSocketUrl, getBridgeState, hasAction, LOCAL_READ_ACTIONS, qdnRequest } from './qdnRequest';
 
 describe('qdnRequest bridge adapter', () => {
   afterEach(() => {
@@ -31,5 +31,11 @@ describe('qdnRequest bridge adapter', () => {
   it('matches Home action names case-insensitively', () => {
     expect(hasAction(['send_chat_message'], 'SEND_CHAT_MESSAGE')).toBe(true);
     expect(hasAction(['FETCH_NODE_API'], 'JOIN_GROUP')).toBe(false);
+  });
+
+  it('builds local node websocket URLs outside Home', () => {
+    expect(buildNodeWebSocketUrl('/websockets/chat/messages?txGroupId=0')).toBe(
+      'ws://127.0.0.1:24891/websockets/chat/messages?txGroupId=0',
+    );
   });
 });
