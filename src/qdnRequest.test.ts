@@ -25,6 +25,7 @@ describe('qdnRequest bridge adapter', () => {
     vi.stubGlobal('window', {});
 
     await expect(qdnRequest({ action: 'SHOW_ACTIONS' })).resolves.toEqual([...LOCAL_READ_ACTIONS]);
+    expect(LOCAL_READ_ACTIONS).not.toContain('GET_SELECTED_ACCOUNT');
   });
 
   it('matches Home action names case-insensitively', () => {

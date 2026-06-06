@@ -207,6 +207,7 @@ export default function App() {
   const [accountError, setAccountError] = useState('');
   const [nodeStatus, setNodeStatus] = useState<NodeStatus | null>(null);
   const [nodeError, setNodeError] = useState('');
+  const [isPublicNode, setIsPublicNode] = useState(false);
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
@@ -239,8 +240,8 @@ export default function App() {
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
-  const canSendDirectChat = canSendGroupChat && canReadPrivateDirectChat;
-  const canOpenDirectChat = !!account && canReadPrivateDirectChat;
+  const canSendDirectChat = canSendGroupChat;
+  const canOpenDirectChat = !!account && (canReadPrivateDirectChat || canSendDirectChat);
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
   const isJoinableGroup = selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup;
   const canSubmitJoin = !!account && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
@@ -253,11 +254,16 @@ export default function App() {
   const accountRequiredLabel = bridge.value.isHomeBridge
     ? 'Approve a selected account in Qortium Home to use account-scoped chat actions.'
     : 'Open in Qortium Home to use account-scoped chat actions.';
+  const directAccessUnavailableLabel = !account
+    ? accountRequiredLabel
+    : bridge.value.isHomeBridge
+      ? 'Direct chat is not available in this Home build.'
+      : 'Open in Qortium Home to use direct chat.';
   const directReadUnavailableLabel = !account
     ? accountRequiredLabel
     : bridge.value.isHomeBridge
-      ? 'Direct private chat reads are not available in this Home build.'
-      : 'Open in Qortium Home to read direct private chats.';
+      ? 'Direct private chat history is not available in this Home build.'
+      : 'Open in Qortium Home to read direct private chat history.';
   const directListUnavailableLabel =
     'Active direct chat listing is unavailable; enter an address to open a direct chat.';
   const directSendUnavailableLabel = !account
@@ -275,6 +281,10 @@ export default function App() {
     : bridge.value.isHomeBridge
       ? 'Group chat send is not available in this Home build.'
       : 'Open in Qortium Home to send group chat messages.';
+  const selectedDirectHistoryUnavailable =
+    selectedChat?.kind === 'direct' && !canReadPrivateDirectChat;
+  const selectedClosedGroupHistoryUnavailable =
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !canReadPrivateGroupChat;
 
   async function refreshNodeStatus() {
     try {
@@ -282,6 +292,19 @@ export default function App() {
       setNodeStatus(await getNodeStatus());
     } catch (error) {
       setNodeError(getErrorMessage(error, 'Unable to load node status.'));
+    }
+  }
+
+  async function refreshNodeMode(actionList = actions) {
+    if (!hasAction(actionList, 'IS_USING_PUBLIC_NODE')) {
+      setIsPublicNode(false);
+      return;
+    }
+
+    try {
+      setIsPublicNode(await qdnRequest<boolean>({ action: 'IS_USING_PUBLIC_NODE' }));
+    } catch {
+      setIsPublicNode(false);
     }
   }
 
@@ -342,10 +365,24 @@ export default function App() {
     setMessages({ phase: 'loading', value: messages.value });
 
     try {
+      if (chat.kind === 'direct' && !hasAction(actionList, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
+        setMessages({ phase: 'ready', value: emptyMessages });
+        return;
+      }
+
+      if (
+        chat.kind === 'group' &&
+        chat.group.isOpen === false &&
+        !hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')
+      ) {
+        setMessages({ phase: 'ready', value: emptyMessages });
+        return;
+      }
+
       const nextMessages =
         chat.kind === 'group'
           ? await getGroupMessages(chat.group, actionList)
-          : await getDirectMessages(chat.direct.address, actionList, account?.address);
+          : await getDirectMessages(chat.direct.address, actionList);
 
       setMessages({ phase: 'ready', value: nextMessages });
     } catch (error) {
@@ -440,54 +477,49 @@ export default function App() {
     });
   }
 
-  useEffect(() => {
-    let disposed = false;
+  async function refreshSession() {
+    setBridge({ phase: 'loading', value: bridge.value });
+    let nextActions = bridge.value.actions;
+    let nextAccount: QdnSelectedAccount | null = null;
 
-    async function initialize() {
-      setBridge({ phase: 'loading', value: bridge.value });
-      let nextActions = bridge.value.actions;
-
-      try {
-        const nextBridge = await getBridgeState();
-        nextActions = nextBridge.actions;
-        if (!disposed) {
-          setBridge({ phase: 'ready', value: nextBridge });
-        }
-      } catch (error) {
-        if (!disposed) {
-          setBridge({
-            error: getErrorMessage(error, 'Unable to inspect QDN bridge.'),
-            phase: 'error',
-            value: bridge.value,
-          });
-        }
-      }
-
-      try {
-        const selectedAccount = await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' });
-        if (!disposed) {
-          setAccount(selectedAccount);
-          setAccountError('');
-          void loadAccountData(selectedAccount, nextActions);
-        }
-      } catch (error) {
-        if (!disposed) {
-          setAccount(null);
-          setAccountError(getErrorMessage(error, 'Selected account unavailable.'));
-        }
-      }
-
-      if (!disposed) {
-        void refreshNodeStatus();
-        void loadGroups('', nextActions);
-      }
+    try {
+      const nextBridge = await getBridgeState();
+      nextActions = nextBridge.actions;
+      setBridge({ phase: 'ready', value: nextBridge });
+    } catch (error) {
+      setBridge({
+        error: getErrorMessage(error, 'Unable to inspect QDN bridge.'),
+        phase: 'error',
+        value: bridge.value,
+      });
     }
 
-    void initialize();
+    try {
+      nextAccount = await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' });
+      setAccount(nextAccount);
+      setAccountError('');
+    } catch (error) {
+      setAccount(null);
+      setAccountError(getErrorMessage(error, 'Selected account unavailable.'));
+      setMemberGroups({ phase: 'ready', value: emptyGroups });
+      setActiveChats({ phase: 'ready', value: emptyActiveChats });
+    }
 
-    return () => {
-      disposed = true;
-    };
+    void refreshNodeStatus();
+    void refreshNodeMode(nextActions);
+    void loadGroups(search, nextActions);
+
+    if (nextAccount) {
+      void loadAccountData(nextAccount, nextActions);
+    }
+
+    if (selectedChat) {
+      void loadMessages(selectedChat, nextActions);
+    }
+  }
+
+  useEffect(() => {
+    void refreshSession();
   }, []);
 
   useEffect(() => {
@@ -517,8 +549,9 @@ export default function App() {
           <span className={`status-pill${bridge.value.isHomeBridge ? ' status-pill--ready' : ''}`}>
             {bridge.value.isHomeBridge ? bridge.value.ui : 'Local dev'}
           </span>
-          <button className="button" onClick={() => void refreshNodeStatus()} type="button">
-            Refresh
+          {isPublicNode ? <span className="status-pill status-pill--warning">Public node</span> : null}
+          <button className="button" onClick={() => void refreshSession()} type="button">
+            Refresh session
           </button>
         </div>
       </header>
@@ -577,14 +610,14 @@ export default function App() {
               <button
                 className="button"
                 disabled={!canOpenDirectChat || !directAddress.trim()}
-                title={canOpenDirectChat ? 'Open direct chat' : directReadUnavailableLabel}
+                title={canOpenDirectChat ? 'Open direct chat' : directAccessUnavailableLabel}
                 type="submit"
               >
                 Open
               </button>
             </form>
             {activeChats.phase === 'error' ? <p className="error">{activeChats.error}</p> : null}
-            {!canOpenDirectChat ? <p className="muted">{directReadUnavailableLabel}</p> : null}
+            {!canOpenDirectChat ? <p className="muted">{directAccessUnavailableLabel}</p> : null}
             {canOpenDirectChat && !canLoadPrivateDirectChats ? <p className="muted">{directListUnavailableLabel}</p> : null}
             <DirectList
               activeChats={activeChats.value}
@@ -610,17 +643,22 @@ export default function App() {
                   {selectedChat.group.isOpen === false
                     ? canReadPrivateGroupChat
                       ? 'Closed / private read'
-                      : 'Closed'
+                      : 'Closed / private history unavailable'
                     : 'Open'}
                   {typeof selectedChat.group.memberCount === 'number'
                     ? ` / ${selectedChat.group.memberCount.toLocaleString()} members`
                     : ''}
                 </p>
               ) : null}
-              {selectedChat?.kind === 'direct' ? <p>Direct / private read / {selectedChat.direct.address}</p> : null}
+              {selectedChat?.kind === 'direct' ? (
+                <p>
+                  {canReadPrivateDirectChat ? 'Direct / private history' : 'Direct / send only'} /{' '}
+                  {selectedChat.direct.address}
+                </p>
+              ) : null}
             </div>
             <div className="chat-pane__actions">
-              {selectedChat?.kind === 'group' ? (
+              {selectedChat?.kind === 'group' && isJoinableGroup && canJoinGroup ? (
                 <button
                   className="button button--secondary"
                   disabled={!canSubmitJoin}
@@ -651,6 +689,10 @@ export default function App() {
           {nodeError ? <p className="error">{nodeError}</p> : null}
           {messages.phase === 'error' ? <p className="error">{messages.error}</p> : null}
           {writeError ? <p className="error">{writeError}</p> : null}
+          {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
+          {selectedClosedGroupHistoryUnavailable ? (
+            <p className="muted">Closed group chat history requires Qortium Home private group chat support.</p>
+          ) : null}
 
           <MessageList messages={messages.value} />
 
