@@ -240,6 +240,7 @@ export default function App() {
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canSendDirectChat = canSendGroupChat && canReadPrivateDirectChat;
+  const canOpenDirectChat = !!account && canReadPrivateDirectChat;
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
   const isJoinableGroup = selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup;
   const canSubmitJoin = !!account && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
@@ -249,7 +250,31 @@ export default function App() {
     (selectedChat.kind === 'group' ? canSendGroupChat : canSendDirectChat);
   const canSubmitMessage =
     canComposeMessage && draft.trim().length > 0 && !sendPending;
-  const pendingWriteLabel = 'Pending Qortium Home direct chat support';
+  const accountRequiredLabel = bridge.value.isHomeBridge
+    ? 'Approve a selected account in Qortium Home to use account-scoped chat actions.'
+    : 'Open in Qortium Home to use account-scoped chat actions.';
+  const directReadUnavailableLabel = !account
+    ? accountRequiredLabel
+    : bridge.value.isHomeBridge
+      ? 'Direct private chat reads are not available in this Home build.'
+      : 'Open in Qortium Home to read direct private chats.';
+  const directListUnavailableLabel =
+    'Active direct chat listing is unavailable; enter an address to open a direct chat.';
+  const directSendUnavailableLabel = !account
+    ? accountRequiredLabel
+    : bridge.value.isHomeBridge
+      ? 'Direct private chat sends are not available in this Home build.'
+      : 'Open in Qortium Home to send direct private chats.';
+  const groupJoinUnavailableLabel = !account
+    ? accountRequiredLabel
+    : bridge.value.isHomeBridge
+      ? 'Group join is not available in this Home build.'
+      : 'Open in Qortium Home to join groups.';
+  const groupSendUnavailableLabel = !account
+    ? accountRequiredLabel
+    : bridge.value.isHomeBridge
+      ? 'Group chat send is not available in this Home build.'
+      : 'Open in Qortium Home to send group chat messages.';
 
   async function refreshNodeStatus() {
     try {
@@ -402,7 +427,7 @@ export default function App() {
 
     const address = directAddress.trim();
 
-    if (!address || !canSendDirectChat) {
+    if (!address || !canOpenDirectChat) {
       return;
     }
 
@@ -544,20 +569,26 @@ export default function App() {
             <form className="search" onSubmit={handleOpenDirectChat}>
               <input
                 aria-label="Direct address"
-                disabled={!canSendDirectChat}
+                disabled={!canOpenDirectChat}
                 onChange={(event) => setDirectAddress(event.target.value)}
                 placeholder="Direct address"
                 value={directAddress}
               />
-              <button className="button" disabled={!canSendDirectChat || !directAddress.trim()} type="submit">
+              <button
+                className="button"
+                disabled={!canOpenDirectChat || !directAddress.trim()}
+                title={canOpenDirectChat ? 'Open direct chat' : directReadUnavailableLabel}
+                type="submit"
+              >
                 Open
               </button>
             </form>
             {activeChats.phase === 'error' ? <p className="error">{activeChats.error}</p> : null}
-            {!canLoadPrivateDirectChats ? <p className="muted">{pendingWriteLabel}</p> : null}
+            {!canOpenDirectChat ? <p className="muted">{directReadUnavailableLabel}</p> : null}
+            {canOpenDirectChat && !canLoadPrivateDirectChats ? <p className="muted">{directListUnavailableLabel}</p> : null}
             <DirectList
               activeChats={activeChats.value}
-              canOpen={canReadPrivateDirectChat}
+              canOpen={canOpenDirectChat}
               onSelect={selectDirect}
               selectedAddress={selectedDirectAddress}
             />
@@ -599,7 +630,7 @@ export default function App() {
                       ? 'Already joined'
                       : canJoinGroup
                         ? 'Join group'
-                        : 'Pending Qortium Home group join support'
+                        : groupJoinUnavailableLabel
                   }
                   type="button"
                 >
@@ -639,10 +670,10 @@ export default function App() {
                 selectedChat?.kind === 'direct'
                   ? canSendDirectChat
                     ? 'Send direct message'
-                    : pendingWriteLabel
+                    : directSendUnavailableLabel
                   : canSendGroupChat
                     ? 'Send message'
-                    : 'Pending Qortium Home group chat send support'
+                    : groupSendUnavailableLabel
               }
               type="submit"
             >
