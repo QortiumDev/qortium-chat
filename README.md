@@ -30,8 +30,10 @@ npm run qdn:publish
 
 By default the publish helper uploads `dist/` as
 `qdn://APP/QortiumHomeTest/qortium-chat` through `http://127.0.0.1:24891`, using
-the ignored preview API key and local preview account files under
-`~/git/qortium/preview`.
+the local preview account files under `~/git/qortium/preview`. The helper uses
+`QORTIUM_CHAT_NODE_API_KEY` or `QORTIUM_CHAT_NODE_API_KEY_PATH` when set, then
+tries the API key for the active local Core process, and finally falls back to
+`~/git/qortium/preview/apikey.txt`.
 
 ## Qortium Home Smoke Check
 

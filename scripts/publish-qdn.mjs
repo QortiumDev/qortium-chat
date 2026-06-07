@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +44,140 @@ function readJson(filePath) {
 
 function readText(filePath) {
   return readFileSync(filePath, 'utf8').trim();
+}
+
+function getNodeApiPort() {
+  try {
+    const url = new URL(nodeApiUrl);
+
+    if (url.port) {
+      return Number(url.port);
+    }
+
+    return url.protocol === 'https:' ? 443 : 80;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackNodeApiUrl() {
+  try {
+    const url = new URL(nodeApiUrl);
+    const hostname = url.hostname.toLowerCase();
+
+    return (
+      hostname === 'localhost' ||
+      hostname === '::1' ||
+      hostname === '[::1]' ||
+      /^127(?:\.\d{1,3}){3}$/.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getQortiumCoreProcessPaths(args, cwd) {
+  const jarIndex = args.findIndex((arg) => arg === '-jar');
+  const jarPath = jarIndex >= 0 ? args[jarIndex + 1] ?? '' : '';
+  const settingsPath = jarIndex >= 0 ? args[jarIndex + 2] ?? '' : '';
+  const jarName = path.basename(jarPath).toLowerCase();
+
+  if (!jarName.startsWith('qortium') || !jarName.endsWith('.jar') || !settingsPath) {
+    return null;
+  }
+
+  return {
+    jarPath: path.isAbsolute(jarPath) ? jarPath : path.resolve(cwd, jarPath),
+    settingsPath: path.isAbsolute(settingsPath) ? settingsPath : path.resolve(cwd, settingsPath),
+  };
+}
+
+function getConfiguredApiKeyPath(settings, cwd) {
+  const apiKeyPath = settings && typeof settings.apiKeyPath === 'string' ? settings.apiKeyPath.trim() : '';
+  const apiKeyDirectory = apiKeyPath
+    ? path.isAbsolute(apiKeyPath)
+      ? apiKeyPath
+      : path.resolve(cwd, apiKeyPath)
+    : cwd;
+
+  return path.join(apiKeyDirectory, 'apikey.txt');
+}
+
+function getRunningLocalCoreApiKeyPath() {
+  if (process.platform !== 'linux' || !isLoopbackNodeApiUrl()) {
+    return null;
+  }
+
+  const requestedApiPort = getNodeApiPort();
+  const candidates = [];
+
+  for (const entry of readdirSync('/proc', { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) {
+      continue;
+    }
+
+    try {
+      const procPath = path.join('/proc', entry.name);
+      const args = readFileSync(path.join(procPath, 'cmdline'), 'utf8')
+        .split('\0')
+        .filter(Boolean);
+      const cwd = readlinkSync(path.join(procPath, 'cwd'));
+      const coreProcessPaths = getQortiumCoreProcessPaths(args, cwd);
+
+      if (!coreProcessPaths) {
+        continue;
+      }
+
+      const settings = readJson(coreProcessPaths.settingsPath);
+      const apiPort = Number(settings?.apiPort);
+
+      if (requestedApiPort && Number.isFinite(apiPort) && apiPort !== requestedApiPort) {
+        continue;
+      }
+
+      const candidateApiKeyPath = getConfiguredApiKeyPath(settings, cwd);
+
+      if (existsSync(candidateApiKeyPath) && readText(candidateApiKeyPath)) {
+        candidates.push(candidateApiKeyPath);
+      }
+    } catch {
+      // Processes can exit while /proc is being scanned.
+    }
+  }
+
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function getApiKeySource() {
+  const explicitApiKey = process.env.QORTIUM_CHAT_NODE_API_KEY?.trim();
+
+  if (explicitApiKey) {
+    return {
+      apiKey: explicitApiKey,
+      label: 'QORTIUM_CHAT_NODE_API_KEY',
+    };
+  }
+
+  if (process.env.QORTIUM_CHAT_NODE_API_KEY_PATH?.trim()) {
+    return {
+      apiKey: readText(apiKeyPath),
+      label: apiKeyPath,
+    };
+  }
+
+  const runningCoreApiKeyPath = getRunningLocalCoreApiKeyPath();
+
+  if (runningCoreApiKeyPath) {
+    return {
+      apiKey: readText(runningCoreApiKeyPath),
+      label: runningCoreApiKeyPath,
+    };
+  }
+
+  return {
+    apiKey: readText(apiKeyPath),
+    label: apiKeyPath,
+  };
 }
 
 function decodeBase58(value) {
@@ -332,13 +466,15 @@ async function publishResource(account) {
   await signAndProcess(rawUnsignedBytes58, account.accountPrivateKey);
 }
 
-const apiKey = process.env.QORTIUM_CHAT_NODE_API_KEY?.trim() || readText(apiKeyPath);
+const apiKeySource = getApiKeySource();
+const apiKey = apiKeySource.apiKey;
 const account = getLocalPreviewAccount();
 
 console.log(`Node: ${nodeApiUrl}`);
 console.log(`Owner: ${account.accountAddress}`);
 console.log(`Resource: qdn://${service}/${publishName}/${identifier}`);
 console.log(`Source: ${distPath}`);
+console.log(`API key source: ${apiKeySource.label}`);
 
 const status = await requestJson('/admin/status');
 
