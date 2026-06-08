@@ -19,6 +19,7 @@ import {
 } from './coreApi';
 import { decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
+import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -349,6 +350,7 @@ export default function App() {
   const [sendPending, setSendPending] = useState(false);
   const [writeError, setWriteError] = useState('');
   const [membersOpen, setMembersOpen] = useState(true);
+  const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
 
   const joinedIds = useMemo(
@@ -796,6 +798,20 @@ export default function App() {
 
   useEffect(() => {
     void initializeSession();
+  }, []);
+
+  useEffect(() => {
+    applyDisplaySettings(displaySettings);
+  }, [displaySettings]);
+
+  useEffect(() => {
+    function handleHostMessage(event: MessageEvent) {
+      setDisplaySettings((current) => getDisplaySettingsUpdateFromMessage(event.data, current) ?? current);
+    }
+
+    window.addEventListener('message', handleHostMessage);
+
+    return () => window.removeEventListener('message', handleHostMessage);
   }, []);
 
   useEffect(() => {
