@@ -280,6 +280,24 @@ input {
   white-space: nowrap;
 }
 
+.account-summary__text .account-summary__status {
+  width: fit-content;
+  padding: 2px 7px;
+  overflow: visible;
+  color: var(--qc-color-transaction-confirmed);
+  font-size: var(--qc-text-tiny);
+  font-weight: 700;
+  line-height: 1.2;
+  background: var(--qc-color-chip-bg);
+  border: 1px solid var(--qc-color-transaction-confirmed);
+  border-radius: 999px;
+}
+
+.account-summary__text .account-summary__status--locked {
+  color: var(--qc-color-error);
+  border-color: var(--qc-color-error);
+}
+
 .account-connect {
   display: grid;
   gap: 10px;

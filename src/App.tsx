@@ -169,6 +169,24 @@ function parseActiveChats(value: unknown) {
   return parsed && typeof parsed === 'object' ? parsed as ActiveChats : emptyActiveChats;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSelectedAccountChangedMessage(value: unknown) {
+  return isRecord(value) && (
+    value.type === 'qortium:selected-account-changed' ||
+    value.action === 'SELECTED_ACCOUNT_CHANGED'
+  );
+}
+
+function normalizeSelectedAccount(account: QdnSelectedAccount): QdnSelectedAccount {
+  return {
+    ...account,
+    isUnlocked: account.isUnlocked === true,
+  };
+}
+
 function AccountSummary({
   account,
   error,
@@ -194,6 +212,11 @@ function AccountSummary({
         )}
         <div className="account-summary__text">
           <strong>{label}</strong>
+          <span
+            className={`account-summary__status account-summary__status--${account.isUnlocked ? 'unlocked' : 'locked'}`}
+          >
+            {account.isUnlocked ? 'Unlocked' : 'Locked'}
+          </span>
           <span>{account.address}</span>
         </div>
       </div>
@@ -398,15 +421,17 @@ export default function App() {
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canSendDirectChat = canSendGroupChat;
-  const canOpenDirectChat = !!account && (canReadPrivateDirectChat || canSendDirectChat);
+  const isAccountUnlocked = account?.isUnlocked === true;
+  const canOpenDirectChat = !!account && isAccountUnlocked && (canReadPrivateDirectChat || canSendDirectChat);
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
   const hasPendingJoinRequest = selectedGroupId !== null && pendingJoinGroupIds.has(selectedGroupId);
   const hasPendingJoinTransaction = selectedGroupId !== null && pendingTrackedJoinGroupIds.has(selectedGroupId);
   const isJoinableGroup =
     selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && !hasPendingJoinRequest && !hasPendingJoinTransaction;
-  const canSubmitJoin = !!account && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
+  const canSubmitJoin = !!account && isAccountUnlocked && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
   const canComposeMessage =
     !!account &&
+    isAccountUnlocked &&
     !!selectedChat &&
     (selectedChat.kind === 'group' ? canSendGroupChat : canSendDirectChat);
   const canSubmitMessage =
@@ -414,13 +439,20 @@ export default function App() {
   const accountRequiredLabel = bridge.value.isHomeBridge
     ? 'Share the selected account to use chat actions.'
     : 'Open in Qortium Home to use account-scoped chat actions.';
+  const accountLockedLabel = bridge.value.isHomeBridge
+    ? 'Unlock the selected account in Qortium Home to use chat actions.'
+    : 'Open in Qortium Home with an unlocked account to use chat actions.';
   const directAccessUnavailableLabel = !account
     ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
     : bridge.value.isHomeBridge
       ? 'Direct chat is not available in this Home build.'
       : 'Open in Qortium Home to use direct chat.';
   const directReadUnavailableLabel = !account
     ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
     : bridge.value.isHomeBridge
       ? 'Direct private chat history is not available in this Home build.'
       : 'Open in Qortium Home to read direct private chat history.';
@@ -428,23 +460,34 @@ export default function App() {
     'Active direct chat listing is unavailable; enter an address to open a direct chat.';
   const directSendUnavailableLabel = !account
     ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
     : bridge.value.isHomeBridge
       ? 'Direct private chat sends are not available in this Home build.'
       : 'Open in Qortium Home to send direct private chats.';
   const groupJoinUnavailableLabel = !account
     ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
     : bridge.value.isHomeBridge
       ? 'Group join is not available in this Home build.'
       : 'Open in Qortium Home to join groups.';
   const groupSendUnavailableLabel = !account
     ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
     : bridge.value.isHomeBridge
       ? 'Group chat send is not available in this Home build.'
       : 'Open in Qortium Home to send group chat messages.';
   const selectedDirectHistoryUnavailable =
-    selectedChat?.kind === 'direct' && !canReadPrivateDirectChat;
+    selectedChat?.kind === 'direct' && (!isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
-    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !canReadPrivateGroupChat;
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && (!isAccountUnlocked || !canReadPrivateGroupChat);
+  const closedGroupHistoryUnavailableLabel = !account
+    ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
+      : 'Closed group chat history requires Qortium Home private group chat support.';
 
   async function loadGroups(nextSearch = search, actionList = actions) {
     setGroups({ phase: 'loading', value: groups.value });
@@ -543,7 +586,7 @@ export default function App() {
 
     try {
       const nextActiveChats = await getActiveChats(selectedAccount.address, actionList);
-      const direct = hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')
+      const direct = selectedAccount.isUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')
         ? await getPrivateDirectActiveChats(actionList)
         : nextActiveChats.direct;
 
@@ -568,7 +611,17 @@ export default function App() {
     setMessages({ phase: 'loading', value: messages.value });
 
     try {
+      if (chat.kind === 'direct' && !isAccountUnlocked) {
+        setMessages({ phase: 'ready', value: emptyMessages });
+        return;
+      }
+
       if (chat.kind === 'direct' && !hasAction(actionList, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
+        setMessages({ phase: 'ready', value: emptyMessages });
+        return;
+      }
+
+      if (chat.kind === 'group' && chat.group.isOpen === false && !isAccountUnlocked) {
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
@@ -627,7 +680,7 @@ export default function App() {
   }
 
   async function handleApproveJoinRequest(request: GroupJoinRequest) {
-    if (!selectedGroup || !canApproveGroupJoinRequests || approvePendingJoiner) {
+    if (!selectedGroup || !canApproveGroupJoinRequests || !isAccountUnlocked || approvePendingJoiner) {
       return;
     }
 
@@ -748,7 +801,9 @@ export default function App() {
 
   async function connectSelectedAccount(actionList = actions) {
     try {
-      const selectedAccount = await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' });
+      const selectedAccount = normalizeSelectedAccount(
+        await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' }),
+      );
       setAccount(selectedAccount);
       setAccountError('');
       void loadAccountData(selectedAccount, actionList);
@@ -807,12 +862,16 @@ export default function App() {
   useEffect(() => {
     function handleHostMessage(event: MessageEvent) {
       setDisplaySettings((current) => getDisplaySettingsUpdateFromMessage(event.data, current) ?? current);
+
+      if (isSelectedAccountChangedMessage(event.data)) {
+        void connectSelectedAccount(actions);
+      }
     }
 
     window.addEventListener('message', handleHostMessage);
 
     return () => window.removeEventListener('message', handleHostMessage);
-  }, []);
+  }, [actionsKey]);
 
   useEffect(() => {
     const pendingTransactions = Object.values(trackedTransactions).filter(
@@ -941,7 +1000,7 @@ export default function App() {
     });
 
     return () => socket.close();
-  }, [selectedChatKey, actionsKey]);
+  }, [selectedChatKey, actionsKey, isAccountUnlocked]);
 
   useEffect(() => {
     if (!account) {
@@ -1127,7 +1186,7 @@ export default function App() {
                       ? 'Join transaction is pending'
                       : hasPendingJoinRequest
                         ? 'Join request is pending'
-                        : canJoinGroup
+                        : isAccountUnlocked && canJoinGroup
                           ? 'Join group'
                           : groupJoinUnavailableLabel
                   }
@@ -1151,7 +1210,7 @@ export default function App() {
           {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
           {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
           {selectedClosedGroupHistoryUnavailable ? (
-            <p className="muted">Closed group chat history requires Qortium Home private group chat support.</p>
+            <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
           ) : null}
           {selectedTransactions.length > 0 ? (
             <div className="tx-status-list" aria-label="Transaction status">
@@ -1187,10 +1246,10 @@ export default function App() {
               disabled={!canSubmitMessage}
               title={
                 selectedChat?.kind === 'direct'
-                  ? canSendDirectChat
+                  ? canComposeMessage
                     ? 'Send direct message'
                     : directSendUnavailableLabel
-                  : canSendGroupChat
+                  : canComposeMessage
                     ? 'Send message'
                     : groupSendUnavailableLabel
               }
@@ -1223,9 +1282,15 @@ export default function App() {
                     <span>{getShortAddress(request.joiner)}</span>
                     <button
                       className="button button--secondary"
-                      disabled={!canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
+                      disabled={!isAccountUnlocked || !canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
                       onClick={() => void handleApproveJoinRequest(request)}
-                      title={canApproveGroupJoinRequests ? 'Approve join request' : 'Update Qortium Home to approve join requests'}
+                      title={
+                        !isAccountUnlocked
+                          ? accountLockedLabel
+                          : canApproveGroupJoinRequests
+                            ? 'Approve join request'
+                            : 'Update Qortium Home to approve join requests'
+                      }
                       type="button"
                     >
                       {approvePendingJoiner === request.joiner ? 'Approving' : 'Approve'}
