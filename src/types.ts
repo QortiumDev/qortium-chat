@@ -10,6 +10,7 @@ export type QdnSelectedAccount = {
   address: string;
   avatarUrl: string | null;
   id?: string;
+  isUnlocked: boolean;
   name: string | null;
   resourceUrl?: string;
 };
