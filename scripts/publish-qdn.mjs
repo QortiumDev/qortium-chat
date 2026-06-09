@@ -154,14 +154,12 @@ function getApiKeySource() {
   if (explicitApiKey) {
     return {
       apiKey: explicitApiKey,
-      label: 'QORTIUM_CHAT_NODE_API_KEY',
     };
   }
 
   if (process.env.QORTIUM_CHAT_NODE_API_KEY_PATH?.trim()) {
     return {
       apiKey: readText(apiKeyPath),
-      label: apiKeyPath,
     };
   }
 
@@ -170,13 +168,11 @@ function getApiKeySource() {
   if (runningCoreApiKeyPath) {
     return {
       apiKey: readText(runningCoreApiKeyPath),
-      label: runningCoreApiKeyPath,
     };
   }
 
   return {
     apiKey: readText(apiKeyPath),
-    label: apiKeyPath,
   };
 }
 
@@ -474,7 +470,7 @@ console.log(`Node: ${nodeApiUrl}`);
 console.log(`Owner: ${account.accountAddress}`);
 console.log(`Resource: qdn://${service}/${publishName}/${identifier}`);
 console.log(`Source: ${distPath}`);
-console.log(`API key source: ${apiKeySource.label}`);
+console.log('API key: loaded');
 
 const status = await requestJson('/admin/status');
 
