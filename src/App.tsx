@@ -10,12 +10,14 @@ import {
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
+  getMintingStatus,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
   searchGroups,
   sendChatMessage,
   sendDirectChatMessage,
+  startMinting,
 } from './coreApi';
 import { decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
@@ -29,6 +31,7 @@ import type {
   GroupJoinRequest,
   GroupWithJoinRequests,
   GroupMember,
+  MintingStatus,
   QdnSelectedAccount,
 } from './types';
 
@@ -55,7 +58,7 @@ type SelectedChat =
     };
 
 type TrackedTransaction = {
-  action: 'approve' | 'join';
+  action: 'approve' | 'join' | 'rewardshare';
   groupId: number;
   groupName: string;
   id: string;
@@ -368,7 +371,9 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState('');
   const [directAddress, setDirectAddress] = useState('');
+  const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
+  const [startMintingPending, setStartMintingPending] = useState(false);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
   const [writeError, setWriteError] = useState('');
@@ -429,6 +434,20 @@ export default function App() {
   const isJoinableGroup =
     selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && !hasPendingJoinRequest && !hasPendingJoinTransaction;
   const canSubmitJoin = !!account && isAccountUnlocked && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
+  const canStartMinting = hasAction(actions, 'START_MINTING');
+  const isSelectedMintingGroup = selectedGroup?.isMintingGroup === true;
+  const accountMintingStatus = mintingStatus.value;
+  const showMintingControls = isSelectedMintingGroup && isJoinedGroup && !!account;
+  const hasPendingRewardShareTransaction = Object.values(trackedTransactions).some(
+    (transaction) => transaction.action === 'rewardshare' && transaction.phase === 'pending',
+  );
+  const canSubmitStartMinting =
+    showMintingControls &&
+    isAccountUnlocked &&
+    canStartMinting &&
+    accountMintingStatus?.keyOnNode === false &&
+    !hasPendingRewardShareTransaction &&
+    !startMintingPending;
   const canComposeMessage =
     !!account &&
     isAccountUnlocked &&
@@ -472,6 +491,21 @@ export default function App() {
     : bridge.value.isHomeBridge
       ? 'Group join is not available in this Home build.'
       : 'Open in Qortium Home to join groups.';
+  const startMintingTitle = !account
+    ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
+    : !canStartMinting
+      ? bridge.value.isHomeBridge
+        ? 'Start minting is not available in this Home build.'
+        : 'Open in Qortium Home to start minting.'
+    : hasPendingRewardShareTransaction
+      ? 'Minting authorization is pending confirmation.'
+      : accountMintingStatus?.keyOnNode === null
+        ? 'Connect a local Core node to manage minting keys.'
+        : accountMintingStatus?.hasRewardShare === false
+          ? "Authorize minting on chain, then add this account's minting key to the connected node"
+          : "Add this account's minting key to the connected node";
   const groupSendUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
@@ -570,6 +604,26 @@ export default function App() {
     }
   }
 
+  async function loadMintingStatus(
+    selectedAccount: QdnSelectedAccount,
+    actionList = actions,
+    options: { quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setMintingStatus({ phase: 'loading', value: mintingStatus.value });
+    }
+
+    try {
+      setMintingStatus({ phase: 'ready', value: await getMintingStatus(selectedAccount.address, actionList) });
+    } catch (error) {
+      setMintingStatus({
+        error: getBridgeErrorMessage(error, 'Unable to load minting status.'),
+        phase: 'error',
+        value: mintingStatus.value,
+      });
+    }
+  }
+
   async function loadAccountData(selectedAccount: QdnSelectedAccount, actionList = actions) {
     setMemberGroups({ phase: 'loading', value: memberGroups.value });
     setActiveChats({ phase: 'loading', value: activeChats.value });
@@ -601,6 +655,7 @@ export default function App() {
 
     void loadAccountJoinRequests(selectedAccount, actionList);
     void loadAdminJoinRequests(selectedAccount, actionList);
+    void loadMintingStatus(selectedAccount, actionList);
   }
 
   async function loadMessages(chat: SelectedChat | null, actionList = actions) {
@@ -676,6 +731,35 @@ export default function App() {
       setWriteError(getBridgeErrorMessage(error, 'Unable to join group.'));
     } finally {
       setJoinPending(false);
+    }
+  }
+
+  async function handleStartMinting() {
+    if (!account || !selectedGroup || !canSubmitStartMinting) {
+      return;
+    }
+
+    setStartMintingPending(true);
+    setWriteError('');
+
+    try {
+      const result = await startMinting();
+
+      if (result.rewardSharePending) {
+        trackTransaction({
+          action: 'rewardshare',
+          group: selectedGroup,
+          message: 'Minting authorization submitted',
+          result,
+        });
+      }
+
+      await loadMintingStatus(account);
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, 'Unable to start minting.'));
+      void loadMintingStatus(account, actions, { quiet: true });
+    } finally {
+      setStartMintingPending(false);
     }
   }
 
@@ -815,6 +899,7 @@ export default function App() {
       setAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
       setAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
       setActiveChats({ phase: 'ready', value: emptyActiveChats });
+      setMintingStatus({ phase: 'ready', value: null });
       return null;
     }
   }
@@ -902,7 +987,12 @@ export default function App() {
               ...current,
               [transaction.id]: {
                 ...transaction,
-                message: transaction.action === 'approve' ? 'Approval confirmed' : 'Join transaction confirmed',
+                message:
+                  transaction.action === 'approve'
+                    ? 'Approval confirmed'
+                    : transaction.action === 'rewardshare'
+                      ? 'Minting authorization confirmed'
+                      : 'Join transaction confirmed',
                 phase: 'confirmed',
               },
             }));
@@ -1153,6 +1243,16 @@ export default function App() {
                       ? 'Closed / private read'
                       : 'Closed / private history unavailable'
                     : 'Open'}
+                  {isSelectedMintingGroup ? ' / minting group' : ''}
+                  {showMintingControls
+                    ? accountMintingStatus?.isMinting === true
+                      ? ' / minting'
+                      : accountMintingStatus?.isMinting === false
+                        ? ' / not minting'
+                        : accountMintingStatus
+                          ? ' / minting status unavailable'
+                          : ''
+                    : ''}
                   {hasPendingJoinTransaction ? ' / join pending' : hasPendingJoinRequest ? ' / request pending' : ''}
                   {typeof selectedChat.group.memberCount === 'number'
                     ? ` / ${selectedChat.group.memberCount.toLocaleString()} members`
@@ -1201,6 +1301,21 @@ export default function App() {
                         : 'Join'}
                 </button>
               ) : null}
+              {showMintingControls && accountMintingStatus && accountMintingStatus.isMinting !== true ? (
+                <button
+                  className="button button--secondary"
+                  disabled={!canSubmitStartMinting}
+                  onClick={() => void handleStartMinting()}
+                  title={startMintingTitle}
+                  type="button"
+                >
+                  {startMintingPending
+                    ? 'Starting minting'
+                    : hasPendingRewardShareTransaction
+                      ? 'Authorization pending'
+                      : 'Start minting'}
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -1208,6 +1323,7 @@ export default function App() {
           {writeError ? <p className="error">{writeError}</p> : null}
           {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
           {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
+          {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
           {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">{closedGroupHistoryUnavailableLabel}</p>

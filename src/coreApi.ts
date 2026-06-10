@@ -8,9 +8,13 @@ import type {
   GroupMember,
   GroupMembersResponse,
   GroupWithJoinRequests,
+  MintingStatus,
   NodeApiFetchResult,
+  NodeMintingAccount,
   NodeStatus,
   QdnAction,
+  RewardShare,
+  StartMintingResult,
   TransactionStatus,
 } from './types';
 
@@ -93,6 +97,12 @@ export function buildGroupJoinRequestsPath(groupId: number) {
 
 export function buildTransactionStatusPath(signature: string) {
   return `/transactions/signature/${encodeURIComponent(signature)}`;
+}
+
+export function buildSelfRewardSharesPath(address: string) {
+  const encodedAddress = encodeURIComponent(address);
+
+  return `/addresses/rewardshares?minters=${encodedAddress}&recipients=${encodedAddress}`;
 }
 
 export function buildActiveChatsPath(address: string) {
@@ -232,6 +242,51 @@ export async function getGroupJoinRequests(groupId: number, actions?: QdnAction[
 
 export async function getTransactionStatus(signature: string) {
   return fetchNodeApiData<TransactionStatus>(buildTransactionStatusPath(signature), 'Transaction status');
+}
+
+export async function getMintingStatus(address: string, actions?: QdnAction[]): Promise<MintingStatus> {
+  if (hasBridgeAction(actions, 'GET_MINTING_STATUS')) {
+    return qdnRequest<MintingStatus>({
+      action: 'GET_MINTING_STATUS',
+      address,
+    });
+  }
+
+  const rewardShares = await fetchNodeApiData<RewardShare[]>(buildSelfRewardSharesPath(address), 'Reward shares');
+  const hasRewardShare = rewardShares.some(
+    (rewardShare) => rewardShare.mintingAccount === address && rewardShare.recipient === address,
+  );
+
+  try {
+    const mintingAccounts = await fetchNodeApiData<NodeMintingAccount[]>('/admin/mintingaccounts', 'Minting accounts');
+    const keyOnNode = mintingAccounts.some(
+      (mintingAccount) => mintingAccount.mintingAccount === address && mintingAccount.recipientAccount === address,
+    );
+    const nodeStatus = await fetchNodeApiData<NodeStatus>('/admin/status', 'Node status');
+
+    return {
+      address,
+      hasRewardShare,
+      isMinting: hasRewardShare && keyOnNode,
+      keyOnNode,
+      nodeMintingPossible: nodeStatus.isMintingPossible === true,
+    };
+  } catch {
+    // The connected node does not expose its minting state (for example a public read-only node).
+    return {
+      address,
+      hasRewardShare,
+      isMinting: null,
+      keyOnNode: null,
+      nodeMintingPossible: null,
+    };
+  }
+}
+
+export async function startMinting() {
+  return qdnRequest<StartMintingResult>({
+    action: 'START_MINTING',
+  });
 }
 
 export async function getActiveChats(address: string, actions?: QdnAction[]) {

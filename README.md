@@ -4,6 +4,17 @@ A small QDN app for Qortium Home that can browse groups, join groups, send group
 chat, open direct chats, send direct private chat, and read public or approved
 private chat using the current `qdnRequest` bridge.
 
+For minting groups, the selected group header shows whether the selected
+account is currently minting on the connected node, and joined members who are
+not minting yet get a Start minting button that asks Qortium Home (via the
+`START_MINTING` bridge action) to add the account's minting key to the
+connected local node — including on a fresh or additional node. If the account
+has no on-chain minting authorization yet (for example it joined the minting
+group before joins carried minting keys), the same button first submits the
+free self-share authorization transaction, tracks it until it confirms, and
+can then add the key. Minting status reads use the `GET_MINTING_STATUS` bridge
+action when Home provides it, with a read-only node API fallback otherwise.
+
 ## Development
 
 Install dependencies:
@@ -60,7 +71,8 @@ and the published resource should report `READY` at
 ## Current Limits
 
 This app does not handle private keys or transaction signing directly. Group
-joins, group chat sends, closed-group chat reads, direct private chat reads, and
-direct private chat sends are delegated to Qortium Home's account-safe approval
-bridge. Browser development remains read-only and cannot decrypt or send direct
+joins, group chat sends, closed-group chat reads, direct private chat reads,
+direct private chat sends, and minting key registration are delegated to
+Qortium Home's account-safe approval bridge; the app never sees the minting
+key. Browser development remains read-only and cannot decrypt or send direct
 private chat without Home.
