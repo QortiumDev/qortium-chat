@@ -21,14 +21,17 @@ describe('display settings helpers', () => {
 
   it('normalizes supported display values', () => {
     expect(normalizeTheme('DARK')).toBe('dark');
-    expect(normalizeLanguage('en_US')).toBe('en-US');
+    expect(normalizeLanguage('en_US')).toBe('en');
     expect(normalizeTextSize('extra-large')).toBe('extra-large');
+    expect(normalizeLanguage('zh-Hant')).toBe('zh-TW');
+    expect(normalizeLanguage('zh_Hans')).toBe('zh-CN');
+    expect(normalizeTextSize('huge')).toBe('huge');
   });
 
   it('rejects unsupported display values', () => {
     expect(normalizeTheme('sepia')).toBeNull();
     expect(normalizeLanguage('../en')).toBeNull();
-    expect(normalizeTextSize('huge')).toBeNull();
+    expect(normalizeTextSize('extra-huge')).toBeNull();
   });
 
   it('reads initial QDN globals from Core/Home', () => {
@@ -39,8 +42,25 @@ describe('display settings helpers', () => {
     });
 
     expect(getInitialDisplaySettings()).toEqual({
-      language: 'en-US',
+      language: 'en',
       textSize: 'large',
+      theme: 'dark',
+    });
+  });
+
+  it('prefers Core/Home query params over global values', () => {
+    vi.stubGlobal('window', {
+      _qdnLang: 'en',
+      _qdnTextSize: 'small',
+      _qdnTheme: 'light',
+      location: {
+        search: '?theme=dark&textSize=huge&lang=en-US',
+      },
+    });
+
+    expect(getInitialDisplaySettings()).toEqual({
+      language: 'en',
+      textSize: 'huge',
       theme: 'dark',
     });
   });
@@ -52,7 +72,7 @@ describe('display settings helpers', () => {
     });
     expect(getDisplaySettingsUpdateFromMessage({ action: 'LANGUAGE_CHANGED', language: 'en-US' }, current)).toEqual({
       ...current,
-      language: 'en-US',
+      language: 'en',
     });
     expect(getDisplaySettingsUpdateFromMessage({ action: 'TEXT_SIZE_CHANGED', textSize: 'extra-large' }, current)).toEqual({
       ...current,
