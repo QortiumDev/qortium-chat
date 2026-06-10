@@ -119,6 +119,15 @@
   --qc-text-title: 32px;
 }
 
+:root[data-text-size='huge'] {
+  --qc-text-body: 38px;
+  --qc-text-caption: 28px;
+  --qc-text-heading: 38px;
+  --qc-text-small: 22px;
+  --qc-text-tiny: 20px;
+  --qc-text-title: 46px;
+}
+
 * {
   box-sizing: border-box;
 }

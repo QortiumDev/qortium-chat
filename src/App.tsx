@@ -21,6 +21,7 @@ import {
 } from './coreApi';
 import { decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
+import { createTranslator, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
 import type {
   ActiveChats,
@@ -72,35 +73,35 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function getBridgeErrorMessage(error: unknown, fallback: string) {
+function getBridgeErrorMessage(error: unknown, fallback: string, t: TranslateFunction) {
   const message = getErrorMessage(error, fallback).replace(
     /^Error invoking remote method 'qdn-app:request': Error: /,
     '',
   );
 
   if (message.includes('Account request was denied')) {
-    return 'Account access was not shared.';
+    return t('status.bridge.accountAccessDenied');
   }
 
   if (message.includes('QDN write request was denied')) {
-    return 'Request was not approved in Qortium Home.';
+    return t('status.bridge.writeDenied');
   }
 
   return message;
 }
 
-function getAccountMessage(error: string, isHomeBridge: boolean) {
+function getAccountMessage(error: string, isHomeBridge: boolean, t: TranslateFunction) {
   if (error.includes('No account is selected')) {
-    return 'Select an account for this tab in Qortium Home.';
+    return t('label.account.required.select');
   }
 
   if (error.includes('Account access was not shared')) {
-    return 'Share the selected account to join groups or send messages.';
+    return t('action.account.notShared');
   }
 
   return isHomeBridge
-    ? 'Share the selected account to join groups or send messages.'
-    : 'Open in Qortium Home to join groups or send messages.';
+    ? t('action.account.notShared')
+    : t('action.noAccountUse');
 }
 
 function createState<T>(value: T): AsyncState<T> {
@@ -123,10 +124,10 @@ function getMemberAddress(member: GroupMember) {
   return member.address || member.member || '';
 }
 
-function getMemberLabel(member: GroupMember) {
+function getMemberLabel(member: GroupMember, t: TranslateFunction) {
   const address = getMemberAddress(member);
 
-  return member.primaryName || member.name || (address ? getShortAddress(address) : 'Member');
+  return member.primaryName || member.name || (address ? getShortAddress(address) : t('member.label'));
 }
 
 function sortGroups(groups: GroupData[]) {
@@ -195,11 +196,13 @@ function AccountSummary({
   error,
   isHomeBridge,
   onConnect,
+  t,
 }: {
   account: QdnSelectedAccount | null;
   error: string;
   isHomeBridge: boolean;
   onConnect: () => void;
+  t: TranslateFunction;
 }) {
   if (account) {
     const label = account.name || getShortAddress(account.address);
@@ -218,7 +221,7 @@ function AccountSummary({
           <span
             className={`account-summary__status account-summary__status--${account.isUnlocked ? 'unlocked' : 'locked'}`}
           >
-            {account.isUnlocked ? 'Unlocked' : 'Locked'}
+            {account.isUnlocked ? t('status.account.unlocked') : t('status.account.locked')}
           </span>
           <span>{account.address}</span>
         </div>
@@ -228,10 +231,10 @@ function AccountSummary({
 
   return (
     <div className="account-connect">
-      <p className="muted">{getAccountMessage(error, isHomeBridge)}</p>
+      <p className="muted">{getAccountMessage(error, isHomeBridge, t)}</p>
       {isHomeBridge ? (
         <button className="button button--secondary" onClick={onConnect} type="button">
-          Use selected account
+          {t('label.account.summary.useSelected')}
         </button>
       ) : null}
     </div>
@@ -243,14 +246,16 @@ function GroupList({
   joinedIds,
   onSelect,
   selectedGroupId,
+  t,
 }: {
   groups: GroupData[];
   joinedIds: Set<number>;
   onSelect: (group: GroupData) => void;
   selectedGroupId: number | null;
+  t: TranslateFunction;
 }) {
   if (groups.length === 0) {
-    return <p className="empty">No groups found</p>;
+    return <p className="empty">{t('hint.noGroups')}</p>;
   }
 
   return (
@@ -264,7 +269,7 @@ function GroupList({
         >
           <span className="group-row__name">{getGroupTitle(group)}</span>
           <span className="group-row__meta">
-            {joinedIds.has(group.groupId) ? 'Joined' : group.isOpen === false ? 'Closed' : 'Open'}
+            {joinedIds.has(group.groupId) ? t('label.joined') : group.isOpen === false ? t('label.group.closed') : t('label.group.open')}
             {typeof group.memberCount === 'number' ? ` / ${group.memberCount.toLocaleString()}` : ''}
           </span>
         </button>
@@ -278,16 +283,18 @@ function DirectList({
   canOpen,
   onSelect,
   selectedAddress,
+  t,
 }: {
   activeChats: ActiveChats;
   canOpen: boolean;
   onSelect: (direct: ActiveDirectChat) => void;
   selectedAddress: string | null;
+  t: TranslateFunction;
 }) {
   const directs = activeChats.direct ?? [];
 
   if (directs.length === 0) {
-    return <p className="empty">No direct chats</p>;
+    return <p className="empty">{t('hint.noDirectChats')}</p>;
   }
 
   return (
@@ -298,7 +305,7 @@ function DirectList({
           disabled={!canOpen}
           key={direct.address}
           onClick={() => onSelect(direct)}
-          title={canOpen ? 'Open direct chat' : 'Pending Qortium Home direct chat support'}
+          title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
           type="button"
         >
           <span>{getDirectTitle(direct)}</span>
@@ -309,9 +316,9 @@ function DirectList({
   );
 }
 
-function MessageList({ messages }: { messages: ChatMessage[] }) {
+function MessageList({ messages, t }: { messages: ChatMessage[]; t: TranslateFunction }) {
   if (messages.length === 0) {
-    return <p className="empty">No recent messages</p>;
+    return <p className="empty">{t('hint.noMessages')}</p>;
   }
 
   return (
@@ -326,7 +333,7 @@ function MessageList({ messages }: { messages: ChatMessage[] }) {
               <strong>{getSenderLabel(message)}</strong>
               <span>{formatTimestamp(message.timestamp)}</span>
             </div>
-            <div className="message__body">{decoded.body || 'Empty message'}</div>
+            <div className="message__body">{decoded.body || t('message.empty')}</div>
           </li>
         );
       })}
@@ -334,9 +341,9 @@ function MessageList({ messages }: { messages: ChatMessage[] }) {
   );
 }
 
-function GroupMemberList({ members }: { members: GroupMember[] }) {
+function GroupMemberList({ members, t }: { members: GroupMember[]; t: TranslateFunction }) {
   if (members.length === 0) {
-    return <p className="empty">No members loaded</p>;
+    return <p className="empty">{t('hint.noMembers')}</p>;
   }
 
   return (
@@ -346,7 +353,7 @@ function GroupMemberList({ members }: { members: GroupMember[] }) {
 
         return (
           <span className="member-chip" key={address || getMemberLabel(member)} title={address}>
-            {getMemberLabel(member)}
+            {getMemberLabel(member, t)}
           </span>
         );
       })}
@@ -380,6 +387,7 @@ export default function App() {
   const [membersOpen, setMembersOpen] = useState(true);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
+  const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
 
   const joinedIds = useMemo(
     () => new Set(memberGroups.value.map((group) => group.groupId)),
@@ -456,63 +464,63 @@ export default function App() {
   const canSubmitMessage =
     canComposeMessage && draft.trim().length > 0 && !sendPending;
   const accountRequiredLabel = bridge.value.isHomeBridge
-    ? 'Share the selected account to use chat actions.'
-    : 'Open in Qortium Home to use account-scoped chat actions.';
+    ? t('action.account.notShared')
+    : t('action.noAccountUse');
   const accountLockedLabel = bridge.value.isHomeBridge
-    ? 'Unlock the selected account in Qortium Home to use chat actions.'
-    : 'Open in Qortium Home with an unlocked account to use chat actions.';
+    ? t('label.account.locked.home')
+    : t('label.account.locked.browser');
   const directAccessUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
     : bridge.value.isHomeBridge
-      ? 'Direct chat is not available in this Home build.'
-      : 'Open in Qortium Home to use direct chat.';
+      ? t('action.directReadOnly')
+      : t('action.privateChatUnavailable');
   const directReadUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
     : bridge.value.isHomeBridge
-      ? 'Direct private chat history is not available in this Home build.'
-      : 'Open in Qortium Home to read direct private chat history.';
+      ? t('action.directReadOnly')
+      : t('action.directReadUnavailableBrowser');
   const directListUnavailableLabel =
-    'Active direct chat listing is unavailable; enter an address to open a direct chat.';
+    t('action.directListUnavailable');
   const directSendUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
     : bridge.value.isHomeBridge
-      ? 'Direct private chat sends are not available in this Home build.'
-      : 'Open in Qortium Home to send direct private chats.';
+      ? t('action.directSendUnavailable')
+      : t('action.directSendUnavailableBrowser');
   const groupJoinUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
     : bridge.value.isHomeBridge
-      ? 'Group join is not available in this Home build.'
-      : 'Open in Qortium Home to join groups.';
+      ? t('action.groupJoinUnavailable')
+      : t('action.groupJoinUnavailableBrowser');
   const startMintingTitle = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
     : !canStartMinting
       ? bridge.value.isHomeBridge
-        ? 'Start minting is not available in this Home build.'
-        : 'Open in Qortium Home to start minting.'
+        ? t('action.mintingUnavailable')
+        : t('action.mintingUnavailableBrowser')
     : hasPendingRewardShareTransaction
-      ? 'Minting authorization is pending confirmation.'
+      ? t('status.minting.authorization.pending')
       : accountMintingStatus?.keyOnNode === null
-        ? 'Connect a local Core node to manage minting keys.'
+        ? t('status.mintingNodeHint')
         : accountMintingStatus?.hasRewardShare === false
-          ? "Authorize minting on chain, then add this account's minting key to the connected node"
-          : "Add this account's minting key to the connected node";
+          ? t('action.mintingAuthorizeChain')
+          : t('action.mintingAddKey');
   const groupSendUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
     : bridge.value.isHomeBridge
-      ? 'Group chat send is not available in this Home build.'
-      : 'Open in Qortium Home to send group chat messages.';
+      ? t('action.groupMessagesUnavailable')
+      : t('action.groupMessagesUnavailableBrowser');
   const selectedDirectHistoryUnavailable =
     selectedChat?.kind === 'direct' && (!isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
@@ -521,7 +529,7 @@ export default function App() {
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
-      : 'Closed group chat history requires Qortium Home private group chat support.';
+      : t('action.closedGroupHistoryUnsupported');
 
   async function loadGroups(nextSearch = search, actionList = actions) {
     setGroups({ phase: 'loading', value: groups.value });
@@ -535,7 +543,7 @@ export default function App() {
       }
     } catch (error) {
       setGroups({
-        error: getBridgeErrorMessage(error, 'Unable to load groups.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
         phase: 'error',
         value: groups.value,
       });
@@ -551,7 +559,7 @@ export default function App() {
       setGroupMembers({ phase: 'ready', value: await getGroupMembers(group.groupId, actionList) });
     } catch (error) {
       setGroupMembers({
-        error: getBridgeErrorMessage(error, 'Unable to load group members.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.groupMembers'), t),
         phase: 'error',
         value: groupMembers.value,
       });
@@ -574,7 +582,7 @@ export default function App() {
       });
     } catch (error) {
       setAccountJoinRequests({
-        error: getBridgeErrorMessage(error, 'Unable to load pending join requests.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.joinRequests'), t),
         phase: 'error',
         value: accountJoinRequests.value,
       });
@@ -597,7 +605,7 @@ export default function App() {
       });
     } catch (error) {
       setAdminJoinRequests({
-        error: getBridgeErrorMessage(error, 'Unable to load group join approvals.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.groupApprovals'), t),
         phase: 'error',
         value: adminJoinRequests.value,
       });
@@ -617,7 +625,7 @@ export default function App() {
       setMintingStatus({ phase: 'ready', value: await getMintingStatus(selectedAccount.address, actionList) });
     } catch (error) {
       setMintingStatus({
-        error: getBridgeErrorMessage(error, 'Unable to load minting status.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.minting'), t),
         phase: 'error',
         value: mintingStatus.value,
       });
@@ -632,7 +640,7 @@ export default function App() {
       setMemberGroups({ phase: 'ready', value: await getMemberGroups(selectedAccount.address, actionList) });
     } catch (error) {
       setMemberGroups({
-        error: getBridgeErrorMessage(error, 'Unable to load joined groups.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
         phase: 'error',
         value: memberGroups.value,
       });
@@ -647,7 +655,7 @@ export default function App() {
       setActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct } });
     } catch (error) {
       setActiveChats({
-        error: getBridgeErrorMessage(error, 'Unable to load active chats.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.activeChats'), t),
         phase: 'error',
         value: activeChats.value,
       });
@@ -698,7 +706,7 @@ export default function App() {
       setMessages({ phase: 'ready', value: nextMessages });
     } catch (error) {
       setMessages({
-        error: getBridgeErrorMessage(error, 'Unable to load messages.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.messages'), t),
         phase: 'error',
         value: messages.value,
       });
@@ -719,7 +727,7 @@ export default function App() {
       trackTransaction({
         action: 'join',
         group: selectedGroup,
-        message: selectedGroup.isOpen === false ? 'Join request submitted' : 'Join submitted',
+        message: selectedGroup.isOpen === false ? t('status.join.request.submitted') : t('status.join.submitted'),
         result,
       });
 
@@ -728,7 +736,7 @@ export default function App() {
       }
       await loadGroupMembers(selectedGroup);
     } catch (error) {
-      setWriteError(getBridgeErrorMessage(error, 'Unable to join group.'));
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.join'), t));
     } finally {
       setJoinPending(false);
     }
@@ -749,14 +757,14 @@ export default function App() {
         trackTransaction({
           action: 'rewardshare',
           group: selectedGroup,
-          message: 'Minting authorization submitted',
+          message: t('status.minting.authorization.submitted'),
           result,
         });
       }
 
       await loadMintingStatus(account);
     } catch (error) {
-      setWriteError(getBridgeErrorMessage(error, 'Unable to start minting.'));
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.startMinting'), t));
       void loadMintingStatus(account, actions, { quiet: true });
     } finally {
       setStartMintingPending(false);
@@ -778,7 +786,7 @@ export default function App() {
         action: 'approve',
         group: selectedGroup,
         joiner: request.joiner,
-        message: 'Approval submitted',
+        message: t('status.approval.submitted'),
         result,
       });
 
@@ -786,7 +794,7 @@ export default function App() {
         await loadAdminJoinRequests(account);
       }
     } catch (error) {
-      setWriteError(getBridgeErrorMessage(error, 'Unable to approve join request.'));
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.approveJoin'), t));
     } finally {
       setApprovePendingJoiner(null);
     }
@@ -849,7 +857,7 @@ export default function App() {
 
       await loadMessages(chat);
     } catch (error) {
-      setWriteError(getBridgeErrorMessage(error, 'Unable to send chat message.'));
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
     } finally {
       setSendPending(false);
     }
@@ -894,7 +902,7 @@ export default function App() {
       return selectedAccount;
     } catch (error) {
       setAccount(null);
-      setAccountError(getBridgeErrorMessage(error, 'Selected account unavailable.'));
+      setAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       setMemberGroups({ phase: 'ready', value: emptyGroups });
       setAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
       setAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
@@ -914,7 +922,7 @@ export default function App() {
       setBridge({ phase: 'ready', value: nextBridge });
     } catch (error) {
       setBridge({
-        error: getBridgeErrorMessage(error, 'Unable to inspect QDN bridge.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
         phase: 'error',
         value: bridge.value,
       });
@@ -989,10 +997,10 @@ export default function App() {
                 ...transaction,
                 message:
                   transaction.action === 'approve'
-                    ? 'Approval confirmed'
+                    ? t('status.approval.confirmed')
                     : transaction.action === 'rewardshare'
-                      ? 'Minting authorization confirmed'
-                      : 'Join transaction confirmed',
+                      ? t('status.minting.authorization.confirmed')
+                      : t('status.join.transaction.confirmed'),
                 phase: 'confirmed',
               },
             }));
@@ -1003,7 +1011,7 @@ export default function App() {
             return;
           }
 
-          const message = getBridgeErrorMessage(error, 'Unable to check transaction status.');
+          const message = getBridgeErrorMessage(error, t('status.loadingError.transactionStatus'), t);
 
           if (!/TRANSACTION_UNKNOWN|transaction unknown|HTTP 404/i.test(message)) {
             setTrackedTransactions((current) => ({
@@ -1070,7 +1078,7 @@ export default function App() {
         }));
       } catch (error) {
         setMessages({
-          error: getBridgeErrorMessage(error, 'Unable to read live chat messages.'),
+        error: getBridgeErrorMessage(error, t('status.loadingError.readLiveMessages'), t),
           phase: 'error',
           value: messages.value,
         });
@@ -1147,7 +1155,7 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="topbar__title">
-          <h1>Qortium Chat</h1>
+          <h1>{t('app.title')}</h1>
         </div>
         <div className="topbar__account">
           <AccountSummary
@@ -1155,15 +1163,16 @@ export default function App() {
             error={accountError}
             isHomeBridge={bridge.value.isHomeBridge}
             onConnect={() => void connectSelectedAccount()}
+            t={t}
           />
         </div>
       </header>
 
       <section className={`layout${selectedGroup && membersOpen ? ' layout--members-open' : ''}`}>
-        <aside className="sidebar" aria-label="Navigation">
+        <aside className="sidebar" aria-label={t('aria.navigation')}>
           <section className="panel">
             <div className="panel__header">
-              <h2>Groups</h2>
+              <h2>{t('label.common.groups')}</h2>
               <span>{groups.value.length}</span>
             </div>
             <form
@@ -1174,13 +1183,13 @@ export default function App() {
               }}
             >
               <input
-                aria-label="Search groups"
+                aria-label={t('label.searchGroups')}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search groups"
+                placeholder={t('placeholder.searchGroups')}
                 value={search}
               />
               <button className="button" type="submit">
-                Search
+                {t('button.search')}
               </button>
             </form>
             {groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
@@ -1189,29 +1198,30 @@ export default function App() {
               joinedIds={joinedIds}
               onSelect={selectGroup}
               selectedGroupId={selectedGroupId}
+              t={t}
             />
           </section>
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Direct</h2>
+              <h2>{t('label.common.direct')}</h2>
               <span>{activeChats.value.direct?.length ?? 0}</span>
             </div>
             <form className="search" onSubmit={handleOpenDirectChat}>
               <input
-                aria-label="Direct address"
+                aria-label={t('placeholder.directAddress')}
                 disabled={!canOpenDirectChat}
                 onChange={(event) => setDirectAddress(event.target.value)}
-                placeholder="Direct address"
+                placeholder={t('placeholder.directAddress')}
                 value={directAddress}
               />
               <button
                 className="button"
                 disabled={!canOpenDirectChat || !directAddress.trim()}
-                title={canOpenDirectChat ? 'Open direct chat' : directAccessUnavailableLabel}
+                title={canOpenDirectChat ? t('action.directTooltip') : directAccessUnavailableLabel}
                 type="submit"
               >
-                Open
+                {t('button.open')}
               </button>
             </form>
             {activeChats.phase === 'error' ? <p className="error">{activeChats.error}</p> : null}
@@ -1222,11 +1232,12 @@ export default function App() {
               canOpen={canOpenDirectChat}
               onSelect={selectDirect}
               selectedAddress={selectedDirectAddress}
+              t={t}
             />
           </section>
         </aside>
 
-        <section className="chat-pane" aria-label="Selected chat">
+        <section className="chat-pane" aria-label={t('aria.selectedChat')}>
           <div className="chat-pane__header">
             <div>
               <h2>
@@ -1234,34 +1245,38 @@ export default function App() {
                   ? selectedChat.kind === 'group'
                     ? getGroupTitle(selectedChat.group)
                     : getDirectTitle(selectedChat.direct)
-                  : 'Select a chat'}
+                  : t('label.chat.select')}
               </h2>
               {selectedChat?.kind === 'group' ? (
                 <p>
                   {selectedChat.group.isOpen === false
                     ? canReadPrivateGroupChat
-                      ? 'Closed / private read'
-                      : 'Closed / private history unavailable'
-                    : 'Open'}
-                  {isSelectedMintingGroup ? ' / minting group' : ''}
+                      ? t('hint.groupMeta.privateRead')
+                      : t('hint.groupMeta.privateHistoryUnavailable')
+                    : t('group.meta.open')}
+                  {isSelectedMintingGroup ? t('group.status.minting.group') : ''}
                   {showMintingControls
                     ? accountMintingStatus?.isMinting === true
-                      ? ' / minting'
+                      ? t('group.status.minting.minting')
                       : accountMintingStatus?.isMinting === false
-                        ? ' / not minting'
+                        ? t('group.status.minting.notMinting')
                         : accountMintingStatus
-                          ? ' / minting status unavailable'
+                          ? t('group.status.minting.unavailable')
                           : ''
                     : ''}
-                  {hasPendingJoinTransaction ? ' / join pending' : hasPendingJoinRequest ? ' / request pending' : ''}
+                  {hasPendingJoinTransaction
+                    ? t('group.status.join.pending')
+                    : hasPendingJoinRequest
+                      ? t('group.status.request.pending')
+                      : ''}
                   {typeof selectedChat.group.memberCount === 'number'
-                    ? ` / ${selectedChat.group.memberCount.toLocaleString()} members`
+                    ? ` / ${selectedChat.group.memberCount.toLocaleString()} ${t('label.common.members')}`
                     : ''}
                 </p>
               ) : null}
               {selectedChat?.kind === 'direct' ? (
                 <p>
-                  {canReadPrivateDirectChat ? 'Direct / private history' : 'Direct / send only'} /{' '}
+                  {canReadPrivateDirectChat ? t('group.meta.directPrivateRead') : t('group.meta.direct')} /{' '}
                   {selectedChat.direct.address}
                 </p>
               ) : null}
@@ -1273,7 +1288,9 @@ export default function App() {
                   onClick={() => setMembersOpen((current) => !current)}
                   type="button"
                 >
-                  {membersOpen ? 'Hide members' : `Members (${groupMembers.value.length})`}
+                  {membersOpen
+                    ? t('button.hideMembers')
+                    : `${t('label.common.members')} (${groupMembers.value.length})`}
                 </button>
               ) : null}
               {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && canJoinGroup ? (
@@ -1283,22 +1300,22 @@ export default function App() {
                   onClick={() => void handleJoinGroup()}
                   title={
                     hasPendingJoinTransaction
-                      ? 'Join transaction is pending'
+                      ? t('button.join.transaction.pending')
                       : hasPendingJoinRequest
-                        ? 'Join request is pending'
+                        ? t('button.join.request.pending')
                         : isAccountUnlocked && canJoinGroup
-                          ? 'Join group'
+                          ? t('button.join')
                           : groupJoinUnavailableLabel
                   }
                   type="button"
                 >
                   {joinPending
-                    ? 'Joining'
+                    ? t('button.joining')
                     : hasPendingJoinTransaction
-                      ? 'Join pending'
+                      ? t('button.join.pending')
                       : hasPendingJoinRequest
-                        ? 'Request pending'
-                        : 'Join'}
+                        ? t('button.join.request.pending')
+                        : t('button.join')}
                 </button>
               ) : null}
               {showMintingControls && accountMintingStatus && accountMintingStatus.isMinting !== true ? (
@@ -1310,10 +1327,10 @@ export default function App() {
                   type="button"
                 >
                   {startMintingPending
-                    ? 'Starting minting'
+                    ? t('button.startingMinting')
                     : hasPendingRewardShareTransaction
-                      ? 'Authorization pending'
-                      : 'Start minting'}
+                      ? t('button.authorization.pending')
+                      : t('button.startMinting')
                 </button>
               ) : null}
             </div>
@@ -1329,15 +1346,15 @@ export default function App() {
             <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
           ) : null}
           {selectedTransactions.length > 0 ? (
-            <div className="tx-status-list" aria-label="Transaction status">
+            <div className="tx-status-list" aria-label={t('aria.transactionStatus')}>
               {selectedTransactions.map((transaction) => (
                 <div className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
                   <strong>
                     {transaction.phase === 'confirmed'
-                      ? 'Confirmed'
+                      ? t('status.transaction.confirmed')
                       : transaction.phase === 'failed'
-                        ? 'Failed'
-                        : 'Pending'}
+                        ? t('status.transaction.failed')
+                        : t('status.transaction.pending')}
                   </strong>
                   <span>{transaction.message}</span>
                   {transaction.signature ? <small>{transaction.signature}</small> : null}
@@ -1346,15 +1363,15 @@ export default function App() {
             </div>
           ) : null}
 
-          <MessageList messages={messages.value} />
+          <MessageList messages={messages.value} t={t} />
 
           <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
             <input
-              aria-label="Message"
+              aria-label={t('label.common.message')}
               disabled={!canComposeMessage || sendPending}
               maxLength={4000}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="Message"
+              placeholder={t('placeholder.message')}
               value={draft}
             />
             <button
@@ -1363,34 +1380,34 @@ export default function App() {
               title={
                 selectedChat?.kind === 'direct'
                   ? canComposeMessage
-                    ? 'Send direct message'
+                    ? t('button.sendDirectMessage')
                     : directSendUnavailableLabel
                   : canComposeMessage
-                    ? 'Send message'
+                    ? t('button.sendMessage')
                     : groupSendUnavailableLabel
               }
               type="submit"
             >
-              {sendPending ? 'Sending' : 'Send'}
+              {sendPending ? t('button.sending') : t('button.send')}
             </button>
           </form>
         </section>
 
         {selectedGroup && membersOpen ? (
-          <aside className="members-drawer" aria-label="Group members">
+          <aside className="members-drawer" aria-label={t('aria.groupMembers')}>
             <div className="members-drawer__header">
               <div>
-                <h2>Members</h2>
+                <h2>{t('label.common.members')}</h2>
                 <p>{getGroupTitle(selectedGroup)}</p>
               </div>
               <span>{groupMembers.value.length}</span>
             </div>
             {groupMembers.phase === 'error' ? <p className="error">{groupMembers.error}</p> : null}
-            <GroupMemberList members={groupMembers.value} />
+            <GroupMemberList members={groupMembers.value} t={t} />
             {selectedAdminJoinRequests.length > 0 ? (
-              <div className="join-requests" aria-label="Pending join requests">
+              <div className="join-requests" aria-label={t('title.joinRequests')}>
                 <div className="join-requests__header">
-                  <strong>Join requests</strong>
+                  <strong>{t('title.joinRequests')}</strong>
                   <span>{selectedAdminJoinRequests.length}</span>
                 </div>
                 {selectedAdminJoinRequests.map((request) => (
@@ -1404,12 +1421,12 @@ export default function App() {
                         !isAccountUnlocked
                           ? accountLockedLabel
                           : canApproveGroupJoinRequests
-                            ? 'Approve join request'
-                            : 'Update Qortium Home to approve join requests'
+                            ? t('action.approveJoinRequest')
+                            : t('action.approveUnavailable')
                       }
                       type="button"
                     >
-                      {approvePendingJoiner === request.joiner ? 'Approving' : 'Approve'}
+                      {approvePendingJoiner === request.joiner ? t('button.approving') : t('button.approve')}
                     </button>
                   </div>
                 ))}

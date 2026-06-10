@@ -10,6 +10,7 @@ interface ImportMeta {
 
 interface Window {
   _qdnLang?: unknown;
+  _qdnLanguage?: unknown;
   _qdnTextSize?: unknown;
   _qdnTheme?: unknown;
   qdnRequest?: <T = unknown>(request: Record<string, unknown>) => Promise<T>;

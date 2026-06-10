@@ -1,16 +1,19 @@
-export const TEXT_SIZE_VALUES = ['extra-small', 'small', 'medium', 'large', 'extra-large'] as const;
+import { isRtlLanguage, normalizeLanguage as normalizeSupportedLanguage, type SupportedLanguage } from './i18n';
+
+export const TEXT_SIZE_VALUES = ['extra-small', 'small', 'medium', 'large', 'extra-large', 'huge'] as const;
 
 export type QdnTheme = 'dark' | 'light';
 export type QdnTextSize = typeof TEXT_SIZE_VALUES[number];
 
 export type QdnDisplaySettings = {
-  language: string;
+  language: SupportedLanguage;
   textSize: QdnTextSize;
   theme: QdnTheme;
 };
 
 type QdnHostWindow = Window & {
   _qdnLang?: unknown;
+  _qdnLanguage?: unknown;
   _qdnTextSize?: unknown;
   _qdnTheme?: unknown;
 };
@@ -35,18 +38,12 @@ export function normalizeTheme(value: unknown): QdnTheme | null {
   return normalized === 'dark' || normalized === 'light' ? normalized : null;
 }
 
-export function normalizeLanguage(value: unknown): string | null {
+export function normalizeLanguage(value: unknown): SupportedLanguage | null {
   if (typeof value !== 'string') {
     return null;
   }
 
-  const normalized = value.trim().replace(/_/g, '-');
-
-  if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(normalized)) {
-    return null;
-  }
-
-  return normalized;
+  return normalizeSupportedLanguage(value);
 }
 
 export function normalizeTextSize(value: unknown): QdnTextSize | null {
@@ -61,11 +58,15 @@ export function normalizeTextSize(value: unknown): QdnTextSize | null {
 
 export function getInitialDisplaySettings(): QdnDisplaySettings {
   const hostWindow = typeof window === 'undefined' ? null : window as QdnHostWindow;
+  const query = typeof window === 'undefined' ? null : new URLSearchParams(window.location?.search ?? '');
 
   return {
-    language: normalizeLanguage(hostWindow?._qdnLang) ?? DEFAULT_DISPLAY_SETTINGS.language,
-    textSize: normalizeTextSize(hostWindow?._qdnTextSize) ?? DEFAULT_DISPLAY_SETTINGS.textSize,
-    theme: normalizeTheme(hostWindow?._qdnTheme) ?? DEFAULT_DISPLAY_SETTINGS.theme,
+    language: normalizeLanguage(query?.get('lang') ?? query?.get('language') ?? hostWindow?._qdnLang ?? hostWindow?._qdnLanguage) ??
+      DEFAULT_DISPLAY_SETTINGS.language,
+    textSize: normalizeTextSize(query?.get('textSize') ?? query?.get('text-size')) ??
+      normalizeTextSize(hostWindow?._qdnTextSize) ??
+      DEFAULT_DISPLAY_SETTINGS.textSize,
+    theme: normalizeTheme(query?.get('theme') ?? hostWindow?._qdnTheme) ?? DEFAULT_DISPLAY_SETTINGS.theme,
   };
 }
 
@@ -79,6 +80,7 @@ export function applyDisplaySettings(settings: QdnDisplaySettings) {
   root.dataset.language = settings.language;
   root.dataset.textSize = settings.textSize;
   root.dataset.theme = settings.theme;
+  root.dir = isRtlLanguage(settings.language) ? 'rtl' : 'ltr';
   root.lang = settings.language;
   root.style.colorScheme = settings.theme;
 }
