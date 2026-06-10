@@ -28,6 +28,7 @@ export type NodeApiFetchResult<T = unknown> = {
 
 export type NodeStatus = {
   height?: number;
+  isMintingPossible?: boolean;
   isSynchronizing?: boolean;
   numberOfConnections?: number;
   syncPercent?: number;
@@ -44,11 +45,42 @@ export type GroupData = {
   groupId: number;
   groupName: string;
   isAdmin?: boolean;
+  isMintingGroup?: boolean;
   isOpen?: boolean;
   memberCount?: number;
   owner?: string;
   ownerPrimaryName?: string;
   updated?: number | null;
+};
+
+export type RewardShare = {
+  mintingAccount?: string;
+  recipient?: string;
+  rewardSharePublicKey?: string;
+  sharePercent?: number;
+};
+
+export type NodeMintingAccount = {
+  mintingAccount?: string;
+  publicKey?: string;
+  recipientAccount?: string;
+};
+
+export type MintingStatus = {
+  address: string;
+  hasRewardShare: boolean;
+  isMinting: boolean | null;
+  keyOnNode: boolean | null;
+  nodeMintingPossible: boolean | null;
+};
+
+export type StartMintingResult = {
+  accepted: boolean;
+  action: 'START_MINTING';
+  address: string;
+  keyAdded: boolean;
+  rewardSharePending?: boolean;
+  transactionSignature?: string;
 };
 
 export type GroupMember = {

@@ -10,6 +10,7 @@ import {
   buildGroupJoinRequestsPath,
   buildGroupMembersPath,
   buildMemberGroupsPath,
+  buildSelfRewardSharesPath,
   buildTransactionStatusPath,
   approveGroupJoinRequest,
   getActiveChats,
@@ -20,12 +21,14 @@ import {
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
+  getMintingStatus,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
   searchGroups,
   sendChatMessage,
   sendDirectChatMessage,
+  startMinting,
 } from './coreApi';
 
 const qdnRequestMock = vi.hoisted(() => vi.fn());
@@ -349,6 +352,94 @@ describe('Core API path builders', () => {
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,
       path: '/transactions/signature/sig',
+    });
+  });
+
+  it('builds the self reward-share path', () => {
+    expect(buildSelfRewardSharesPath('Qabc')).toBe('/addresses/rewardshares?minters=Qabc&recipients=Qabc');
+  });
+
+  it('uses the minting status bridge action when available', async () => {
+    const status = {
+      address: 'Qabc',
+      hasRewardShare: true,
+      isMinting: false,
+      keyOnNode: false,
+      nodeMintingPossible: true,
+    };
+
+    qdnRequestMock.mockResolvedValueOnce(status);
+
+    await expect(getMintingStatus('Qabc', ['GET_MINTING_STATUS'])).resolves.toEqual(status);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'GET_MINTING_STATUS',
+      address: 'Qabc',
+    });
+  });
+
+  it('assembles minting status through FETCH_NODE_API when the action is unavailable', async () => {
+    const nodeApiResult = (data: unknown) => ({
+      body: JSON.stringify(data),
+      contentType: 'application/json',
+      data,
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    qdnRequestMock
+      .mockResolvedValueOnce(nodeApiResult([{ mintingAccount: 'Qabc', recipient: 'Qabc', rewardSharePublicKey: 'pub' }]))
+      .mockResolvedValueOnce(nodeApiResult([{ mintingAccount: 'Qother', recipientAccount: 'Qother' }]))
+      .mockResolvedValueOnce(nodeApiResult({ isMintingPossible: true }));
+
+    await expect(getMintingStatus('Qabc', [])).resolves.toEqual({
+      address: 'Qabc',
+      hasRewardShare: true,
+      isMinting: false,
+      keyOnNode: false,
+      nodeMintingPossible: true,
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/addresses/rewardshares?minters=Qabc&recipients=Qabc',
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/admin/mintingaccounts',
+    });
+  });
+
+  it('reports unknown node-side minting state when the node hides admin endpoints', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({
+        body: '[]',
+        contentType: 'application/json',
+        data: [],
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+      })
+      .mockRejectedValueOnce(new Error('Forbidden'));
+
+    await expect(getMintingStatus('Qabc', [])).resolves.toEqual({
+      address: 'Qabc',
+      hasRewardShare: false,
+      isMinting: null,
+      keyOnNode: null,
+      nodeMintingPossible: null,
+    });
+  });
+
+  it('starts minting through the bridge action', async () => {
+    const result = { accepted: true, action: 'START_MINTING', address: 'Qabc', keyAdded: true };
+
+    qdnRequestMock.mockResolvedValueOnce(result);
+
+    await expect(startMinting()).resolves.toEqual(result);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'START_MINTING',
     });
   });
 });
