@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildChatMessageText, decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
+import { buildChatMessageText, decodeChatMessage, formatTimeAgo, formatTimestamp, getSenderLabel } from './chatText';
 
 function base64(value: string) {
   return btoa(value);
@@ -61,6 +61,20 @@ describe('chat text helpers', () => {
       kind: 'binary',
       repliedTo: null,
     });
+  });
+
+  it('formats elapsed time in minutes and hours only', () => {
+    const now = 1_750_000_000_000;
+    const minute = 60_000;
+    const hour = 60 * minute;
+
+    expect(formatTimeAgo(undefined, now, 'en')).toBe('');
+    expect(formatTimeAgo(now - 20_000, now, 'en')).toBe('now');
+    expect(formatTimeAgo(now + 5_000, now, 'en')).toBe('now');
+    expect(formatTimeAgo(now - 5 * minute, now, 'en')).toBe('5 min. ago');
+    expect(formatTimeAgo(now - 59 * minute - 59_000, now, 'en')).toBe('59 min. ago');
+    expect(formatTimeAgo(now - hour, now, 'en')).toBe('1 hr. ago');
+    expect(formatTimeAgo(now - 23 * hour - 59 * minute, now, 'en')).toBe('23 hr. ago');
   });
 
   it('formats timestamps and sender labels', () => {

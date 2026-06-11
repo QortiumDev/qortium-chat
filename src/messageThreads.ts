@@ -29,7 +29,7 @@ export function isThreadContinuation(
   );
 }
 
-function sortByTimestamp(messages: ChatMessage[]) {
+export function sortMessagesByTimestamp(messages: ChatMessage[]) {
   return [...messages].sort((first, second) => first.timestamp - second.timestamp);
 }
 
@@ -65,7 +65,7 @@ export function buildMessageThreads(messages: ChatMessage[]): MessageThread[] {
       continue;
     }
 
-    const revisions = sortByTimestamp(
+    const revisions = sortMessagesByTimestamp(
       (message.signature ? revisionsByReference.get(message.signature) ?? [] : []).filter(
         // Only the author can revise their own message.
         (revision) => revision.sender === message.sender,

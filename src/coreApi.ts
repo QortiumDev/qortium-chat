@@ -1,4 +1,5 @@
 import { buildNodeWebSocketUrl, qdnRequest } from './qdnRequest';
+import { sortMessagesByTimestamp } from './messageThreads';
 import type {
   ActiveChats,
   ChatActionResult,
@@ -39,10 +40,6 @@ function assertOk<T>(result: NodeApiFetchResult<T>, label: string) {
 
 function hasBridgeAction(actions: QdnAction[] | undefined, action: string) {
   return actions?.some((candidate) => candidate.toUpperCase() === action.toUpperCase()) ?? false;
-}
-
-function sortMessages(messages: ChatMessage[]) {
-  return [...messages].sort((first, second) => first.timestamp - second.timestamp);
 }
 
 function normalizeGroupMembers(response: GroupMember[] | GroupMembersResponse) {
@@ -334,7 +331,7 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
       ...messageRequest,
     });
 
-    return sortMessages(messages);
+    return sortMessagesByTimestamp(messages);
   }
 
   if (hasBridgeAction(actions, 'SEARCH_CHAT_MESSAGES')) {
@@ -343,12 +340,12 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
       ...messageRequest,
     });
 
-    return sortMessages(messages);
+    return sortMessagesByTimestamp(messages);
   }
 
   const messages = await fetchNodeApiData<ChatMessage[]>(buildGroupMessagesPath(groupId), 'Group messages');
 
-  return sortMessages(messages);
+  return sortMessagesByTimestamp(messages);
 }
 
 export async function getDirectMessages(otherAddress: string, actions?: QdnAction[]) {
@@ -361,7 +358,7 @@ export async function getDirectMessages(otherAddress: string, actions?: QdnActio
       reverse: true,
     });
 
-    return sortMessages(messages);
+    return sortMessagesByTimestamp(messages);
   }
 
   throw new Error('Direct private chat reads require Qortium Home direct chat support.');

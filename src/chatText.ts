@@ -128,6 +128,46 @@ export function formatTimestamp(timestamp: number | null | undefined) {
   }).format(new Date(timestamp));
 }
 
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+
+// Formatter construction is the expensive part of Intl and the message list
+// formats ~100 timestamps per render, so cache one formatter per locale.
+const relativeTimeFormats = new Map<string, Intl.RelativeTimeFormat>();
+
+function getRelativeTimeFormat(locale?: string) {
+  const key = locale ?? '';
+  let format = relativeTimeFormats.get(key);
+
+  if (!format) {
+    format = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
+    relativeTimeFormats.set(key, format);
+  }
+
+  return format;
+}
+
+export function formatTimeAgo(timestamp: number | null | undefined, now: number, locale?: string) {
+  if (!timestamp) {
+    return '';
+  }
+
+  const format = getRelativeTimeFormat(locale);
+  // Clamp future timestamps (clock skew between nodes) to "now".
+  const elapsed = Math.max(0, now - timestamp);
+
+  if (elapsed < MINUTE_MS) {
+    return format.format(0, 'second');
+  }
+
+  if (elapsed < HOUR_MS) {
+    return format.format(-Math.floor(elapsed / MINUTE_MS), 'minute');
+  }
+
+  // Chat messages expire after 24 hours, so hours are the largest unit needed.
+  return format.format(-Math.floor(elapsed / HOUR_MS), 'hour');
+}
+
 export function getSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName'>) {
   return message.senderName || `${message.sender.slice(0, 8)}...${message.sender.slice(-6)}`;
 }

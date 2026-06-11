@@ -1073,9 +1073,35 @@ button.message__reply-preview:focus-visible {
   border-inline-start-color: var(--qc-color-border-strong);
 }
 
+.message__footer {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.message__footer .message__actions {
+  margin-inline-start: auto;
+}
+
+.message__time {
+  padding: 0;
+  color: var(--qc-color-text-faint);
+  font-size: var(--qc-text-tiny);
+  line-height: var(--qc-line-small);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.message__time:hover,
+.message__time:focus-visible {
+  color: var(--qc-color-text-secondary);
+  outline: none;
+}
+
 .message__edited {
   width: fit-content;
-  margin-top: 6px;
   padding: 0;
   color: var(--qc-color-muted);
   font-size: var(--qc-text-tiny);
@@ -1123,7 +1149,6 @@ button.message__reply-preview:focus-visible {
 .message__actions {
   display: flex;
   gap: 12px;
-  margin-top: 6px;
 }
 
 .message__actions button {

@@ -20,8 +20,8 @@ import {
   sendDirectChatMessage,
   startMinting,
 } from './coreApi';
-import { buildChatMessageText, decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
-import { buildMessageThreads, isThreadContinuation, type MessageThread } from './messageThreads';
+import { buildChatMessageText, decodeChatMessage, formatTimeAgo, formatTimestamp, getSenderLabel } from './chatText';
+import { buildMessageThreads, isThreadContinuation, sortMessagesByTimestamp, type MessageThread } from './messageThreads';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
@@ -173,10 +173,6 @@ function sortGroups(groups: GroupData[], t: TranslateFunction) {
   });
 }
 
-function sortMessages(messages: ChatMessage[]) {
-  return [...messages].sort((first, second) => first.timestamp - second.timestamp);
-}
-
 function getMessageKey(message: ChatMessage, index = 0) {
   return message.signature || `${message.timestamp}-${message.sender}-${index}`;
 }
@@ -192,7 +188,7 @@ function mergeMessages(currentMessages: ChatMessage[], nextMessages: ChatMessage
     messages.set(getMessageKey(message, index), message);
   }
 
-  return sortMessages([...messages.values()]).slice(-100);
+  return sortMessagesByTimestamp([...messages.values()]).slice(-100);
 }
 
 function parseChatMessages(value: unknown) {
@@ -376,8 +372,11 @@ function MessageList({
   const stickToBottomRef = useRef(true);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
   const highlightTimeoutRef = useRef(0);
+  const expandedTimeTimeoutRef = useRef(0);
   const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
   const [highlightedKey, setHighlightedKey] = useState('');
+  const [expandedTimeKey, setExpandedTimeKey] = useState('');
+  const [now, setNow] = useState(() => Date.now());
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
   const threadsBySignature = useMemo(() => {
     const bySignature = new Map<string, MessageThread>();
@@ -408,7 +407,27 @@ function MessageList({
     }
   }, [lastMessageIsOwn, lastMessageKey]);
 
-  useEffect(() => () => window.clearTimeout(highlightTimeoutRef.current), []);
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(highlightTimeoutRef.current);
+      window.clearTimeout(expandedTimeTimeoutRef.current);
+    };
+  }, []);
+
+  function toggleTimeDisplay(threadKey: string) {
+    window.clearTimeout(expandedTimeTimeoutRef.current);
+
+    if (expandedTimeKey === threadKey) {
+      setExpandedTimeKey('');
+      return;
+    }
+
+    setExpandedTimeKey(threadKey);
+    expandedTimeTimeoutRef.current = window.setTimeout(() => setExpandedTimeKey(''), 5000);
+  }
 
   function scrollToThread(threadKey: string) {
     const item = itemsRef.current.get(threadKey);
@@ -463,6 +482,20 @@ function MessageList({
         const isHighlighted = highlightedKey === threadKey;
         const isContinuation = isThreadContinuation(threads[index - 1], thread);
         const canEdit = isOwn && decoded.kind === 'text';
+        const isTimeExpanded = expandedTimeKey === threadKey;
+        const actionButtons =
+          canCompose && original.signature ? (
+            <div className="message__actions">
+              <button onClick={() => onReply(original)} type="button">
+                {t('button.reply')}
+              </button>
+              {canEdit ? (
+                <button onClick={() => onEdit(thread)} type="button">
+                  {t('button.edit')}
+                </button>
+              ) : null}
+            </div>
+          ) : null;
 
         return (
           <li
@@ -475,12 +508,11 @@ function MessageList({
                 itemsRef.current.delete(threadKey);
               }
             }}
-            title={isContinuation ? formatTimestamp(original.timestamp) : undefined}
           >
             {isContinuation ? null : (
               <div className="message__meta">
                 <strong>{getSenderLabel(original)}</strong>
-                <span>{formatTimestamp(original.timestamp)}</span>
+                {actionButtons}
               </div>
             )}
             {decoded.repliedTo ? (
@@ -501,17 +533,28 @@ function MessageList({
               )
             ) : null}
             <div className="message__body">{decoded.body || t('message.empty')}</div>
-            {isEdited ? (
+            <div className="message__footer">
               <button
-                aria-expanded={isHistoryOpen}
-                className="message__edited"
-                onClick={() => toggleHistory(threadKey)}
-                title={t('action.toggleEditHistory')}
+                className="message__time"
+                onClick={() => toggleTimeDisplay(threadKey)}
+                title={formatTimestamp(original.timestamp)}
                 type="button"
               >
-                {t('label.message.edited')} · {formatTimestamp(latest.timestamp)}
+                {isTimeExpanded ? formatTimestamp(original.timestamp) : formatTimeAgo(original.timestamp, now)}
               </button>
-            ) : null}
+              {isEdited ? (
+                <button
+                  aria-expanded={isHistoryOpen}
+                  className="message__edited"
+                  onClick={() => toggleHistory(threadKey)}
+                  title={t('action.toggleEditHistory')}
+                  type="button"
+                >
+                  {t('label.message.edited')} · {formatTimeAgo(latest.timestamp, now)}
+                </button>
+              ) : null}
+              {isContinuation ? actionButtons : null}
+            </div>
             {isHistoryOpen ? (
               <ol className="message__history" aria-label={t('label.editHistory')}>
                 {previousVersions.map((version, versionIndex) => (
@@ -526,18 +569,6 @@ function MessageList({
                   </li>
                 ))}
               </ol>
-            ) : null}
-            {canCompose && original.signature ? (
-              <div className="message__actions">
-                <button onClick={() => onReply(original)} type="button">
-                  {t('button.reply')}
-                </button>
-                {canEdit ? (
-                  <button onClick={() => onEdit(thread)} type="button">
-                    {t('button.edit')}
-                  </button>
-                ) : null}
-              </div>
             ) : null}
           </li>
         );
@@ -1377,52 +1408,82 @@ export default function App() {
     }
 
     if (selectedChat.kind !== 'group' || selectedChat.group.isOpen === false) {
-      void loadMessages(selectedChat);
-      return undefined;
+      // Direct and closed-group chats have no public websocket; poll quietly
+      // so newly received messages show up without a manual refresh.
+      const chat = selectedChat;
+
+      void loadMessages(chat);
+
+      const interval = window.setInterval(() => {
+        void loadMessages(chat, actions, { quiet: true });
+      }, 15000);
+
+      return () => window.clearInterval(interval);
     }
 
     const chat = selectedChat;
-    const socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId));
+    let socket: WebSocket | null = null;
+    let reconnectTimeout = 0;
+    let isDisposed = false;
     let receivedInitialMessages = false;
+    let usedRestFallback = false;
 
     setMessages({ phase: 'loading', value: messages.value });
 
-    socket.addEventListener('message', (event) => {
-      try {
-        const nextMessages = parseChatMessages(event.data);
+    function connect() {
+      if (isDisposed) {
+        return;
+      }
 
-        if (!receivedInitialMessages) {
-          receivedInitialMessages = true;
-          setMessages({ phase: 'ready', value: sortMessages(nextMessages) });
+      socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId));
+
+      socket.addEventListener('message', (event) => {
+        try {
+          const nextMessages = parseChatMessages(event.data);
+
+          if (!receivedInitialMessages) {
+            receivedInitialMessages = true;
+            setMessages({ phase: 'ready', value: sortMessagesByTimestamp(nextMessages) });
+            return;
+          }
+
+          // Reconnects resend the initial batch; merging dedupes by signature.
+          setMessages((current) => ({
+            phase: 'ready',
+            value: mergeMessages(current.value, nextMessages),
+          }));
+        } catch (error) {
+          setMessages({
+            error: getBridgeErrorMessage(error, t('status.loadingError.readLiveMessages'), t),
+            phase: 'error',
+            value: messages.value,
+          });
+        }
+      });
+
+      socket.addEventListener('close', () => {
+        if (isDisposed) {
           return;
         }
 
-        setMessages((current) => ({
-          phase: 'ready',
-          value: mergeMessages(current.value, nextMessages),
-        }));
-      } catch (error) {
-        setMessages({
-        error: getBridgeErrorMessage(error, t('status.loadingError.readLiveMessages'), t),
-          phase: 'error',
-          value: messages.value,
-        });
-      }
-    });
+        if (!receivedInitialMessages) {
+          // No websocket (e.g. browser dev against a REST-only node): fall back
+          // to REST, quietly after the first load so the list does not flicker.
+          void loadMessages(chat, actions, { quiet: usedRestFallback });
+          usedRestFallback = true;
+        }
 
-    socket.addEventListener('error', () => {
-      if (!receivedInitialMessages) {
-        void loadMessages(chat);
-      }
-    });
+        reconnectTimeout = window.setTimeout(connect, 5000);
+      });
+    }
 
-    socket.addEventListener('close', () => {
-      if (!receivedInitialMessages) {
-        void loadMessages(chat);
-      }
-    });
+    connect();
 
-    return () => socket.close();
+    return () => {
+      isDisposed = true;
+      window.clearTimeout(reconnectTimeout);
+      socket?.close();
+    };
   }, [selectedChatKey, actionsKey, isAccountUnlocked]);
 
   useEffect(() => {
