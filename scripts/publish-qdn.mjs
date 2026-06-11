@@ -4,8 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_NODE_API_URL = 'http://127.0.0.1:24891';
-const DEFAULT_NAME = 'QortiumHomeTest';
-const DEFAULT_IDENTIFIER = 'qortium-chat';
+const DEFAULT_NAME = 'Chat';
+const DEFAULT_IDENTIFIER = 'Chat';
+const DEFAULT_TITLE = 'Chat';
 const POLL_INTERVAL_MS = 5_000;
 const POLL_TIMEOUT_MS = 180_000;
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -16,6 +17,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const nodeApiUrl = (process.env.QORTIUM_CHAT_NODE_API_URL ?? DEFAULT_NODE_API_URL).replace(/\/+$/, '');
 const publishName = process.env.QORTIUM_CHAT_QDN_NAME ?? DEFAULT_NAME;
 const identifier = process.env.QORTIUM_CHAT_QDN_IDENTIFIER ?? DEFAULT_IDENTIFIER;
+const publishTitle = process.env.QORTIUM_CHAT_QDN_TITLE ?? DEFAULT_TITLE;
 const service = process.env.QORTIUM_CHAT_QDN_SERVICE ?? 'APP';
 const distPath = path.resolve(repoRoot, process.env.QORTIUM_CHAT_DIST_PATH ?? 'dist');
 const apiKeyPath = expandHomePath(
@@ -420,7 +422,7 @@ async function ensureNameRegistered(name, account) {
     timestamp: Date.now(),
     name,
     data: JSON.stringify({
-      app: 'Qortium Chat',
+      app: 'Chat',
       purpose: 'QDN chat app preview',
     }),
   });
@@ -448,7 +450,7 @@ async function publishResource(account) {
   const resourcePathname = `/arbitrary/${service}/${encodeURIComponent(publishName)}/${encodeURIComponent(identifier)}`;
   const rawUnsignedBytes58 = await request(
     appendQuery(resourcePathname, {
-      title: 'Qortium Chat',
+      title: publishTitle,
       description: 'QDN chat app for Qortium Home',
       fee: 0,
     }),
