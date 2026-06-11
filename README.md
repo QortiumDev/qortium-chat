@@ -39,12 +39,14 @@ npm run build
 npm run qdn:publish
 ```
 
-By default the publish helper uploads `dist/` as
-`qdn://APP/QortiumHomeTest/qortium-chat` through `http://127.0.0.1:24891`, using
-the local preview account files under `~/git/qortium/preview`. The helper uses
-`QORTIUM_CHAT_NODE_API_KEY` or `QORTIUM_CHAT_NODE_API_KEY_PATH` when set, then
-tries the API key for the active local Core process, and finally falls back to
-`~/git/qortium/preview/apikey.txt`.
+By default the publish helper uploads `dist/` as `qdn://APP/Chat/Chat` through
+`http://127.0.0.1:24891`, using the local preview account files under
+`~/git/qortium/preview`. The helper uses `QORTIUM_CHAT_NODE_API_KEY` or
+`QORTIUM_CHAT_NODE_API_KEY_PATH` when set, then tries the API key for the active
+local Core process, and finally falls back to `~/git/qortium/preview/apikey.txt`.
+Set `QORTIUM_CHAT_QDN_NAME`, `QORTIUM_CHAT_QDN_IDENTIFIER`,
+`QORTIUM_CHAT_QDN_TITLE`, or `QORTIUM_CHAT_QDN_SERVICE` to publish another QDN
+resource.
 
 ## Qortium Home Smoke Check
 
@@ -55,18 +57,21 @@ npm test
 npm run build
 ```
 
-Then open `qdn://APP/QortiumHomeTest/qortium-chat` in Qortium Home with a local
+Then open `qdn://APP/Chat/Chat` in Qortium Home with a local
 node selected and an unlocked tab account. Confirm that the status pill reports
 Home, account approval succeeds, group search loads, joined groups and active
 direct chats load, group join/send requests open Home approval prompts, direct
-chat can be opened by address, and direct private send/read requests use Home's
-approval bridge.
+chat can be opened by address, direct private send/read requests use Home's
+approval bridge, joined group leave requests open a Home approval prompt, Home
+display settings update theme, text size, accent, and language in the app, and
+encrypted/binary/unsupported message placeholders render in the selected
+language.
 
 For a publish pass, confirm the local Core is fully synchronized before running
 `npm run qdn:publish`. The expected identified render URL is
-`http://127.0.0.1:24891/render/APP/QortiumHomeTest?identifier=qortium-chat`,
+`http://127.0.0.1:24891/render/APP/Chat?identifier=Chat`,
 and the published resource should report `READY` at
-`/arbitrary/resource/status/APP/QortiumHomeTest/qortium-chat?build=true`.
+`/arbitrary/resource/status/APP/Chat/Chat?build=true`.
 
 ## Current Limits
 
