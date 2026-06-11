@@ -25,6 +25,7 @@ import {
   getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
+  leaveGroup,
   searchGroups,
   sendChatMessage,
   sendDirectChatMessage,
@@ -352,6 +353,25 @@ describe('Core API path builders', () => {
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,
       path: '/transactions/signature/sig',
+    });
+  });
+
+  it('leaves groups through the bridge action', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      accepted: true,
+      action: 'LEAVE_GROUP',
+      groupId: 7,
+      result: { signature: 'leave-sig' },
+    });
+
+    await expect(leaveGroup(7)).resolves.toMatchObject({
+      accepted: true,
+      action: 'LEAVE_GROUP',
+      groupId: 7,
+    });
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'LEAVE_GROUP',
+      groupId: 7,
     });
   });
 

@@ -158,7 +158,7 @@ export type ChatMessage = {
 
 export type ChatActionResult = {
   accepted: boolean;
-  action: 'APPROVE_GROUP_JOIN_REQUEST' | 'JOIN_GROUP' | 'SEND_CHAT_MESSAGE';
+  action: 'APPROVE_GROUP_JOIN_REQUEST' | 'JOIN_GROUP' | 'LEAVE_GROUP' | 'SEND_CHAT_MESSAGE';
   direct?: boolean;
   encrypted?: boolean;
   groupId?: number;

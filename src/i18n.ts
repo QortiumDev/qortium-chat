@@ -51,9 +51,10 @@ const DEFAULT_LANGUAGE: SupportedLanguage = 'en';
 const RTL_LANGUAGES = new Set<string>(['ar', 'he']);
 
 type MessageKey = keyof typeof EN_STRINGS;
+type MessageCatalog = { [key in MessageKey]: string };
 
 type Catalogs = {
-  [locale in SupportedLanguage]?: Partial<typeof EN_STRINGS>;
+  [locale in SupportedLanguage]?: Partial<MessageCatalog>;
 };
 
 export const OTHER_STRINGS: Catalogs = {
@@ -145,7 +146,7 @@ function interpolate(message: string, values?: MessageValues) {
 
 export function createTranslator(language: string | undefined) {
   const locale = normalizeLanguage(language) ?? DEFAULT_LANGUAGE;
-  const catalog = { ...EN_STRINGS, ...OTHER_STRINGS[locale] };
+  const catalog: MessageCatalog = { ...EN_STRINGS, ...OTHER_STRINGS[locale] } as MessageCatalog;
 
   return function translate(key: MessageKey, values?: MessageValues) {
     const message = catalog[key] ?? EN_STRINGS[key];

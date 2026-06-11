@@ -13,6 +13,7 @@ import {
   getMintingStatus,
   getTransactionStatus,
   getPrivateDirectActiveChats,
+  leaveGroup,
   joinGroup,
   searchGroups,
   sendChatMessage,
@@ -21,7 +22,7 @@ import {
 } from './coreApi';
 import { decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
-import { createTranslator, type TranslateFunction } from './i18n';
+import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
 import type {
   ActiveChats,
@@ -59,7 +60,7 @@ type SelectedChat =
     };
 
 type TrackedTransaction = {
-  action: 'approve' | 'join' | 'rewardshare';
+  action: 'approve' | 'join' | 'leave' | 'rewardshare';
   groupId: number;
   groupName: string;
   id: string;
@@ -78,6 +79,28 @@ function getBridgeErrorMessage(error: unknown, fallback: string, t: TranslateFun
     /^Error invoking remote method 'qdn-app:request': Error: /,
     '',
   );
+
+  const isBackendErrorMessage =
+    message.includes('Node API paths must start with /.') ||
+    message.includes('Node API path contains invalid control characters.') ||
+    message.includes('Only GET and HEAD node API requests are supported.') ||
+    message.includes('Node API response exceeded the ') ||
+    message.includes('Node status failed with HTTP ') ||
+    message.includes('Selected account is only available inside Qortium Home.') ||
+    message.includes(' is not available in local browser development.') ||
+    message.includes('QDN requests must include an action.') ||
+    message.includes('Closed group chat reads require Qortium Home private group chat support.') ||
+    message.includes('Direct private chat reads require Qortium Home direct chat support.');
+  const isGenericBackendErrorMessage =
+    message.includes(' failed with HTTP ') ||
+    message.includes('SyntaxError:') ||
+    message.includes('Unexpected token') ||
+    message.includes('Unexpected end of JSON input') ||
+    message.startsWith('Failed to fetch');
+
+  if (isBackendErrorMessage || isGenericBackendErrorMessage) {
+    return fallback;
+  }
 
   if (message.includes('Account request was denied')) {
     return t('status.bridge.accountAccessDenied');
@@ -108,8 +131,8 @@ function createState<T>(value: T): AsyncState<T> {
   return { phase: 'idle', value };
 }
 
-function getGroupTitle(group: GroupData) {
-  return group.groupName || `Group ${group.groupId}`;
+function getGroupTitle(group: GroupData, t: TranslateFunction) {
+  return group.groupName || t('title.groupTitle', { groupId: group.groupId });
 }
 
 function getShortAddress(address: string) {
@@ -130,10 +153,10 @@ function getMemberLabel(member: GroupMember, t: TranslateFunction) {
   return member.primaryName || member.name || (address ? getShortAddress(address) : t('member.label'));
 }
 
-function sortGroups(groups: GroupData[]) {
+function sortGroups(groups: GroupData[], t: TranslateFunction) {
   return [...groups].sort((first, second) => {
-    const firstName = getGroupTitle(first).toLocaleLowerCase();
-    const secondName = getGroupTitle(second).toLocaleLowerCase();
+    const firstName = getGroupTitle(first, t).toLocaleLowerCase();
+    const secondName = getGroupTitle(second, t).toLocaleLowerCase();
 
     return firstName.localeCompare(secondName);
   });
@@ -267,7 +290,7 @@ function GroupList({
           onClick={() => onSelect(group)}
           type="button"
         >
-          <span className="group-row__name">{getGroupTitle(group)}</span>
+          <span className="group-row__name">{getGroupTitle(group, t)}</span>
           <span className="group-row__meta">
             {joinedIds.has(group.groupId) ? t('label.joined') : group.isOpen === false ? t('label.group.closed') : t('label.group.open')}
             {typeof group.memberCount === 'number' ? ` / ${group.memberCount.toLocaleString()}` : ''}
@@ -324,7 +347,7 @@ function MessageList({ messages, t }: { messages: ChatMessage[]; t: TranslateFun
   return (
     <ol className="message-list">
       {messages.map((message, index) => {
-        const decoded = decodeChatMessage(message);
+        const decoded = decodeChatMessage(message, t);
         const signature = getMessageKey(message, index);
 
         return (
@@ -352,7 +375,7 @@ function GroupMemberList({ members, t }: { members: GroupMember[]; t: TranslateF
         const address = getMemberAddress(member);
 
         return (
-          <span className="member-chip" key={address || getMemberLabel(member)} title={address}>
+          <span className="member-chip" key={address || getMemberLabel(member, t)} title={address}>
             {getMemberLabel(member, t)}
           </span>
         );
@@ -380,6 +403,7 @@ export default function App() {
   const [directAddress, setDirectAddress] = useState('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
+  const [leavePending, setLeavePending] = useState(false);
   const [startMintingPending, setStartMintingPending] = useState(false);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
@@ -393,7 +417,7 @@ export default function App() {
     () => new Set(memberGroups.value.map((group) => group.groupId)),
     [memberGroups.value],
   );
-  const sortedGroups = useMemo(() => sortGroups(groups.value), [groups.value]);
+  const sortedGroups = useMemo(() => sortGroups(groups.value, t), [groups.value, t]);
   const selectedGroup = selectedChat?.kind === 'group' ? selectedChat.group : null;
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
@@ -407,6 +431,15 @@ export default function App() {
       new Set(
         Object.values(trackedTransactions)
           .filter((transaction) => transaction.action === 'join' && transaction.phase === 'pending')
+          .map((transaction) => transaction.groupId),
+      ),
+    [trackedTransactions],
+  );
+  const pendingTrackedLeaveGroupIds = useMemo(
+    () =>
+      new Set(
+        Object.values(trackedTransactions)
+          .filter((transaction) => transaction.action === 'leave' && transaction.phase === 'pending')
           .map((transaction) => transaction.groupId),
       ),
     [trackedTransactions],
@@ -428,6 +461,7 @@ export default function App() {
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
   const canJoinGroup = hasAction(actions, 'JOIN_GROUP');
+  const canLeaveGroup = hasAction(actions, 'LEAVE_GROUP');
   const canApproveGroupJoinRequests = hasAction(actions, 'APPROVE_GROUP_JOIN_REQUEST');
   const canSendGroupChat = hasAction(actions, 'SEND_CHAT_MESSAGE');
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
@@ -439,9 +473,20 @@ export default function App() {
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
   const hasPendingJoinRequest = selectedGroupId !== null && pendingJoinGroupIds.has(selectedGroupId);
   const hasPendingJoinTransaction = selectedGroupId !== null && pendingTrackedJoinGroupIds.has(selectedGroupId);
+  const hasPendingLeaveTransaction = selectedGroupId !== null && pendingTrackedLeaveGroupIds.has(selectedGroupId);
   const isJoinableGroup =
     selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && !hasPendingJoinRequest && !hasPendingJoinTransaction;
   const canSubmitJoin = !!account && isAccountUnlocked && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
+  const canSubmitLeave =
+    !!account &&
+    isAccountUnlocked &&
+    !!selectedGroup &&
+    selectedGroupId !== null &&
+    selectedGroupId > 0 &&
+    canLeaveGroup &&
+    isJoinedGroup &&
+    !leavePending &&
+    !hasPendingLeaveTransaction;
   const canStartMinting = hasAction(actions, 'START_MINTING');
   const isSelectedMintingGroup = selectedGroup?.isMintingGroup === true;
   const accountMintingStatus = mintingStatus.value;
@@ -499,6 +544,13 @@ export default function App() {
     : bridge.value.isHomeBridge
       ? t('action.groupJoinUnavailable')
       : t('action.groupJoinUnavailableBrowser');
+  const groupLeaveUnavailableLabel = !account
+    ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
+    : bridge.value.isHomeBridge
+      ? t('action.groupLeaveUnavailable')
+      : t('action.groupLeaveUnavailableBrowser');
   const startMintingTitle = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
@@ -742,6 +794,35 @@ export default function App() {
     }
   }
 
+  async function handleLeaveGroup() {
+    if (!selectedGroup || !canSubmitLeave) {
+      return;
+    }
+
+    setLeavePending(true);
+    setWriteError('');
+
+    try {
+      const result = await leaveGroup(selectedGroup.groupId);
+
+      trackTransaction({
+        action: 'leave',
+        group: selectedGroup,
+        message: t('status.leave.submitted'),
+        result,
+      });
+
+      if (account) {
+        await loadAccountData(account);
+      }
+      await loadGroupMembers(selectedGroup);
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.leave'), t));
+    } finally {
+      setLeavePending(false);
+    }
+  }
+
   async function handleStartMinting() {
     if (!account || !selectedGroup || !canSubmitStartMinting) {
       return;
@@ -820,10 +901,12 @@ export default function App() {
       [id]: {
         action,
         groupId: group.groupId,
-        groupName: getGroupTitle(group),
+        groupName: getGroupTitle(group, t),
         id,
         joiner,
-        message: result.transactionSignature ? message : `${message}; waiting for node status`,
+        message: result.transactionSignature
+          ? message
+          : `${message}; ${t('status.transaction.waitingForNodeStatus')}`,
         phase: 'pending',
         signature: result.transactionSignature,
       },
@@ -953,6 +1036,13 @@ export default function App() {
   }, [displaySettings]);
 
   useEffect(() => {
+    const language = normalizeLanguage(displaySettings.language);
+
+    document.documentElement.lang = language ?? 'en';
+    document.title = t('app.title');
+  }, [displaySettings.language, t]);
+
+  useEffect(() => {
     function handleHostMessage(event: MessageEvent) {
       setDisplaySettings((current) => getDisplaySettingsUpdateFromMessage(event.data, current) ?? current);
 
@@ -1000,7 +1090,9 @@ export default function App() {
                     ? t('status.approval.confirmed')
                     : transaction.action === 'rewardshare'
                       ? t('status.minting.authorization.confirmed')
-                      : t('status.join.transaction.confirmed'),
+                      : transaction.action === 'leave'
+                        ? t('status.leave.transaction.confirmed')
+                        : t('status.join.transaction.confirmed'),
                 phase: 'confirmed',
               },
             }));
@@ -1243,7 +1335,7 @@ export default function App() {
               <h2>
                 {selectedChat
                   ? selectedChat.kind === 'group'
-                    ? getGroupTitle(selectedChat.group)
+                    ? getGroupTitle(selectedChat.group, t)
                     : getDirectTitle(selectedChat.direct)
                   : t('label.chat.select')}
               </h2>
@@ -1266,6 +1358,8 @@ export default function App() {
                     : ''}
                   {hasPendingJoinTransaction
                     ? t('group.status.join.pending')
+                    : hasPendingLeaveTransaction
+                      ? t('group.status.leave.pending')
                     : hasPendingJoinRequest
                       ? t('group.status.request.pending')
                       : ''}
@@ -1318,6 +1412,27 @@ export default function App() {
                         : t('button.join')}
                 </button>
               ) : null}
+              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && isJoinedGroup && canLeaveGroup ? (
+                <button
+                  className="button button--secondary"
+                  disabled={!canSubmitLeave}
+                  onClick={() => void handleLeaveGroup()}
+                  title={
+                    hasPendingLeaveTransaction
+                      ? t('button.leave.transaction.pending')
+                      : isAccountUnlocked && canLeaveGroup
+                        ? t('button.leave')
+                        : groupLeaveUnavailableLabel
+                  }
+                  type="button"
+                >
+                  {leavePending
+                    ? t('button.leaving')
+                    : hasPendingLeaveTransaction
+                      ? t('button.leave.pending')
+                      : t('button.leave')}
+                </button>
+              ) : null}
               {showMintingControls && accountMintingStatus && accountMintingStatus.isMinting !== true ? (
                 <button
                   className="button button--secondary"
@@ -1330,7 +1445,7 @@ export default function App() {
                     ? t('button.startingMinting')
                     : hasPendingRewardShareTransaction
                       ? t('button.authorization.pending')
-                      : t('button.startMinting')
+                      : t('button.startMinting')}
                 </button>
               ) : null}
             </div>
@@ -1398,7 +1513,7 @@ export default function App() {
             <div className="members-drawer__header">
               <div>
                 <h2>{t('label.common.members')}</h2>
-                <p>{getGroupTitle(selectedGroup)}</p>
+                <p>{getGroupTitle(selectedGroup, t)}</p>
               </div>
               <span>{groupMembers.value.length}</span>
             </div>
