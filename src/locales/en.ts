@@ -33,6 +33,7 @@ export const EN_STRINGS = {
   'label.common.message': 'Message',
   'label.common.transactionStatus': 'Transaction status',
   'label.error': 'Error',
+  'label.loading': 'Loading',
   'label.group.closed': 'Closed',
   'label.group.joined': 'Joined',
   'label.group.open': 'Open',

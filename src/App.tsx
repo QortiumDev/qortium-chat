@@ -131,6 +131,16 @@ function createState<T>(value: T): AsyncState<T> {
   return { phase: 'idle', value };
 }
 
+function LoadingRows({ count = 3, label }: { count?: number; label: string }) {
+  return (
+    <div className="skeleton-list" aria-label={label} role="status">
+      {Array.from({ length: count }, (_, index) => (
+        <span className="skeleton skeleton--row" key={index} />
+      ))}
+    </div>
+  );
+}
+
 function getGroupTitle(group: GroupData, t: TranslateFunction) {
   return group.groupName || t('title.groupTitle', { groupId: group.groupId });
 }
@@ -1285,13 +1295,17 @@ export default function App() {
               </button>
             </form>
             {groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
-            <GroupList
-              groups={sortedGroups}
-              joinedIds={joinedIds}
-              onSelect={selectGroup}
-              selectedGroupId={selectedGroupId}
-              t={t}
-            />
+            {groups.phase === 'loading' ? (
+              <LoadingRows count={5} label={t('label.loading')} />
+            ) : (
+              <GroupList
+                groups={sortedGroups}
+                joinedIds={joinedIds}
+                onSelect={selectGroup}
+                selectedGroupId={selectedGroupId}
+                t={t}
+              />
+            )}
           </section>
 
           <section className="panel">
@@ -1319,13 +1333,17 @@ export default function App() {
             {activeChats.phase === 'error' ? <p className="error">{activeChats.error}</p> : null}
             {!canOpenDirectChat ? <p className="muted">{directAccessUnavailableLabel}</p> : null}
             {canOpenDirectChat && !canLoadPrivateDirectChats ? <p className="muted">{directListUnavailableLabel}</p> : null}
-            <DirectList
-              activeChats={activeChats.value}
-              canOpen={canOpenDirectChat}
-              onSelect={selectDirect}
-              selectedAddress={selectedDirectAddress}
-              t={t}
-            />
+            {activeChats.phase === 'loading' ? (
+              <LoadingRows count={3} label={t('label.loading')} />
+            ) : (
+              <DirectList
+                activeChats={activeChats.value}
+                canOpen={canOpenDirectChat}
+                onSelect={selectDirect}
+                selectedAddress={selectedDirectAddress}
+                t={t}
+              />
+            )}
           </section>
         </aside>
 
@@ -1478,7 +1496,11 @@ export default function App() {
             </div>
           ) : null}
 
-          <MessageList messages={messages.value} t={t} />
+          {messages.phase === 'loading' ? (
+            <LoadingRows count={4} label={t('label.loading')} />
+          ) : (
+            <MessageList messages={messages.value} t={t} />
+          )}
 
           <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
             <input
@@ -1518,7 +1540,11 @@ export default function App() {
               <span>{groupMembers.value.length}</span>
             </div>
             {groupMembers.phase === 'error' ? <p className="error">{groupMembers.error}</p> : null}
-            <GroupMemberList members={groupMembers.value} t={t} />
+            {groupMembers.phase === 'loading' ? (
+              <LoadingRows count={5} label={t('label.loading')} />
+            ) : (
+              <GroupMemberList members={groupMembers.value} t={t} />
+            )}
             {selectedAdminJoinRequests.length > 0 ? (
               <div className="join-requests" aria-label={t('title.joinRequests')}>
                 <div className="join-requests__header">
