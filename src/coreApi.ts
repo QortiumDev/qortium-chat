@@ -375,6 +375,13 @@ export async function joinGroup(groupId: number) {
   });
 }
 
+export async function leaveGroup(groupId: number) {
+  return qdnRequest<ChatActionResult>({
+    action: 'LEAVE_GROUP',
+    groupId,
+  });
+}
+
 export async function approveGroupJoinRequest(groupId: number, joiner: string) {
   return qdnRequest<ChatActionResult>({
     action: 'APPROVE_GROUP_JOIN_REQUEST',

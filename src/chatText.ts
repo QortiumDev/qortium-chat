@@ -1,4 +1,9 @@
 import type { ChatMessage } from './types';
+import type { TranslateFunction } from './i18n';
+
+function localizeMessage(t: TranslateFunction | undefined, key: Parameters<TranslateFunction>[0], fallback: string) {
+  return t ? t(key) : fallback;
+}
 
 export type DisplayChatMessage = {
   body: string;
@@ -30,17 +35,20 @@ function unwrapDirectMessageJson(value: string) {
   return value;
 }
 
-export function decodeChatMessage(message: Pick<ChatMessage, 'data' | 'encoding' | 'isEncrypted' | 'isText'>): DisplayChatMessage {
+export function decodeChatMessage(
+  message: Pick<ChatMessage, 'data' | 'encoding' | 'isEncrypted' | 'isText'>,
+  t?: TranslateFunction,
+): DisplayChatMessage {
   if (message.isEncrypted) {
     return {
-      body: 'Encrypted message',
+      body: localizeMessage(t, 'message.encrypted', 'Encrypted message'),
       kind: 'encrypted',
     };
   }
 
   if (!message.isText) {
     return {
-      body: 'Binary message',
+      body: localizeMessage(t, 'message.binary', 'Binary message'),
       kind: 'binary',
     };
   }
@@ -54,7 +62,7 @@ export function decodeChatMessage(message: Pick<ChatMessage, 'data' | 'encoding'
 
   if (message.encoding && message.encoding !== 'BASE64') {
     return {
-      body: 'Unsupported message encoding',
+      body: localizeMessage(t, 'message.unsupportedEncoding', 'Unsupported message encoding'),
       kind: 'unsupported',
     };
   }
@@ -66,7 +74,7 @@ export function decodeChatMessage(message: Pick<ChatMessage, 'data' | 'encoding'
     };
   } catch {
     return {
-      body: 'Unable to decode message',
+      body: localizeMessage(t, 'message.decodeError', 'Unable to decode message'),
       kind: 'unsupported',
     };
   }

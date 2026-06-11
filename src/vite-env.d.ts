@@ -13,5 +13,6 @@ interface Window {
   _qdnLanguage?: unknown;
   _qdnTextSize?: unknown;
   _qdnTheme?: unknown;
+  _qdnAccent?: unknown;
   qdnRequest?: <T = unknown>(request: Record<string, unknown>) => Promise<T>;
 }

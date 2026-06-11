@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getDisplaySettingsUpdateFromMessage,
   getInitialDisplaySettings,
+  normalizeAccent,
   normalizeLanguage,
   normalizeTextSize,
   normalizeTheme,
@@ -12,6 +13,7 @@ const current: QdnDisplaySettings = {
   language: 'en',
   textSize: 'medium',
   theme: 'light',
+  accent: 'green',
 };
 
 describe('display settings helpers', () => {
@@ -23,6 +25,7 @@ describe('display settings helpers', () => {
     expect(normalizeTheme('DARK')).toBe('dark');
     expect(normalizeLanguage('en_US')).toBe('en');
     expect(normalizeTextSize('extra-large')).toBe('extra-large');
+    expect(normalizeAccent('blue')).toBe('blue');
     expect(normalizeLanguage('zh-Hant')).toBe('zh-TW');
     expect(normalizeLanguage('zh_Hans')).toBe('zh-CN');
     expect(normalizeTextSize('huge')).toBe('huge');
@@ -32,6 +35,7 @@ describe('display settings helpers', () => {
     expect(normalizeTheme('sepia')).toBeNull();
     expect(normalizeLanguage('../en')).toBeNull();
     expect(normalizeTextSize('extra-huge')).toBeNull();
+    expect(normalizeAccent('neon')).toBeNull();
   });
 
   it('reads initial QDN globals from Core/Home', () => {
@@ -39,12 +43,14 @@ describe('display settings helpers', () => {
       _qdnLang: 'en-US',
       _qdnTextSize: 'large',
       _qdnTheme: 'dark',
+      _qdnAccent: 'blue',
     });
 
     expect(getInitialDisplaySettings()).toEqual({
       language: 'en',
       textSize: 'large',
       theme: 'dark',
+      accent: 'blue',
     });
   });
 
@@ -53,8 +59,9 @@ describe('display settings helpers', () => {
       _qdnLang: 'en',
       _qdnTextSize: 'small',
       _qdnTheme: 'light',
+      _qdnAccent: 'yellow',
       location: {
-        search: '?theme=dark&textSize=huge&lang=en-US',
+        search: '?theme=dark&textSize=huge&lang=en-US&accent=red',
       },
     });
 
@@ -62,6 +69,7 @@ describe('display settings helpers', () => {
       language: 'en',
       textSize: 'huge',
       theme: 'dark',
+      accent: 'red',
     });
   });
 
@@ -78,6 +86,10 @@ describe('display settings helpers', () => {
       ...current,
       textSize: 'extra-large',
     });
+    expect(getDisplaySettingsUpdateFromMessage({ action: 'ACCENT_CHANGED', accent: 'blue' }, current)).toEqual({
+      ...current,
+      accent: 'blue',
+    });
   });
 
   it('updates batched settings and ignores invalid messages', () => {
@@ -88,6 +100,7 @@ describe('display settings helpers', () => {
           language: 'en',
           textSize: 'small',
           theme: 'dark',
+          accent: 'red',
         },
         current,
       ),
@@ -95,8 +108,9 @@ describe('display settings helpers', () => {
       language: 'en',
       textSize: 'small',
       theme: 'dark',
+      accent: 'red',
     });
-    expect(getDisplaySettingsUpdateFromMessage({ action: 'TEXT_SIZE_CHANGED', textSize: 'huge' }, current)).toBeNull();
+    expect(getDisplaySettingsUpdateFromMessage({ action: 'TEXT_SIZE_CHANGED', textSize: 'extra-huge' }, current)).toBeNull();
     expect(getDisplaySettingsUpdateFromMessage({ action: 'UNKNOWN' }, current)).toBeNull();
   });
 });
