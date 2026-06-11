@@ -62,7 +62,7 @@ describe('Core API path builders', () => {
 
   it('builds chat message paths', () => {
     expect(buildGroupMessagesPath(7)).toBe(
-      '/chat/messages?txGroupId=7&encoding=BASE64&haschatreference=false&limit=100&reverse=true',
+      '/chat/messages?txGroupId=7&encoding=BASE64&limit=100&reverse=true',
     );
     expect(buildGroupMessagesWebSocketUrl(7)).toBe(
       'ws://127.0.0.1:24891/websockets/chat/messages?txGroupId=7&encoding=BASE64&limit=100&reverse=true',
@@ -215,7 +215,6 @@ describe('Core API path builders', () => {
       action: 'SEARCH_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 7,
-      hasChatReference: false,
       limit: 100,
       reverse: true,
     });
@@ -230,7 +229,6 @@ describe('Core API path builders', () => {
       action: 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 8,
-      hasChatReference: false,
       limit: 100,
       reverse: true,
     });
@@ -256,7 +254,6 @@ describe('Core API path builders', () => {
     expect(qdnRequestMock).toHaveBeenCalledWith({
       action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
       encoding: 'BASE64',
-      hasChatReference: false,
       limit: 100,
       otherAddress: 'Qpeer',
       reverse: true,
@@ -334,6 +331,28 @@ describe('Core API path builders', () => {
     expect(qdnRequestMock).toHaveBeenNthCalledWith(4, {
       action: 'SEND_CHAT_MESSAGE',
       message: 'hello direct',
+      recipientAddress: 'Qpeer',
+    });
+  });
+
+  it('passes the edited message reference through to the bridge', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', groupId: 9, result: true })
+      .mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', direct: true, result: true });
+
+    await sendChatMessage(9, 'fixed typo', 'original-sig');
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'SEND_CHAT_MESSAGE',
+      chatReference: 'original-sig',
+      groupId: 9,
+      message: 'fixed typo',
+    });
+
+    await sendDirectChatMessage('Qpeer', 'fixed direct typo', 'direct-sig');
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'SEND_CHAT_MESSAGE',
+      chatReference: 'direct-sig',
+      message: 'fixed direct typo',
       recipientAddress: 'Qpeer',
     });
   });

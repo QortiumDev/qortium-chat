@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'Rühma lahkumine pole selles Home\'i versioonis saadaval.',
   'action.groupLeaveUnavailableBrowser': 'Rühmadest väljumiseks ava Qortium Home.',
   'status.loadingError.leave': 'Rühma ei saanud lahkuda.',
+  'button.reply': 'Vasta',
+  'button.edit': 'Muuda',
+  'button.cancel': 'Tühista',
+  'label.message.edited': 'Muudetud',
+  'label.message.original': 'Originaal',
+  'label.editHistory': 'Muudatuste ajalugu',
+  'label.composer.editing': 'Sõnumi muutmine',
+  'label.composer.replyingTo': 'Vastus kasutajale {name}',
+  'message.replyUnavailable': 'Algne sõnum pole saadaval',
+  'action.toggleEditHistory': 'Kuva või peida muudatuste ajalugu',
+  'action.goToOriginal': 'Mine algse sõnumi juurde',
 
 } as const;

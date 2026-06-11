@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'יציאה מהקבוצה לא זמינה בגרסת Home זו.',
   'action.groupLeaveUnavailableBrowser': 'פתח את Qortium Home כדי לעזוב קבוצות.',
   'status.loadingError.leave': 'לא ניתן לצאת מהקבוצה.',
+  'button.reply': 'השב',
+  'button.edit': 'עריכה',
+  'button.cancel': 'ביטול',
+  'label.message.edited': 'נערך',
+  'label.message.original': 'מקור',
+  'label.editHistory': 'היסטוריית עריכות',
+  'label.composer.editing': 'עריכת הודעה',
+  'label.composer.replyingTo': 'משיב ל־{name}',
+  'message.replyUnavailable': 'ההודעה המקורית אינה זמינה',
+  'action.toggleEditHistory': 'הצגה או הסתרה של היסטוריית העריכות',
+  'action.goToOriginal': 'מעבר להודעה המקורית',
 
 } as const;

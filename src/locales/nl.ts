@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'Groepsverlaten is niet beschikbaar in deze Home-versie.',
   'action.groupLeaveUnavailableBrowser': 'Open Qortium Home om groepen te verlaten.',
   'status.loadingError.leave': 'Kan groep niet verlaten.',
+  'button.reply': 'Beantwoorden',
+  'button.edit': 'Bewerken',
+  'button.cancel': 'Annuleren',
+  'label.message.edited': 'Bewerkt',
+  'label.message.original': 'Origineel',
+  'label.editHistory': 'Bewerkingsgeschiedenis',
+  'label.composer.editing': 'Bericht bewerken',
+  'label.composer.replyingTo': 'Antwoord aan {name}',
+  'message.replyUnavailable': 'Oorspronkelijk bericht niet beschikbaar',
+  'action.toggleEditHistory': 'Bewerkingsgeschiedenis tonen of verbergen',
+  'action.goToOriginal': 'Ga naar het oorspronkelijke bericht',
 
 } as const;

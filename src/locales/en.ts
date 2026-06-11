@@ -161,5 +161,16 @@ export const EN_STRINGS = {
   'label.joined': 'Joined',
   'label.closed': 'Closed',
   'status.transaction.waitingForNodeStatus': 'Waiting for node status',
+  'button.reply': 'Reply',
+  'button.edit': 'Edit',
+  'button.cancel': 'Cancel',
+  'label.message.edited': 'Edited',
+  'label.message.original': 'Original',
+  'label.editHistory': 'Edit history',
+  'label.composer.editing': 'Editing message',
+  'label.composer.replyingTo': 'Replying to {name}',
+  'message.replyUnavailable': 'Original message unavailable',
+  'action.toggleEditHistory': 'Show or hide edit history',
+  'action.goToOriginal': 'Go to original message',
 
 } as const;

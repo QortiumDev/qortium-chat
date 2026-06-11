@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'Das Verlassen der Gruppe ist in dieser Home-Version nicht verfügbar.',
   'action.groupLeaveUnavailableBrowser': 'Öffnen Sie Qortium Home, um Gruppen zu verlassen.',
   'status.loadingError.leave': 'Gruppe kann nicht verlassen werden.',
+  'button.reply': 'Antworten',
+  'button.edit': 'Bearbeiten',
+  'button.cancel': 'Abbrechen',
+  'label.message.edited': 'Bearbeitet',
+  'label.message.original': 'Original',
+  'label.editHistory': 'Bearbeitungsverlauf',
+  'label.composer.editing': 'Nachricht bearbeiten',
+  'label.composer.replyingTo': 'Antwort an {name}',
+  'message.replyUnavailable': 'Ursprüngliche Nachricht nicht verfügbar',
+  'action.toggleEditHistory': 'Bearbeitungsverlauf ein- oder ausblenden',
+  'action.goToOriginal': 'Zur ursprünglichen Nachricht springen',
 
 } as const;

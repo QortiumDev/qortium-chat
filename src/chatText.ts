@@ -8,6 +8,7 @@ function localizeMessage(t: TranslateFunction | undefined, key: Parameters<Trans
 export type DisplayChatMessage = {
   body: string;
   kind: 'binary' | 'empty' | 'encrypted' | 'text' | 'unsupported';
+  repliedTo: string | null;
 };
 
 function decodeBase64(value: string) {
@@ -17,22 +18,50 @@ function decodeBase64(value: string) {
   return new TextDecoder().decode(bytes);
 }
 
-function unwrapDirectMessageJson(value: string) {
-  try {
-    const parsed = JSON.parse(value) as unknown;
+type UnwrappedChatText = {
+  body: string;
+  repliedTo: string | null;
+};
 
-    if (parsed && typeof parsed === 'object' && 'message' in parsed) {
-      const message = (parsed as { message?: unknown }).message;
+function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
+  let body = value;
+  let repliedTo: string | null = null;
 
-      if (typeof message === 'string') {
-        return message;
-      }
+  // Direct sends wrap the text in {message}; reply envelopes add repliedTo. A
+  // reply sent as a direct message can end up wrapped twice, so unwrap a few
+  // levels deep.
+  for (let depth = 0; depth < 3; depth += 1) {
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(body) as unknown;
+    } catch {
+      // Plain text group chat is the normal path.
+      break;
     }
-  } catch {
-    // Plain text group chat is the normal path.
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      break;
+    }
+
+    const envelope = parsed as { message?: unknown; repliedTo?: unknown };
+
+    if (typeof envelope.message !== 'string') {
+      break;
+    }
+
+    body = envelope.message;
+
+    if (repliedTo === null && typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
+      repliedTo = envelope.repliedTo;
+    }
   }
 
-  return value;
+  return { body, repliedTo };
+}
+
+export function buildChatMessageText(text: string, repliedTo?: string | null) {
+  return repliedTo ? JSON.stringify({ message: text, repliedTo }) : text;
 }
 
 export function decodeChatMessage(
@@ -43,6 +72,7 @@ export function decodeChatMessage(
     return {
       body: localizeMessage(t, 'message.encrypted', 'Encrypted message'),
       kind: 'encrypted',
+      repliedTo: null,
     };
   }
 
@@ -50,6 +80,7 @@ export function decodeChatMessage(
     return {
       body: localizeMessage(t, 'message.binary', 'Binary message'),
       kind: 'binary',
+      repliedTo: null,
     };
   }
 
@@ -57,6 +88,7 @@ export function decodeChatMessage(
     return {
       body: '',
       kind: 'empty',
+      repliedTo: null,
     };
   }
 
@@ -64,18 +96,23 @@ export function decodeChatMessage(
     return {
       body: localizeMessage(t, 'message.unsupportedEncoding', 'Unsupported message encoding'),
       kind: 'unsupported',
+      repliedTo: null,
     };
   }
 
   try {
+    const { body, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
+
     return {
-      body: unwrapDirectMessageJson(decodeBase64(message.data)),
+      body,
       kind: 'text',
+      repliedTo,
     };
   } catch {
     return {
       body: localizeMessage(t, 'message.decodeError', 'Unable to decode message'),
       kind: 'unsupported',
+      repliedTo: null,
     };
   }
 }

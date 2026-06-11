@@ -993,7 +993,7 @@ samp,
 
 .message {
   width: fit-content;
-  max-width: min(760px, 100%);
+  max-width: 100%;
   padding: 11px 13px;
   color: var(--qc-color-text);
   background: var(--qc-color-message-bg);
@@ -1015,6 +1015,132 @@ samp,
   align-self: flex-end;
   background: var(--qc-color-accent-soft);
   border-color: var(--qc-color-accent-ring);
+}
+
+.message--highlight {
+  border-color: var(--qc-color-accent);
+  box-shadow: 0 0 0 3px var(--qc-color-accent-ring), var(--qc-shadow-card);
+}
+
+/* Pulls a same-sender follow-up into the 10px list gap so sender changes stand out. */
+.message--continuation {
+  margin-top: -7px;
+}
+
+.message__reply-preview {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-small);
+  text-align: start;
+  background: var(--qc-color-surface-alt);
+  border: 0;
+  border-inline-start: 3px solid var(--qc-color-accent);
+  border-radius: var(--qc-radius-sm);
+}
+
+button.message__reply-preview {
+  cursor: pointer;
+}
+
+button.message__reply-preview:hover,
+button.message__reply-preview:focus-visible {
+  background: var(--qc-color-control-hover);
+  outline: none;
+}
+
+.message__reply-preview strong {
+  overflow: hidden;
+  color: var(--qc-color-accent);
+  font-size: var(--qc-text-tiny);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message__reply-preview span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message__reply-preview--missing {
+  color: var(--qc-color-muted);
+  font-style: italic;
+  border-inline-start-color: var(--qc-color-border-strong);
+}
+
+.message__edited {
+  width: fit-content;
+  margin-top: 6px;
+  padding: 0;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  line-height: var(--qc-line-small);
+  text-decoration: underline dotted;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.message__edited:hover,
+.message__edited:focus-visible {
+  color: var(--qc-color-text-secondary);
+  outline: none;
+}
+
+.message__history {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--qc-color-border);
+  list-style: none;
+}
+
+.message__history li {
+  display: grid;
+  gap: 1px;
+}
+
+.message__history-meta {
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  line-height: var(--qc-line-small);
+}
+
+.message__history-body {
+  overflow-wrap: anywhere;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-small);
+  white-space: pre-wrap;
+}
+
+.message__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.message__actions button {
+  padding: 0;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  font-weight: 600;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.message__actions button:hover,
+.message__actions button:focus-visible {
+  color: var(--qc-color-accent);
+  outline: none;
+  text-decoration: underline;
 }
 
 .message__meta {
@@ -1092,9 +1218,51 @@ samp,
 }
 
 .composer {
+  flex-wrap: wrap;
   align-items: flex-end;
   padding-top: 14px;
   border-top: 1px solid var(--qc-color-border);
+}
+
+.composer__context {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 12px;
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border-subtle);
+  border-inline-start: 3px solid var(--qc-color-accent);
+  border-radius: var(--qc-radius-sm);
+}
+
+.composer__context-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer__context-text strong {
+  color: var(--qc-color-accent);
+  font-size: var(--qc-text-tiny);
+}
+
+.composer__context-text span {
+  overflow: hidden;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__context .button {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 11px;
 }
 
 .composer textarea {
@@ -1102,6 +1270,7 @@ samp,
   max-height: 30vh;
   field-sizing: content;
   resize: none;
+  width: auto;
 }
 
 .error {
@@ -1251,6 +1420,11 @@ samp,
 
   .composer {
     flex-wrap: wrap;
+  }
+
+  .composer textarea {
+    flex-basis: 100%;
+    width: 100%;
   }
 
   .composer .button {

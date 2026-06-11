@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'A csoport elhagyása nem érhető el ebben a Home verzióban.',
   'action.groupLeaveUnavailableBrowser': 'A csoportok elhagyásához nyissa meg a Qortium Home alkalmazást.',
   'status.loadingError.leave': 'Nem sikerült elhagyni a csoportot.',
+  'button.reply': 'Válasz',
+  'button.edit': 'Szerkesztés',
+  'button.cancel': 'Mégse',
+  'label.message.edited': 'Szerkesztve',
+  'label.message.original': 'Eredeti',
+  'label.editHistory': 'Szerkesztési előzmények',
+  'label.composer.editing': 'Üzenet szerkesztése',
+  'label.composer.replyingTo': 'Válasz neki: {name}',
+  'message.replyUnavailable': 'Az eredeti üzenet nem érhető el',
+  'action.toggleEditHistory': 'Szerkesztési előzmények megjelenítése vagy elrejtése',
+  'action.goToOriginal': 'Ugrás az eredeti üzenethez',
 
 } as const;

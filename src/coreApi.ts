@@ -110,10 +110,11 @@ export function buildActiveChatsPath(address: string) {
 }
 
 export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIMIT) {
+  // No haschatreference filter: edit revisions (messages with a chatReference)
+  // are needed to render edited messages.
   const query = new URLSearchParams({
     txGroupId: String(groupId),
     encoding: 'BASE64',
-    haschatreference: 'false',
     limit: String(limit),
     reverse: 'true',
   });
@@ -319,7 +320,6 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
   const messageRequest = {
     encoding: 'BASE64',
     groupId,
-    hasChatReference: false,
     limit: DEFAULT_LIST_LIMIT,
     reverse: true,
   };
@@ -356,7 +356,6 @@ export async function getDirectMessages(otherAddress: string, actions?: QdnActio
     const messages = await qdnRequest<ChatMessage[]>({
       action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
       encoding: 'BASE64',
-      hasChatReference: false,
       limit: DEFAULT_LIST_LIMIT,
       otherAddress,
       reverse: true,

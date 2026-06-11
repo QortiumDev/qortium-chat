@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'Părăsirea grupului nu este disponibilă în această versiune de Home.',
   'action.groupLeaveUnavailableBrowser': 'Deschide Qortium Home pentru a părăsi grupurile.',
   'status.loadingError.leave': 'Nu se poate părăsi grupul.',
+  'button.reply': 'Răspunde',
+  'button.edit': 'Editează',
+  'button.cancel': 'Anulează',
+  'label.message.edited': 'Editat',
+  'label.message.original': 'Original',
+  'label.editHistory': 'Istoricul editărilor',
+  'label.composer.editing': 'Se editează mesajul',
+  'label.composer.replyingTo': 'Răspuns către {name}',
+  'message.replyUnavailable': 'Mesajul original nu este disponibil',
+  'action.toggleEditHistory': 'Afișează sau ascunde istoricul editărilor',
+  'action.goToOriginal': 'Mergi la mesajul original',
 
 } as const;

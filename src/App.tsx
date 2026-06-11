@@ -20,7 +20,8 @@ import {
   sendDirectChatMessage,
   startMinting,
 } from './coreApi';
-import { decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
+import { buildChatMessageText, decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
+import { buildMessageThreads, isThreadContinuation, type MessageThread } from './messageThreads';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
@@ -349,21 +350,55 @@ function DirectList({
   );
 }
 
+function getMessageSnippet(message: ChatMessage, t: TranslateFunction, maxLength = 140) {
+  const body = decodeChatMessage(message, t).body || t('message.empty');
+  const flattened = body.replace(/\s+/g, ' ').trim();
+
+  return flattened.length > maxLength ? `${flattened.slice(0, maxLength - 1)}…` : flattened;
+}
+
 function MessageList({
+  canCompose,
   messages,
+  onEdit,
+  onReply,
   selfAddress,
   t,
 }: {
+  canCompose: boolean;
   messages: ChatMessage[];
+  onEdit: (thread: MessageThread) => void;
+  onReply: (message: ChatMessage) => void;
   selfAddress: string | null;
   t: TranslateFunction;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottomRef = useRef(true);
-  const lastMessage = messages[messages.length - 1] ?? null;
-  const lastMessageKey =
-    lastMessage !== null ? getMessageKey(lastMessage, messages.length - 1) : '';
-  const lastMessageIsOwn = selfAddress !== null && lastMessage?.sender === selfAddress;
+  const itemsRef = useRef(new Map<string, HTMLLIElement>());
+  const highlightTimeoutRef = useRef(0);
+  const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
+  const [highlightedKey, setHighlightedKey] = useState('');
+  const threads = useMemo(() => buildMessageThreads(messages), [messages]);
+  const threadsBySignature = useMemo(() => {
+    const bySignature = new Map<string, MessageThread>();
+
+    for (const thread of threads) {
+      if (thread.original.signature) {
+        bySignature.set(thread.original.signature, thread);
+      }
+
+      for (const revision of thread.revisions) {
+        if (revision.signature) {
+          bySignature.set(revision.signature, thread);
+        }
+      }
+    }
+
+    return bySignature;
+  }, [threads]);
+  const lastThread = threads[threads.length - 1] ?? null;
+  const lastMessageKey = lastThread !== null ? getMessageKey(lastThread.latest, threads.length - 1) : '';
+  const lastMessageIsOwn = selfAddress !== null && lastThread?.original.sender === selfAddress;
 
   useEffect(() => {
     const list = listRef.current;
@@ -372,6 +407,35 @@ function MessageList({
       list.scrollTop = list.scrollHeight;
     }
   }, [lastMessageIsOwn, lastMessageKey]);
+
+  useEffect(() => () => window.clearTimeout(highlightTimeoutRef.current), []);
+
+  function scrollToThread(threadKey: string) {
+    const item = itemsRef.current.get(threadKey);
+
+    if (!item) {
+      return;
+    }
+
+    item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedKey(threadKey);
+    window.clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = window.setTimeout(() => setHighlightedKey(''), 1800);
+  }
+
+  function toggleHistory(threadKey: string) {
+    setOpenHistories((current) => {
+      const next = new Set(current);
+
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+
+      return next;
+    });
+  }
 
   if (messages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
@@ -387,18 +451,94 @@ function MessageList({
       }}
       ref={listRef}
     >
-      {messages.map((message, index) => {
-        const decoded = decodeChatMessage(message, t);
-        const signature = getMessageKey(message, index);
-        const isOwn = selfAddress !== null && message.sender === selfAddress;
+      {threads.map((thread, index) => {
+        const { latest, original, revisions } = thread;
+        const decoded = decodeChatMessage(latest, t);
+        const threadKey = getMessageKey(original, index);
+        const isOwn = selfAddress !== null && original.sender === selfAddress;
+        const isEdited = revisions.length > 0;
+        const isHistoryOpen = isEdited && openHistories.has(threadKey);
+        const previousVersions = isHistoryOpen ? [original, ...revisions.slice(0, -1)] : [];
+        const repliedThread = decoded.repliedTo ? threadsBySignature.get(decoded.repliedTo) : undefined;
+        const isHighlighted = highlightedKey === threadKey;
+        const isContinuation = isThreadContinuation(threads[index - 1], thread);
+        const canEdit = isOwn && decoded.kind === 'text';
 
         return (
-          <li className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}`} key={signature}>
-            <div className="message__meta">
-              <strong>{getSenderLabel(message)}</strong>
-              <span>{formatTimestamp(message.timestamp)}</span>
-            </div>
+          <li
+            className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}`}
+            key={threadKey}
+            ref={(element) => {
+              if (element) {
+                itemsRef.current.set(threadKey, element);
+              } else {
+                itemsRef.current.delete(threadKey);
+              }
+            }}
+            title={isContinuation ? formatTimestamp(original.timestamp) : undefined}
+          >
+            {isContinuation ? null : (
+              <div className="message__meta">
+                <strong>{getSenderLabel(original)}</strong>
+                <span>{formatTimestamp(original.timestamp)}</span>
+              </div>
+            )}
+            {decoded.repliedTo ? (
+              repliedThread ? (
+                <button
+                  className="message__reply-preview"
+                  onClick={() => scrollToThread(decoded.repliedTo ?? '')}
+                  title={t('action.goToOriginal')}
+                  type="button"
+                >
+                  <strong>{getSenderLabel(repliedThread.original)}</strong>
+                  <span>{getMessageSnippet(repliedThread.latest, t)}</span>
+                </button>
+              ) : (
+                <span className="message__reply-preview message__reply-preview--missing">
+                  {t('message.replyUnavailable')}
+                </span>
+              )
+            ) : null}
             <div className="message__body">{decoded.body || t('message.empty')}</div>
+            {isEdited ? (
+              <button
+                aria-expanded={isHistoryOpen}
+                className="message__edited"
+                onClick={() => toggleHistory(threadKey)}
+                title={t('action.toggleEditHistory')}
+                type="button"
+              >
+                {t('label.message.edited')} · {formatTimestamp(latest.timestamp)}
+              </button>
+            ) : null}
+            {isHistoryOpen ? (
+              <ol className="message__history" aria-label={t('label.editHistory')}>
+                {previousVersions.map((version, versionIndex) => (
+                  <li key={getMessageKey(version, versionIndex)}>
+                    <span className="message__history-meta">
+                      {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
+                      {formatTimestamp(version.timestamp)}
+                    </span>
+                    <span className="message__history-body">
+                      {decodeChatMessage(version, t).body || t('message.empty')}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            {canCompose && original.signature ? (
+              <div className="message__actions">
+                <button onClick={() => onReply(original)} type="button">
+                  {t('button.reply')}
+                </button>
+                {canEdit ? (
+                  <button onClick={() => onEdit(thread)} type="button">
+                    {t('button.edit')}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         );
       })}
@@ -442,6 +582,12 @@ export default function App() {
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState('');
+  const [composeContext, setComposeContext] = useState<
+    | { kind: 'edit'; thread: MessageThread }
+    | { kind: 'reply'; message: ChatMessage }
+    | null
+  >(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const [directAddress, setDirectAddress] = useState('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
@@ -957,6 +1103,33 @@ export default function App() {
     }));
   }
 
+  function startReply(message: ChatMessage) {
+    if (!message.signature) {
+      return;
+    }
+
+    setComposeContext({ kind: 'reply', message });
+    composerRef.current?.focus();
+  }
+
+  function startEdit(thread: MessageThread) {
+    if (!thread.original.signature) {
+      return;
+    }
+
+    setComposeContext({ kind: 'edit', thread });
+    setDraft(decodeChatMessage(thread.latest, t).body);
+    composerRef.current?.focus();
+  }
+
+  function cancelComposeContext() {
+    if (composeContext?.kind === 'edit') {
+      setDraft('');
+    }
+
+    setComposeContext(null);
+  }
+
   async function handleSendMessage(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -964,20 +1137,33 @@ export default function App() {
       return;
     }
 
-    const message = draft.trim();
+    const text = draft.trim();
     const chat = selectedChat;
+    const context = composeContext;
+    let message = text;
+    let chatReference: string | undefined;
+
+    if (context?.kind === 'edit') {
+      // An edit is a new transaction replacing the original via chatReference;
+      // keep the original's reply target so the reply preview survives edits.
+      chatReference = context.thread.original.signature ?? undefined;
+      message = buildChatMessageText(text, decodeChatMessage(context.thread.original).repliedTo);
+    } else if (context?.kind === 'reply') {
+      message = buildChatMessageText(text, context.message.signature);
+    }
 
     setSendPending(true);
     setWriteError('');
 
     try {
       if (chat.kind === 'group') {
-        await sendChatMessage(chat.group.groupId, message);
+        await sendChatMessage(chat.group.groupId, message, chatReference);
       } else {
-        await sendDirectChatMessage(chat.direct.address, message);
+        await sendDirectChatMessage(chat.direct.address, message, chatReference);
       }
 
       setDraft('');
+      setComposeContext(null);
       if (chat.kind === 'direct' && account) {
         await loadAccountData(account);
       }
@@ -992,11 +1178,13 @@ export default function App() {
 
   function selectGroup(group: GroupData) {
     setWriteError('');
+    setComposeContext(null);
     setSelectedChat({ group, kind: 'group' });
   }
 
   function selectDirect(direct: ActiveDirectChat) {
     setWriteError('');
+    setComposeContext(null);
     setSelectedChat({ direct, kind: 'direct' });
   }
 
@@ -1010,6 +1198,7 @@ export default function App() {
     }
 
     setWriteError('');
+    setComposeContext(null);
     setSelectedChat({
       direct: {
         address,
@@ -1533,10 +1722,37 @@ export default function App() {
           {messages.phase === 'loading' ? (
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
-            <MessageList messages={messages.value} selfAddress={account?.address ?? null} t={t} />
+            <MessageList
+              canCompose={canComposeMessage}
+              messages={messages.value}
+              onEdit={startEdit}
+              onReply={startReply}
+              selfAddress={account?.address ?? null}
+              t={t}
+            />
           )}
 
           <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
+            {composeContext ? (
+              <div className="composer__context">
+                <div className="composer__context-text">
+                  <strong>
+                    {composeContext.kind === 'edit'
+                      ? t('label.composer.editing')
+                      : t('label.composer.replyingTo', { name: getSenderLabel(composeContext.message) })}
+                  </strong>
+                  <span>
+                    {getMessageSnippet(
+                      composeContext.kind === 'edit' ? composeContext.thread.latest : composeContext.message,
+                      t,
+                    )}
+                  </span>
+                </div>
+                <button className="button button--secondary" onClick={cancelComposeContext} type="button">
+                  {t('button.cancel')}
+                </button>
+              </div>
+            ) : null}
             <textarea
               aria-label={t('label.common.message')}
               disabled={!canComposeMessage || sendPending}
@@ -1549,6 +1765,7 @@ export default function App() {
                 }
               }}
               placeholder={t('placeholder.message')}
+              ref={composerRef}
               rows={1}
               value={draft}
             />

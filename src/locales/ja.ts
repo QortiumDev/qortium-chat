@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'このHomeではグループを退出することはできません。',
   'action.groupLeaveUnavailableBrowser': 'Qortium Homeを開いてグループから退出してください。',
   'status.loadingError.leave': 'グループを退出できませんでした。',
+  'button.reply': '返信',
+  'button.edit': '編集',
+  'button.cancel': 'キャンセル',
+  'label.message.edited': '編集済み',
+  'label.message.original': '元のメッセージ',
+  'label.editHistory': '編集履歴',
+  'label.composer.editing': 'メッセージを編集中',
+  'label.composer.replyingTo': '{name} に返信中',
+  'message.replyUnavailable': '元のメッセージは利用できません',
+  'action.toggleEditHistory': '編集履歴の表示/非表示',
+  'action.goToOriginal': '元のメッセージへ移動',
 
 } as const;

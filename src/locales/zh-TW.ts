@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': '此 Home 版本不支援離開群組。',
   'action.groupLeaveUnavailableBrowser': '請在 Qortium Home 中打開以離開群組。',
   'status.loadingError.leave': '無法離開群組。',
+  'button.reply': '回覆',
+  'button.edit': '編輯',
+  'button.cancel': '取消',
+  'label.message.edited': '已編輯',
+  'label.message.original': '原始訊息',
+  'label.editHistory': '編輯歷史',
+  'label.composer.editing': '正在編輯訊息',
+  'label.composer.replyingTo': '正在回覆 {name}',
+  'message.replyUnavailable': '原始訊息無法使用',
+  'action.toggleEditHistory': '顯示或隱藏編輯歷史',
+  'action.goToOriginal': '跳至原始訊息',
 
 } as const;

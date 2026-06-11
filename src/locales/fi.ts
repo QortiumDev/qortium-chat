@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'Ryhmän poistuminen ei ole saatavilla tässä Home-versiossa.',
   'action.groupLeaveUnavailableBrowser': 'Avaa Qortium Home ryhmistä poistumiseksi.',
   'status.loadingError.leave': 'Ryhmän poistuminen epäonnistui.',
+  'button.reply': 'Vastaa',
+  'button.edit': 'Muokkaa',
+  'button.cancel': 'Peruuta',
+  'label.message.edited': 'Muokattu',
+  'label.message.original': 'Alkuperäinen',
+  'label.editHistory': 'Muokkaushistoria',
+  'label.composer.editing': 'Muokataan viestiä',
+  'label.composer.replyingTo': 'Vastataan käyttäjälle {name}',
+  'message.replyUnavailable': 'Alkuperäinen viesti ei ole saatavilla',
+  'action.toggleEditHistory': 'Näytä tai piilota muokkaushistoria',
+  'action.goToOriginal': 'Siirry alkuperäiseen viestiin',
 
 } as const;

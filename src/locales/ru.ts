@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'Выход из группы недоступен в этой версии Home.',
   'action.groupLeaveUnavailableBrowser': 'Откройте Qortium Home, чтобы выйти из групп.',
   'status.loadingError.leave': 'Не удалось покинуть группу.',
+  'button.reply': 'Ответить',
+  'button.edit': 'Изменить',
+  'button.cancel': 'Отмена',
+  'label.message.edited': 'Изменено',
+  'label.message.original': 'Оригинал',
+  'label.editHistory': 'История изменений',
+  'label.composer.editing': 'Редактирование сообщения',
+  'label.composer.replyingTo': 'Ответ для {name}',
+  'message.replyUnavailable': 'Исходное сообщение недоступно',
+  'action.toggleEditHistory': 'Показать или скрыть историю изменений',
+  'action.goToOriginal': 'Перейти к исходному сообщению',
 
 } as const;

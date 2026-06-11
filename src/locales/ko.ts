@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': '이 Home 버전에서는 그룹 나가기 기능을 사용할 수 없습니다.',
   'action.groupLeaveUnavailableBrowser': '그룹을 나가려면 Qortium Home을 여십시오.',
   'status.loadingError.leave': '그룹을 나갈 수 없습니다.',
+  'button.reply': '답장',
+  'button.edit': '수정',
+  'button.cancel': '취소',
+  'label.message.edited': '수정됨',
+  'label.message.original': '원본',
+  'label.editHistory': '수정 기록',
+  'label.composer.editing': '메시지 수정 중',
+  'label.composer.replyingTo': '{name}에게 답장 중',
+  'message.replyUnavailable': '원본 메시지를 사용할 수 없습니다',
+  'action.toggleEditHistory': '수정 기록 표시 또는 숨기기',
+  'action.goToOriginal': '원본 메시지로 이동',
 
 } as const;

@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'Att lämna gruppen är inte tillgängligt i den här Home-versionen.',
   'action.groupLeaveUnavailableBrowser': 'Öppna Qortium Home för att lämna grupper.',
   'status.loadingError.leave': 'Det gick inte att lämna gruppen.',
+  'button.reply': 'Svara',
+  'button.edit': 'Redigera',
+  'button.cancel': 'Avbryt',
+  'label.message.edited': 'Redigerad',
+  'label.message.original': 'Original',
+  'label.editHistory': 'Redigeringshistorik',
+  'label.composer.editing': 'Redigerar meddelande',
+  'label.composer.replyingTo': 'Svarar {name}',
+  'message.replyUnavailable': 'Det ursprungliga meddelandet är inte tillgängligt',
+  'action.toggleEditHistory': 'Visa eller dölj redigeringshistorik',
+  'action.goToOriginal': 'Gå till det ursprungliga meddelandet',
 
 } as const;

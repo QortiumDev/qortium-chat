@@ -160,5 +160,16 @@ export const STRINGS = {
   'action.groupLeaveUnavailable': 'المغادرة غير متاحة في هذا إصدار Home.',
   'action.groupLeaveUnavailableBrowser': 'افتح Qortium Home لمغادرة المجموعات.',
   'status.loadingError.leave': 'تعذر مغادرة المجموعة.',
+  'button.reply': 'رد',
+  'button.edit': 'تعديل',
+  'button.cancel': 'إلغاء',
+  'label.message.edited': 'معدّل',
+  'label.message.original': 'الأصل',
+  'label.editHistory': 'سجل التعديلات',
+  'label.composer.editing': 'تعديل الرسالة',
+  'label.composer.replyingTo': 'رد على {name}',
+  'message.replyUnavailable': 'الرسالة الأصلية غير متوفرة',
+  'action.toggleEditHistory': 'إظهار أو إخفاء سجل التعديلات',
+  'action.goToOriginal': 'الانتقال إلى الرسالة الأصلية',
 
 } as const;
