@@ -428,7 +428,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -745,7 +746,7 @@ samp,
 }
 
 .search input,
-.composer input {
+.composer textarea {
   transition: border-color 170ms ease, box-shadow 170ms ease, background-color 170ms ease;
   min-width: 0;
   width: 100%;
@@ -759,12 +760,12 @@ samp,
 }
 
 .search input::placeholder,
-.composer input::placeholder {
+.composer textarea::placeholder {
   color: var(--qc-color-text-faint);
 }
 
 .search input:focus,
-.composer input:focus {
+.composer textarea:focus {
   border-color: var(--qc-color-accent);
   outline: none;
   box-shadow: 0 0 0 3px var(--qc-color-accent-ring);
@@ -1010,6 +1011,12 @@ samp,
   border-color: var(--qc-color-warning-border);
 }
 
+.message--own {
+  align-self: flex-end;
+  background: var(--qc-color-accent-soft);
+  border-color: var(--qc-color-accent-ring);
+}
+
 .message__meta {
   display: flex;
   justify-content: space-between;
@@ -1085,12 +1092,16 @@ samp,
 }
 
 .composer {
+  align-items: flex-end;
   padding-top: 14px;
   border-top: 1px solid var(--qc-color-border);
 }
 
-.composer input {
+.composer textarea {
   flex: 1 1 auto;
+  max-height: 30vh;
+  field-sizing: content;
+  resize: none;
 }
 
 .error {
@@ -1254,7 +1265,7 @@ samp,
   .join-request,
   .tx-status,
   .search input,
-  .composer input {
+  .composer textarea {
     transition: none;
   }
 

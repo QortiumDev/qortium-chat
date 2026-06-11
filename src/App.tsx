@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type SubmitEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
@@ -349,19 +349,51 @@ function DirectList({
   );
 }
 
-function MessageList({ messages, t }: { messages: ChatMessage[]; t: TranslateFunction }) {
+function MessageList({
+  messages,
+  selfAddress,
+  t,
+}: {
+  messages: ChatMessage[];
+  selfAddress: string | null;
+  t: TranslateFunction;
+}) {
+  const listRef = useRef<HTMLOListElement>(null);
+  const stickToBottomRef = useRef(true);
+  const lastMessage = messages[messages.length - 1] ?? null;
+  const lastMessageKey =
+    lastMessage !== null ? getMessageKey(lastMessage, messages.length - 1) : '';
+  const lastMessageIsOwn = selfAddress !== null && lastMessage?.sender === selfAddress;
+
+  useEffect(() => {
+    const list = listRef.current;
+
+    if (list && (stickToBottomRef.current || lastMessageIsOwn)) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }, [lastMessageIsOwn, lastMessageKey]);
+
   if (messages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
 
   return (
-    <ol className="message-list">
+    <ol
+      className="message-list"
+      onScroll={(event) => {
+        const list = event.currentTarget;
+
+        stickToBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+      }}
+      ref={listRef}
+    >
       {messages.map((message, index) => {
         const decoded = decodeChatMessage(message, t);
         const signature = getMessageKey(message, index);
+        const isOwn = selfAddress !== null && message.sender === selfAddress;
 
         return (
-          <li className={`message message--${decoded.kind}`} key={signature}>
+          <li className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}`} key={signature}>
             <div className="message__meta">
               <strong>{getSenderLabel(message)}</strong>
               <span>{formatTimestamp(message.timestamp)}</span>
@@ -728,12 +760,14 @@ export default function App() {
     void loadMintingStatus(selectedAccount, actionList);
   }
 
-  async function loadMessages(chat: SelectedChat | null, actionList = actions) {
+  async function loadMessages(chat: SelectedChat | null, actionList = actions, options: { quiet?: boolean } = {}) {
     if (!chat) {
       return;
     }
 
-    setMessages({ phase: 'loading', value: messages.value });
+    if (!options.quiet) {
+      setMessages({ phase: 'loading', value: messages.value });
+    }
 
     try {
       if (chat.kind === 'direct' && !isAccountUnlocked) {
@@ -923,7 +957,7 @@ export default function App() {
     }));
   }
 
-  async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+  async function handleSendMessage(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!selectedChat || !canSubmitMessage) {
@@ -948,7 +982,7 @@ export default function App() {
         await loadAccountData(account);
       }
 
-      await loadMessages(chat);
+      await loadMessages(chat, actions, { quiet: true });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
     } finally {
@@ -966,7 +1000,7 @@ export default function App() {
     setSelectedChat({ direct, kind: 'direct' });
   }
 
-  function handleOpenDirectChat(event: FormEvent<HTMLFormElement>) {
+  function handleOpenDirectChat(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const address = directAddress.trim();
@@ -1499,16 +1533,23 @@ export default function App() {
           {messages.phase === 'loading' ? (
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
-            <MessageList messages={messages.value} t={t} />
+            <MessageList messages={messages.value} selfAddress={account?.address ?? null} t={t} />
           )}
 
           <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
-            <input
+            <textarea
               aria-label={t('label.common.message')}
               disabled={!canComposeMessage || sendPending}
               maxLength={4000}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
               placeholder={t('placeholder.message')}
+              rows={1}
               value={draft}
             />
             <button
