@@ -127,15 +127,24 @@ export function buildReactionMessageText(content: string, contentState: boolean)
   });
 }
 
-export function isReactionChatMessage(message: Pick<ChatMessage, 'data' | 'encoding' | 'isEncrypted' | 'isText'>) {
+type DecodableChatMessage = Pick<
+  ChatMessage,
+  'data' | 'decryptionStatus' | 'encoding' | 'isEncrypted' | 'isText' | 'status'
+>;
+
+function hasReadableEncryptedPayload(message: DecodableChatMessage) {
+  return message.decryptionStatus === 'DECRYPTED' || message.status === 'DECRYPTED';
+}
+
+export function isReactionChatMessage(message: DecodableChatMessage) {
   return decodeChatMessage(message).kind === 'reaction';
 }
 
 export function decodeChatMessage(
-  message: Pick<ChatMessage, 'data' | 'encoding' | 'isEncrypted' | 'isText'>,
+  message: DecodableChatMessage,
   t?: TranslateFunction,
 ): DisplayChatMessage {
-  if (message.isEncrypted) {
+  if (message.isEncrypted && (!hasReadableEncryptedPayload(message) || !message.data)) {
     return {
       body: localizeMessage(t, 'message.encrypted', 'Encrypted message'),
       kind: 'encrypted',

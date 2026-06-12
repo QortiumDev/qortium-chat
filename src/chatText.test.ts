@@ -112,10 +112,82 @@ describe('chat text helpers', () => {
       kind: 'encrypted',
       repliedTo: null,
     });
+    expect(
+      decodeChatMessage({
+        data: null,
+        decryptionStatus: 'DECRYPTED',
+        encoding: 'BASE64',
+        isEncrypted: true,
+        isText: true,
+      }),
+    ).toEqual({
+      body: 'Encrypted message',
+      kind: 'encrypted',
+      repliedTo: null,
+    });
     expect(decodeChatMessage({ data: base64('raw'), encoding: 'BASE64', isEncrypted: false, isText: false })).toEqual({
       body: 'Binary message',
       kind: 'binary',
       repliedTo: null,
+    });
+  });
+
+  it('decodes private direct messages marked decrypted by Core', () => {
+    expect(
+      decodeChatMessage({
+        data: base64(JSON.stringify({ message: 'direct decrypted text', version: 2 })),
+        decryptionStatus: 'DECRYPTED',
+        encoding: 'BASE64',
+        isEncrypted: true,
+        isText: true,
+      }),
+    ).toEqual({
+      body: 'direct decrypted text',
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('decodes private group messages marked decrypted by Core', () => {
+    expect(
+      decodeChatMessage({
+        data: base64('private group text'),
+        encoding: 'BASE64',
+        isEncrypted: true,
+        isText: true,
+        status: 'DECRYPTED',
+      }),
+    ).toEqual({
+      body: 'private group text',
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('keeps unreadable private messages hidden', () => {
+    expect(
+      decodeChatMessage({
+        data: base64('legacy encrypted direct'),
+        decryptionStatus: 'UNSUPPORTED',
+        encoding: 'BASE64',
+        isEncrypted: true,
+        isText: true,
+      }),
+    ).toMatchObject({
+      body: 'Encrypted message',
+      kind: 'encrypted',
+    });
+    expect(
+      decodeChatMessage({
+        data: null,
+        encoding: 'BASE64',
+        isEncrypted: true,
+        isText: true,
+        status: 'MISSING_KEY',
+      }),
+    ).toMatchObject({
+      body: 'Encrypted message',
+      kind: 'encrypted',
     });
   });
 
