@@ -23,6 +23,13 @@ import {
 import { buildChatMessageText, decodeChatMessage, formatTimeAgo, formatTimestamp, getSenderLabel } from './chatText';
 import { buildMessageThreads, isThreadContinuation, sortMessagesByTimestamp, type MessageThread } from './messageThreads';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
+import {
+  fetchQdnImagePreview,
+  getImageQdnResources,
+  renderMessageTextWithQdnLinks,
+  type QdnImagePreview,
+  type QdnImageResource,
+} from './messageLinks';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
 import type {
@@ -353,6 +360,81 @@ function getMessageSnippet(message: ChatMessage, t: TranslateFunction, maxLength
   return flattened.length > maxLength ? `${flattened.slice(0, maxLength - 1)}…` : flattened;
 }
 
+type ImagePreviewState =
+  | {
+      phase: 'loading';
+    }
+  | {
+      phase: 'ready';
+      preview: QdnImagePreview;
+    }
+  | {
+      message: string;
+      phase: 'error';
+    };
+
+function MessageImagePreview({ resource, t }: { resource: QdnImageResource; t: TranslateFunction }) {
+  const [state, setState] = useState<ImagePreviewState>({ phase: 'loading' });
+
+  useEffect(() => {
+    let isDisposed = false;
+
+    setState({ phase: 'loading' });
+
+    void fetchQdnImagePreview(resource)
+      .then((preview) => {
+        if (!isDisposed) {
+          setState({ phase: 'ready', preview });
+        }
+      })
+      .catch((error) => {
+        if (!isDisposed) {
+          setState({
+            phase: 'error',
+            message: error instanceof Error ? error.message : t('status.loadingError.imagePreview'),
+          });
+        }
+      });
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [resource.identifier, resource.name, resource.path, resource.qdnUrl, resource.service, t]);
+
+  if (state.phase === 'loading') {
+    return (
+      <div className="message__image-preview message__image-preview--loading">
+        {t('status.loading.imagePreview')}
+      </div>
+    );
+  }
+
+  if (state.phase === 'error') {
+    return (
+      <div className="message__image-preview message__image-preview--error">
+        {state.message}
+      </div>
+    );
+  }
+
+  return (
+    <figure className="message__image-preview">
+      <img alt={state.preview.alt} src={state.preview.src} />
+      <figcaption>{state.preview.alt}</figcaption>
+    </figure>
+  );
+}
+
+function MessageImagePreviews({ resources, t }: { resources: QdnImageResource[]; t: TranslateFunction }) {
+  return (
+    <div className="message__image-previews">
+      {resources.map((resource, index) => (
+        <MessageImagePreview key={`${resource.qdnUrl}-${index}`} resource={resource} t={t} />
+      ))}
+    </div>
+  );
+}
+
 function MessageList({
   canCompose,
   messages,
@@ -374,6 +456,7 @@ function MessageList({
   const highlightTimeoutRef = useRef(0);
   const expandedTimeTimeoutRef = useRef(0);
   const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
+  const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
   const [now, setNow] = useState(() => Date.now());
@@ -456,6 +539,20 @@ function MessageList({
     });
   }
 
+  function toggleImagePreview(threadKey: string) {
+    setOpenImagePreviews((current) => {
+      const next = new Set(current);
+
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+
+      return next;
+    });
+  }
+
   if (messages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
@@ -483,13 +580,24 @@ function MessageList({
         const isContinuation = isThreadContinuation(threads[index - 1], thread);
         const canEdit = isOwn && decoded.kind === 'text';
         const isTimeExpanded = expandedTimeKey === threadKey;
+        const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
+        const hasImagePreviews = imageResources.length > 0;
+        const areImagePreviewsOpen = openImagePreviews.has(threadKey);
+        const canReplyOrEdit = canCompose && original.signature;
         const actionButtons =
-          canCompose && original.signature ? (
+          canReplyOrEdit || hasImagePreviews ? (
             <div className="message__actions">
-              <button onClick={() => onReply(original)} type="button">
-                {t('button.reply')}
-              </button>
-              {canEdit ? (
+              {hasImagePreviews ? (
+                <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
+                  {areImagePreviewsOpen ? t('button.hideImagePreview') : t('button.viewImagePreview')}
+                </button>
+              ) : null}
+              {canReplyOrEdit ? (
+                <button onClick={() => onReply(original)} type="button">
+                  {t('button.reply')}
+                </button>
+              ) : null}
+              {canReplyOrEdit && canEdit ? (
                 <button onClick={() => onEdit(thread)} type="button">
                   {t('button.edit')}
                 </button>
@@ -532,7 +640,10 @@ function MessageList({
                 </span>
               )
             ) : null}
-            <div className="message__body">{decoded.body || t('message.empty')}</div>
+            <div className="message__body">
+              {decoded.body ? renderMessageTextWithQdnLinks(decoded.body) : t('message.empty')}
+            </div>
+            {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
             <div className="message__footer">
               <button
                 className="message__time"
@@ -557,17 +668,21 @@ function MessageList({
             </div>
             {isHistoryOpen ? (
               <ol className="message__history" aria-label={t('label.editHistory')}>
-                {previousVersions.map((version, versionIndex) => (
-                  <li key={getMessageKey(version, versionIndex)}>
-                    <span className="message__history-meta">
-                      {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
-                      {formatTimestamp(version.timestamp)}
-                    </span>
-                    <span className="message__history-body">
-                      {decodeChatMessage(version, t).body || t('message.empty')}
-                    </span>
-                  </li>
-                ))}
+                {previousVersions.map((version, versionIndex) => {
+                  const versionBody = decodeChatMessage(version, t).body;
+
+                  return (
+                    <li key={getMessageKey(version, versionIndex)}>
+                      <span className="message__history-meta">
+                        {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
+                        {formatTimestamp(version.timestamp)}
+                      </span>
+                      <span className="message__history-body">
+                        {versionBody ? renderMessageTextWithQdnLinks(versionBody) : t('message.empty')}
+                      </span>
+                    </li>
+                  );
+                })}
               </ol>
             ) : null}
           </li>
