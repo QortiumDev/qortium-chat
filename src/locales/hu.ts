@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Szerkesztési előzmények megjelenítése vagy elrejtése',
   'action.goToOriginal': 'Ugrás az eredeti üzenethez',
 
+  'aria.accountInfo': 'Fiók adatai',
+  'title.accountInfo': 'Fiók adatai',
+  'label.account.address': 'Cím',
+  'label.account.registeredName': 'Regisztrált név',
+  'label.account.noRegisteredName': 'Nincs regisztrált név',
+  'button.copyAddress': 'Cím másolása',
+  'button.copied': 'Másolva',
+  'button.openDirectChat': 'Közvetlen csevegés',
+  'button.viewAvatar': 'Avatar megtekintése',
+  'action.openAccountInfo': '{account} fiókadatainak megtekintése',
+  'status.copyAddress.failed': 'Nem sikerült másolni a címet.',
 } as const;

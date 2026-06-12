@@ -192,4 +192,15 @@ export const EN_STRINGS = {
   'action.toggleEditHistory': 'Show or hide edit history',
   'action.goToOriginal': 'Go to original message',
 
+  'aria.accountInfo': 'Account info',
+  'title.accountInfo': 'Account info',
+  'label.account.address': 'Address',
+  'label.account.registeredName': 'Registered name',
+  'label.account.noRegisteredName': 'No registered name',
+  'button.copyAddress': 'Copy address',
+  'button.copied': 'Copied',
+  'button.openDirectChat': 'Direct chat',
+  'button.viewAvatar': 'View avatar',
+  'action.openAccountInfo': 'View account info for {account}',
+  'status.copyAddress.failed': 'Unable to copy address.',
 } as const;

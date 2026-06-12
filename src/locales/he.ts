@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'הצגה או הסתרה של היסטוריית העריכות',
   'action.goToOriginal': 'מעבר להודעה המקורית',
 
+  'aria.accountInfo': 'פרטי חשבון',
+  'title.accountInfo': 'פרטי חשבון',
+  'label.account.address': 'כתובת',
+  'label.account.registeredName': 'שם רשום',
+  'label.account.noRegisteredName': 'אין שם רשום',
+  'button.copyAddress': 'העתק כתובת',
+  'button.copied': 'הועתק',
+  'button.openDirectChat': 'צ׳אט ישיר',
+  'button.viewAvatar': 'הצג אווטאר',
+  'action.openAccountInfo': 'הצג פרטי חשבון עבור {account}',
+  'status.copyAddress.failed': 'לא ניתן להעתיק את הכתובת.',
 } as const;

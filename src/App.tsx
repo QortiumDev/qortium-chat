@@ -263,6 +263,8 @@ type AvatarLightboxImage = {
   src: string;
 };
 
+type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
+
 function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
   const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
   const avatarSrc = profile?.name === name ? profile.avatarSrc : null;
@@ -320,16 +322,21 @@ function UserAvatar({
 
 function MessageIdentity({
   message,
+  onOpenAccount,
   onOpenAvatar,
   openAvatarLabel,
   profile,
+  t,
 }: {
   message: ChatMessage;
+  onOpenAccount: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   openAvatarLabel: string;
   profile: AvatarProfile | undefined;
+  t: TranslateFunction;
 }) {
   const { avatarSrc, name } = getAvatarView(profile, message.senderName);
+  const label = getMessageSenderLabel(message, profile);
 
   return (
     <span className="message__identity" title={message.sender}>
@@ -340,8 +347,138 @@ function MessageIdentity({
         openLabel={openAvatarLabel}
         src={avatarSrc}
       />
-      <strong>{getMessageSenderLabel(message, profile)}</strong>
+      <button
+        aria-label={t('action.openAccountInfo', { account: label })}
+        className="message__sender-button"
+        onClick={() => onOpenAccount({ sender: message.sender, senderName: message.senderName ?? null })}
+        title={message.sender}
+        type="button"
+      >
+        <strong>{label}</strong>
+      </button>
     </span>
+  );
+}
+
+function AccountInfoDialog({
+  canOpenDirect,
+  directUnavailableLabel,
+  onClose,
+  onOpenAvatar,
+  onOpenDirect,
+  profile,
+  target,
+  t,
+}: {
+  canOpenDirect: boolean;
+  directUnavailableLabel: string;
+  onClose: () => void;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
+  onOpenDirect: (address: string, name: string | null) => void;
+  profile: AvatarProfile | undefined;
+  target: AccountInfoTarget;
+  t: TranslateFunction;
+}) {
+  const [copyStatus, setCopyStatus] = useState<'copied' | 'error' | 'idle'>('idle');
+  const { avatarSrc, name } = getAvatarView(profile, target.senderName);
+  const label = getMessageSenderLabel(target, profile);
+
+  useEffect(() => {
+    setCopyStatus('idle');
+  }, [target.sender]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  async function copyAddress() {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard unavailable.');
+      }
+
+      await navigator.clipboard.writeText(target.sender);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('error');
+    }
+  }
+
+  return (
+    <div
+      aria-label={t('aria.accountInfo')}
+      aria-modal="true"
+      className="account-dialog"
+      onClick={onClose}
+      role="dialog"
+    >
+      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()}>
+        <header className="account-dialog__header">
+          <UserAvatar
+            className="account-dialog__avatar"
+            name={name}
+            src={avatarSrc}
+          />
+          <div className="account-dialog__heading">
+            <span>{t('title.accountInfo')}</span>
+            <h2>{label}</h2>
+          </div>
+          <button
+            aria-label={t('button.close')}
+            className="account-dialog__close"
+            onClick={onClose}
+            title={t('button.close')}
+            type="button"
+          >
+            X
+          </button>
+        </header>
+
+        <dl className="account-dialog__details">
+          <div>
+            <dt>{t('label.account.registeredName')}</dt>
+            <dd>{name ?? t('label.account.noRegisteredName')}</dd>
+          </div>
+          <div>
+            <dt>{t('label.account.address')}</dt>
+            <dd className="account-dialog__address">{target.sender}</dd>
+          </div>
+        </dl>
+
+        <div className="account-dialog__actions">
+          <button className="button button--secondary" onClick={() => void copyAddress()} type="button">
+            {copyStatus === 'copied' ? t('button.copied') : t('button.copyAddress')}
+          </button>
+          <button
+            className="button"
+            disabled={!canOpenDirect}
+            onClick={() => onOpenDirect(target.sender, name)}
+            title={canOpenDirect ? t('action.directTooltip') : directUnavailableLabel}
+            type="button"
+          >
+            {t('button.openDirectChat')}
+          </button>
+          {avatarSrc ? (
+            <button
+              className="button button--secondary"
+              onClick={() => onOpenAvatar({ name, src: avatarSrc })}
+              type="button"
+            >
+              {t('button.viewAvatar')}
+            </button>
+          ) : null}
+        </div>
+        {copyStatus === 'error' ? <p className="error">{t('status.copyAddress.failed')}</p> : null}
+      </section>
+    </div>
   );
 }
 
@@ -791,6 +928,7 @@ function MessageList({
   canOpenMediaPlayer,
   messages,
   onEdit,
+  onOpenAccount,
   onOpenAvatar,
   onReact,
   onReply,
@@ -803,6 +941,7 @@ function MessageList({
   canOpenMediaPlayer: boolean;
   messages: ChatMessage[];
   onEdit: (thread: MessageThread) => void;
+  onOpenAccount: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   onReply: (message: ChatMessage) => void;
@@ -1020,9 +1159,11 @@ function MessageList({
               <div className="message__meta">
                 <MessageIdentity
                   message={original}
+                  onOpenAccount={onOpenAccount}
                   onOpenAvatar={onOpenAvatar}
                   openAvatarLabel={t('action.openAvatarImage')}
                   profile={senderProfile}
+                  t={t}
                 />
                 {actionButtons}
               </div>
@@ -1175,6 +1316,7 @@ export default function App() {
   const [membersOpen, setMembersOpen] = useState(true);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
+  const [accountInfoTarget, setAccountInfoTarget] = useState<AccountInfoTarget | null>(null);
   const [avatarLightboxImage, setAvatarLightboxImage] = useState<AvatarLightboxImage | null>(null);
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
 
@@ -1235,6 +1377,12 @@ export default function App() {
       namesByAddress.set(account.address, accountName);
     }
 
+    const accountInfoName = normalizeRegisteredName(accountInfoTarget?.senderName);
+
+    if (accountInfoTarget?.sender && accountInfoName) {
+      namesByAddress.set(accountInfoTarget.sender, accountInfoName);
+    }
+
     for (const message of messages.value) {
       const senderName = normalizeRegisteredName(message.senderName);
 
@@ -1244,7 +1392,7 @@ export default function App() {
     }
 
     return namesByAddress;
-  }, [account?.address, account?.name, messages.value]);
+  }, [account?.address, account?.name, accountInfoTarget?.sender, accountInfoTarget?.senderName, messages.value]);
   const avatarAddresses = useMemo(() => {
     const addresses = new Set<string>();
 
@@ -1252,12 +1400,16 @@ export default function App() {
       addresses.add(account.address);
     }
 
+    if (accountInfoTarget?.sender) {
+      addresses.add(accountInfoTarget.sender);
+    }
+
     for (const message of messages.value) {
       addresses.add(message.sender);
     }
 
     return Array.from(addresses);
-  }, [account?.address, messages.value]);
+  }, [account?.address, accountInfoTarget?.sender, messages.value]);
   const avatarProfiles = useAvatarProfiles(avatarAddresses, knownAvatarNames, actions, actionsKey);
   const canJoinGroup = hasAction(actions, 'JOIN_GROUP');
   const canLeaveGroup = hasAction(actions, 'LEAVE_GROUP');
@@ -1842,6 +1994,15 @@ export default function App() {
     setSelectedChat({ direct, kind: 'direct' });
   }
 
+  function openDirectFromAccount(address: string, name: string | null) {
+    if (!canOpenDirectChat) {
+      return;
+    }
+
+    setAccountInfoTarget(null);
+    selectDirect({ address, name: name ?? undefined });
+  }
+
   function handleOpenDirectChat(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -2416,6 +2577,7 @@ export default function App() {
               canOpenMediaPlayer={canOpenMediaPlayer}
               messages={messages.value}
               onEdit={startEdit}
+              onOpenAccount={setAccountInfoTarget}
               onOpenAvatar={setAvatarLightboxImage}
               onReact={(message, reaction, contentState) => void handleMessageReaction(message, reaction, contentState)}
               onReply={startReply}
@@ -2532,6 +2694,21 @@ export default function App() {
           </aside>
         ) : null}
       </section>
+      {accountInfoTarget ? (
+        <AccountInfoDialog
+          canOpenDirect={canOpenDirectChat}
+          directUnavailableLabel={directAccessUnavailableLabel}
+          onClose={() => setAccountInfoTarget(null)}
+          onOpenAvatar={(image) => {
+            setAccountInfoTarget(null);
+            setAvatarLightboxImage(image);
+          }}
+          onOpenDirect={openDirectFromAccount}
+          profile={avatarProfiles[accountInfoTarget.sender]}
+          target={accountInfoTarget}
+          t={t}
+        />
+      ) : null}
       {avatarLightboxImage ? (
         <AvatarLightbox
           image={avatarLightboxImage}

@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Показать или скрыть историю изменений',
   'action.goToOriginal': 'Перейти к исходному сообщению',
 
+  'aria.accountInfo': 'Информация об аккаунте',
+  'title.accountInfo': 'Информация об аккаунте',
+  'label.account.address': 'Адрес',
+  'label.account.registeredName': 'Зарегистрированное имя',
+  'label.account.noRegisteredName': 'Нет зарегистрированного имени',
+  'button.copyAddress': 'Скопировать адрес',
+  'button.copied': 'Скопировано',
+  'button.openDirectChat': 'Прямой чат',
+  'button.viewAvatar': 'Показать аватар',
+  'action.openAccountInfo': 'Показать информацию об аккаунте {account}',
+  'status.copyAddress.failed': 'Не удалось скопировать адрес.',
 } as const;

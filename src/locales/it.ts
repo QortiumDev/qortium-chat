@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Mostra o nascondi la cronologia delle modifiche',
   'action.goToOriginal': 'Vai al messaggio originale',
 
+  'aria.accountInfo': 'Informazioni account',
+  'title.accountInfo': 'Informazioni account',
+  'label.account.address': 'Indirizzo',
+  'label.account.registeredName': 'Nome registrato',
+  'label.account.noRegisteredName': 'Nessun nome registrato',
+  'button.copyAddress': 'Copia indirizzo',
+  'button.copied': 'Copiato',
+  'button.openDirectChat': 'Chat diretta',
+  'button.viewAvatar': 'Visualizza avatar',
+  'action.openAccountInfo': 'Visualizza informazioni account per {account}',
+  'status.copyAddress.failed': 'Impossibile copiare l’indirizzo.',
 } as const;

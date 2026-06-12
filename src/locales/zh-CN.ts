@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': '显示或隐藏编辑历史',
   'action.goToOriginal': '跳转到原始消息',
 
+  'aria.accountInfo': '账户信息',
+  'title.accountInfo': '账户信息',
+  'label.account.address': '地址',
+  'label.account.registeredName': '注册名称',
+  'label.account.noRegisteredName': '没有注册名称',
+  'button.copyAddress': '复制地址',
+  'button.copied': '已复制',
+  'button.openDirectChat': '直接聊天',
+  'button.viewAvatar': '查看头像',
+  'action.openAccountInfo': '查看 {account} 的账户信息',
+  'status.copyAddress.failed': '无法复制地址。',
 } as const;

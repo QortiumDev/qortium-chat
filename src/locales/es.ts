@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Mostrar u ocultar el historial de ediciones',
   'action.goToOriginal': 'Ir al mensaje original',
 
+  'aria.accountInfo': 'Información de la cuenta',
+  'title.accountInfo': 'Información de la cuenta',
+  'label.account.address': 'Dirección',
+  'label.account.registeredName': 'Nombre registrado',
+  'label.account.noRegisteredName': 'Sin nombre registrado',
+  'button.copyAddress': 'Copiar dirección',
+  'button.copied': 'Copiado',
+  'button.openDirectChat': 'Chat directo',
+  'button.viewAvatar': 'Ver avatar',
+  'action.openAccountInfo': 'Ver información de la cuenta de {account}',
+  'status.copyAddress.failed': 'No se pudo copiar la dirección.',
 } as const;

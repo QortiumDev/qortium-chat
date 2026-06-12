@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Näytä tai piilota muokkaushistoria',
   'action.goToOriginal': 'Siirry alkuperäiseen viestiin',
 
+  'aria.accountInfo': 'Tilin tiedot',
+  'title.accountInfo': 'Tilin tiedot',
+  'label.account.address': 'Osoite',
+  'label.account.registeredName': 'Rekisteröity nimi',
+  'label.account.noRegisteredName': 'Ei rekisteröityä nimeä',
+  'button.copyAddress': 'Kopioi osoite',
+  'button.copied': 'Kopioitu',
+  'button.openDirectChat': 'Suora chat',
+  'button.viewAvatar': 'Näytä avatar',
+  'action.openAccountInfo': 'Näytä tilin {account} tiedot',
+  'status.copyAddress.failed': 'Osoitetta ei voitu kopioida.',
 } as const;

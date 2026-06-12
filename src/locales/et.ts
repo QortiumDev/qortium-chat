@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Kuva või peida muudatuste ajalugu',
   'action.goToOriginal': 'Mine algse sõnumi juurde',
 
+  'aria.accountInfo': 'Konto teave',
+  'title.accountInfo': 'Konto teave',
+  'label.account.address': 'Aadress',
+  'label.account.registeredName': 'Registreeritud nimi',
+  'label.account.noRegisteredName': 'Registreeritud nimi puudub',
+  'button.copyAddress': 'Kopeeri aadress',
+  'button.copied': 'Kopeeritud',
+  'button.openDirectChat': 'Otsevestlus',
+  'button.viewAvatar': 'Kuva avatar',
+  'action.openAccountInfo': 'Kuva konto {account} teave',
+  'status.copyAddress.failed': 'Aadressi ei saanud kopeerida.',
 } as const;

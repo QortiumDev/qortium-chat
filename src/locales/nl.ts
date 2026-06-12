@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Bewerkingsgeschiedenis tonen of verbergen',
   'action.goToOriginal': 'Ga naar het oorspronkelijke bericht',
 
+  'aria.accountInfo': 'Accountinformatie',
+  'title.accountInfo': 'Accountinformatie',
+  'label.account.address': 'Adres',
+  'label.account.registeredName': 'Geregistreerde naam',
+  'label.account.noRegisteredName': 'Geen geregistreerde naam',
+  'button.copyAddress': 'Adres kopiëren',
+  'button.copied': 'Gekopieerd',
+  'button.openDirectChat': 'Directe chat',
+  'button.viewAvatar': 'Avatar bekijken',
+  'action.openAccountInfo': 'Accountinformatie voor {account} bekijken',
+  'status.copyAddress.failed': 'Kan adres niet kopiëren.',
 } as const;

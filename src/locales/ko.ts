@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': '수정 기록 표시 또는 숨기기',
   'action.goToOriginal': '원본 메시지로 이동',
 
+  'aria.accountInfo': '계정 정보',
+  'title.accountInfo': '계정 정보',
+  'label.account.address': '주소',
+  'label.account.registeredName': '등록된 이름',
+  'label.account.noRegisteredName': '등록된 이름 없음',
+  'button.copyAddress': '주소 복사',
+  'button.copied': '복사됨',
+  'button.openDirectChat': '직접 채팅',
+  'button.viewAvatar': '아바타 보기',
+  'action.openAccountInfo': '{account} 계정 정보 보기',
+  'status.copyAddress.failed': '주소를 복사할 수 없습니다.',
 } as const;

@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Afișează sau ascunde istoricul editărilor',
   'action.goToOriginal': 'Mergi la mesajul original',
 
+  'aria.accountInfo': 'Informații cont',
+  'title.accountInfo': 'Informații cont',
+  'label.account.address': 'Adresă',
+  'label.account.registeredName': 'Nume înregistrat',
+  'label.account.noRegisteredName': 'Niciun nume înregistrat',
+  'button.copyAddress': 'Copiază adresa',
+  'button.copied': 'Copiat',
+  'button.openDirectChat': 'Chat direct',
+  'button.viewAvatar': 'Vezi avatarul',
+  'action.openAccountInfo': 'Vezi informațiile contului pentru {account}',
+  'status.copyAddress.failed': 'Nu s-a putut copia adresa.',
 } as const;

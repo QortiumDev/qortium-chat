@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'Visa eller dölj redigeringshistorik',
   'action.goToOriginal': 'Gå till det ursprungliga meddelandet',
 
+  'aria.accountInfo': 'Kontoinformation',
+  'title.accountInfo': 'Kontoinformation',
+  'label.account.address': 'Adress',
+  'label.account.registeredName': 'Registrerat namn',
+  'label.account.noRegisteredName': 'Inget registrerat namn',
+  'button.copyAddress': 'Kopiera adress',
+  'button.copied': 'Kopierat',
+  'button.openDirectChat': 'Direktchatt',
+  'button.viewAvatar': 'Visa avatar',
+  'action.openAccountInfo': 'Visa kontoinformation för {account}',
+  'status.copyAddress.failed': 'Det gick inte att kopiera adressen.',
 } as const;

@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': '編集履歴の表示/非表示',
   'action.goToOriginal': '元のメッセージへ移動',
 
+  'aria.accountInfo': 'アカウント情報',
+  'title.accountInfo': 'アカウント情報',
+  'label.account.address': 'アドレス',
+  'label.account.registeredName': '登録名',
+  'label.account.noRegisteredName': '登録名なし',
+  'button.copyAddress': 'アドレスをコピー',
+  'button.copied': 'コピー済み',
+  'button.openDirectChat': 'ダイレクトチャット',
+  'button.viewAvatar': 'アバターを表示',
+  'action.openAccountInfo': '{account} のアカウント情報を表示',
+  'status.copyAddress.failed': 'アドレスをコピーできません。',
 } as const;

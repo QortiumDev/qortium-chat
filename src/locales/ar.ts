@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': 'إظهار أو إخفاء سجل التعديلات',
   'action.goToOriginal': 'الانتقال إلى الرسالة الأصلية',
 
+  'aria.accountInfo': 'معلومات الحساب',
+  'title.accountInfo': 'معلومات الحساب',
+  'label.account.address': 'العنوان',
+  'label.account.registeredName': 'الاسم المسجل',
+  'label.account.noRegisteredName': 'لا يوجد اسم مسجل',
+  'button.copyAddress': 'نسخ العنوان',
+  'button.copied': 'تم النسخ',
+  'button.openDirectChat': 'دردشة مباشرة',
+  'button.viewAvatar': 'عرض الصورة الرمزية',
+  'action.openAccountInfo': 'عرض معلومات الحساب لـ {account}',
+  'status.copyAddress.failed': 'تعذر نسخ العنوان.',
 } as const;

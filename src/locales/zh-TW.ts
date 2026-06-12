@@ -192,4 +192,15 @@ export const STRINGS = {
   'action.toggleEditHistory': '顯示或隱藏編輯歷史',
   'action.goToOriginal': '跳至原始訊息',
 
+  'aria.accountInfo': '帳戶資訊',
+  'title.accountInfo': '帳戶資訊',
+  'label.account.address': '位址',
+  'label.account.registeredName': '註冊名稱',
+  'label.account.noRegisteredName': '沒有註冊名稱',
+  'button.copyAddress': '複製位址',
+  'button.copied': '已複製',
+  'button.openDirectChat': '直接聊天',
+  'button.viewAvatar': '查看頭像',
+  'action.openAccountInfo': '查看 {account} 的帳戶資訊',
+  'status.copyAddress.failed': '無法複製位址。',
 } as const;
