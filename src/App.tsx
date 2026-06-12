@@ -1,5 +1,5 @@
-import { type SubmitEvent, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import type { EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
+import { type SubmitEvent, useEffect, useMemo, useRef, useState } from 'react';
+import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
@@ -101,8 +101,6 @@ type TrackedTransaction = {
   phase: 'confirmed' | 'failed' | 'pending';
   signature?: string;
 };
-
-const FullEmojiPicker = lazy(() => import('emoji-picker-react'));
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -719,22 +717,20 @@ function MessageReactionPicker({
       </div>
       {fullPickerOpen ? (
         <div className="message__emoji-picker-panel">
-          <Suspense fallback={<div className="message__emoji-picker-loading">{t('label.loading')}</div>}>
-            <FullEmojiPicker
-              allowExpandReactions
-              autoFocusSearch={false}
-              emojiStyle={'native' as EmojiStyle}
-              height={360}
-              lazyLoadEmojis
-              onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
-              onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
-              previewConfig={{ showPreview: false }}
-              reactions={[...DEFAULT_REACTION_OPTIONS]}
-              searchPlaceHolder={t('label.search')}
-              theme={'auto' as Theme}
-              width="100%"
-            />
-          </Suspense>
+          <EmojiPicker
+            allowExpandReactions
+            autoFocusSearch={false}
+            emojiStyle={EmojiStyle.NATIVE}
+            height={360}
+            lazyLoadEmojis
+            onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+            onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+            previewConfig={{ showPreview: false }}
+            reactions={[...DEFAULT_REACTION_OPTIONS]}
+            searchPlaceHolder={t('label.search')}
+            theme={Theme.AUTO}
+            width="100%"
+          />
         </div>
       ) : null}
     </div>

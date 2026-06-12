@@ -1274,14 +1274,6 @@ button.message__reply-preview:focus-visible {
   border: 0;
 }
 
-.message__emoji-picker-loading {
-  min-height: 120px;
-  display: grid;
-  place-items: center;
-  color: var(--qc-color-muted);
-  font-size: var(--qc-text-small);
-}
-
 .message__reactions {
   display: flex;
   flex-wrap: wrap;
