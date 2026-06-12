@@ -1834,6 +1834,23 @@ button.message__reply-preview:focus-visible {
   width: auto;
 }
 
+.composer--notice {
+  align-items: center;
+  justify-content: space-between;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-small);
+}
+
+.composer--notice p {
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+
+.composer--notice .button {
+  flex: 0 0 auto;
+}
+
 .error {
   color: var(--qc-color-error);
 }

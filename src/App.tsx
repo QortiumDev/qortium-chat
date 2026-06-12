@@ -1555,11 +1555,22 @@ export default function App() {
   const isAccountUnlocked = account?.isUnlocked === true;
   const canOpenDirectChat = !!account && isAccountUnlocked && (canReadPrivateDirectChat || canSendDirectChat);
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
+  const isRegularSelectedGroup = selectedChat?.kind === 'group' && !isSelectedGeneralChat;
+  const isSelectedGroupMembershipConfirmed = !isRegularSelectedGroup || memberGroups.phase === 'ready';
+  const isConfirmedJoinedGroup = memberGroups.phase === 'ready' && isJoinedGroup;
+  const canPostInSelectedGroup =
+    selectedChat?.kind === 'group' &&
+    (isSelectedGeneralChat || isConfirmedJoinedGroup);
   const hasPendingJoinRequest = selectedGroupId !== null && pendingJoinGroupIds.has(selectedGroupId);
   const hasPendingJoinTransaction = selectedGroupId !== null && pendingTrackedJoinGroupIds.has(selectedGroupId);
   const hasPendingLeaveTransaction = selectedGroupId !== null && pendingTrackedLeaveGroupIds.has(selectedGroupId);
   const isJoinableGroup =
-    selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && !hasPendingJoinRequest && !hasPendingJoinTransaction;
+    selectedGroupId !== null &&
+    selectedGroupId > 0 &&
+    isSelectedGroupMembershipConfirmed &&
+    !isConfirmedJoinedGroup &&
+    !hasPendingJoinRequest &&
+    !hasPendingJoinTransaction;
   const canSubmitJoin = !!account && isAccountUnlocked && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
   const canSubmitLeave =
     !!account &&
@@ -1568,13 +1579,13 @@ export default function App() {
     selectedGroupId !== null &&
     selectedGroupId > 0 &&
     canLeaveGroup &&
-    isJoinedGroup &&
+    isConfirmedJoinedGroup &&
     !leavePending &&
     !hasPendingLeaveTransaction;
   const canStartMinting = hasAction(actions, 'START_MINTING');
   const isSelectedMintingGroup = selectedGroup?.isMintingGroup === true;
   const accountMintingStatus = mintingStatus.value;
-  const showMintingControls = isSelectedMintingGroup && isJoinedGroup && !!account;
+  const showMintingControls = isSelectedMintingGroup && isConfirmedJoinedGroup && !!account;
   const hasPendingRewardShareTransaction = Object.values(trackedTransactions).some(
     (transaction) => transaction.action === 'rewardshare' && transaction.phase === 'pending',
   );
@@ -1589,9 +1600,21 @@ export default function App() {
     !!account &&
     isAccountUnlocked &&
     !!selectedChat &&
-    (selectedChat.kind === 'group' ? canSendGroupChat : canSendDirectChat);
+    (selectedChat.kind === 'group' ? canSendGroupChat && canPostInSelectedGroup : canSendDirectChat);
   const canSubmitMessage =
     canComposeMessage && draft.trim().length > 0 && !sendPending;
+  const showGroupComposerNotice =
+    !!account &&
+    isAccountUnlocked &&
+    canSendGroupChat &&
+    isRegularSelectedGroup &&
+    !canPostInSelectedGroup;
+  const groupComposerNotice =
+    memberGroups.phase === 'error'
+      ? t('hint.groupMembershipUnavailable')
+      : !isSelectedGroupMembershipConfirmed
+        ? t('hint.groupMembershipChecking')
+        : t('hint.groupJoinToPost');
   const accountRequiredLabel = bridge.value.isHomeBridge
     ? t('action.account.notShared')
     : t('action.noAccountUse');
@@ -2453,6 +2476,45 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [selectedGroupId, actionsKey]);
 
+  function renderJoinGroupButton() {
+    if (!(
+      selectedChat?.kind === 'group' &&
+      selectedGroupId !== null &&
+      selectedGroupId > 0 &&
+      isSelectedGroupMembershipConfirmed &&
+      !isConfirmedJoinedGroup &&
+      canJoinGroup
+    )) {
+      return null;
+    }
+
+    return (
+      <button
+        className="button button--secondary"
+        disabled={!canSubmitJoin}
+        onClick={() => void handleJoinGroup()}
+        title={
+          hasPendingJoinTransaction
+            ? t('button.join.transaction.pending')
+            : hasPendingJoinRequest
+              ? t('button.join.request.pending')
+              : isAccountUnlocked && canJoinGroup
+                ? t('button.join')
+                : groupJoinUnavailableLabel
+        }
+        type="button"
+      >
+        {joinPending
+          ? t('button.joining')
+          : hasPendingJoinTransaction
+            ? t('button.join.pending')
+            : hasPendingJoinRequest
+              ? t('button.join.request.pending')
+              : t('button.join')}
+      </button>
+    );
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -2609,32 +2671,8 @@ export default function App() {
                     : `${t('label.common.members')} (${groupMembers.value.length})`}
                 </button>
               ) : null}
-              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && canJoinGroup ? (
-                <button
-                  className="button button--secondary"
-                  disabled={!canSubmitJoin}
-                  onClick={() => void handleJoinGroup()}
-                  title={
-                    hasPendingJoinTransaction
-                      ? t('button.join.transaction.pending')
-                      : hasPendingJoinRequest
-                        ? t('button.join.request.pending')
-                        : isAccountUnlocked && canJoinGroup
-                          ? t('button.join')
-                          : groupJoinUnavailableLabel
-                  }
-                  type="button"
-                >
-                  {joinPending
-                    ? t('button.joining')
-                    : hasPendingJoinTransaction
-                      ? t('button.join.pending')
-                      : hasPendingJoinRequest
-                        ? t('button.join.request.pending')
-                        : t('button.join')}
-                </button>
-              ) : null}
-              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && isJoinedGroup && canLeaveGroup ? (
+              {renderJoinGroupButton()}
+              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && isConfirmedJoinedGroup && canLeaveGroup ? (
                 <button
                   className="button button--secondary"
                   disabled={!canSubmitLeave}
@@ -2719,65 +2757,72 @@ export default function App() {
             />
           )}
 
-          <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
-            {composeContext ? (
-              <div className="composer__context">
-                <div className="composer__context-text">
-                  <strong>
-                    {composeContext.kind === 'edit'
-                      ? t('label.composer.editing')
-                      : t('label.composer.replyingTo', {
-                          name: getMessageSenderLabel(
-                            composeContext.message,
-                            avatarProfiles[composeContext.message.sender],
-                          ),
-                        })}
-                  </strong>
-                  <span>
-                    {getMessageSnippet(
-                      composeContext.kind === 'edit' ? composeContext.thread.latest : composeContext.message,
-                      t,
-                    )}
-                  </span>
+          {showGroupComposerNotice ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{groupComposerNotice}</p>
+              {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}
+            </div>
+          ) : (
+            <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
+              {composeContext ? (
+                <div className="composer__context">
+                  <div className="composer__context-text">
+                    <strong>
+                      {composeContext.kind === 'edit'
+                        ? t('label.composer.editing')
+                        : t('label.composer.replyingTo', {
+                            name: getMessageSenderLabel(
+                              composeContext.message,
+                              avatarProfiles[composeContext.message.sender],
+                            ),
+                          })}
+                    </strong>
+                    <span>
+                      {getMessageSnippet(
+                        composeContext.kind === 'edit' ? composeContext.thread.latest : composeContext.message,
+                        t,
+                      )}
+                    </span>
+                  </div>
+                  <button className="button button--secondary" onClick={cancelComposeContext} type="button">
+                    {t('button.cancel')}
+                  </button>
                 </div>
-                <button className="button button--secondary" onClick={cancelComposeContext} type="button">
-                  {t('button.cancel')}
-                </button>
-              </div>
-            ) : null}
-            <textarea
-              aria-label={t('label.common.message')}
-              disabled={!canComposeMessage || sendPending}
-              maxLength={4000}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
+              ) : null}
+              <textarea
+                aria-label={t('label.common.message')}
+                disabled={!canComposeMessage || sendPending}
+                maxLength={4000}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={t('placeholder.message')}
+                ref={composerRef}
+                rows={1}
+                value={draft}
+              />
+              <button
+                className="button"
+                disabled={!canSubmitMessage}
+                title={
+                  selectedChat?.kind === 'direct'
+                    ? canComposeMessage
+                      ? t('button.sendDirectMessage')
+                      : directSendUnavailableLabel
+                    : canComposeMessage
+                      ? t('button.sendMessage')
+                      : groupSendUnavailableLabel
                 }
-              }}
-              placeholder={t('placeholder.message')}
-              ref={composerRef}
-              rows={1}
-              value={draft}
-            />
-            <button
-              className="button"
-              disabled={!canSubmitMessage}
-              title={
-                selectedChat?.kind === 'direct'
-                  ? canComposeMessage
-                    ? t('button.sendDirectMessage')
-                    : directSendUnavailableLabel
-                  : canComposeMessage
-                    ? t('button.sendMessage')
-                    : groupSendUnavailableLabel
-              }
-              type="submit"
-            >
-              {sendPending ? t('button.sending') : t('button.send')}
-            </button>
-          </form>
+                type="submit"
+              >
+                {sendPending ? t('button.sending') : t('button.send')}
+              </button>
+            </form>
+          )}
         </section>
 
         {showGroupMembers && membersOpen ? (
