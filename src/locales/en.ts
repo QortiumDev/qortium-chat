@@ -184,11 +184,13 @@ export const EN_STRINGS = {
   'label.message.original': 'Original',
   'label.editHistory': 'Edit history',
   'label.reactions': 'Reactions',
+  'label.reactionDetails': 'Reaction details',
   'label.composer.editing': 'Editing message',
   'label.composer.replyingTo': 'Replying to {name}',
   'message.replyUnavailable': 'Original message unavailable',
   'action.addReaction': 'Add reaction',
   'action.removeReaction': 'Remove reaction',
+  'action.viewReactionDetails': 'View {reaction} reactions',
   'action.toggleEditHistory': 'Show or hide edit history',
   'action.goToOriginal': 'Go to original message',
 

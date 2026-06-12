@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': '原始消息',
   'label.editHistory': '编辑历史',
   'label.reactions': '表情回应',
+  'label.reactionDetails': '回应详情',
   'label.composer.editing': '正在编辑消息',
   'label.composer.replyingTo': '正在回复 {name}',
   'message.replyUnavailable': '原始消息不可用',
   'action.addReaction': '添加回应',
   'action.removeReaction': '移除回应',
+  'action.viewReactionDetails': '查看 {reaction} 回应',
   'action.toggleEditHistory': '显示或隐藏编辑历史',
   'action.goToOriginal': '跳转到原始消息',
 

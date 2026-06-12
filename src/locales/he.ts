@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'מקור',
   'label.editHistory': 'היסטוריית עריכות',
   'label.reactions': 'תגובות',
+  'label.reactionDetails': 'פרטי התגובה',
   'label.composer.editing': 'עריכת הודעה',
   'label.composer.replyingTo': 'משיב ל־{name}',
   'message.replyUnavailable': 'ההודעה המקורית אינה זמינה',
   'action.addReaction': 'הוסף תגובה',
   'action.removeReaction': 'הסר תגובה',
+  'action.viewReactionDetails': 'הצג תגובות {reaction}',
   'action.toggleEditHistory': 'הצגה או הסתרה של היסטוריית העריכות',
   'action.goToOriginal': 'מעבר להודעה המקורית',
 

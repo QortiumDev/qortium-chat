@@ -280,6 +280,15 @@ function getMessageSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName
   return getMessageSenderName(message, profile) ?? getSenderLabel(message);
 }
 
+function getReactionDetailsDomId(messageSignature: string, reaction: string) {
+  const signaturePart = messageSignature.replace(/[^A-Za-z0-9_-]/g, '-');
+  const reactionPart = Array.from(reaction)
+    .map((character) => character.codePointAt(0)?.toString(16) ?? '0')
+    .join('-') || 'reaction';
+
+  return `reaction-details-${signaturePart}-${reactionPart}`;
+}
+
 function UserAvatar({
   className,
   name,
@@ -876,16 +885,107 @@ function MessageReactionPicker({
   );
 }
 
-function MessageReactionChips({
+function MessageReactionDetails({
+  avatarProfiles,
   canReact,
+  now,
+  onClose,
   onReact,
+  original,
+  pendingReactionKey,
+  reaction,
+  t,
+}: {
+  avatarProfiles: AvatarProfilesByAddress;
+  canReact: boolean;
+  now: number;
+  onClose: () => void;
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  original: ChatMessage;
+  pendingReactionKey: string;
+  reaction: MessageReactionSummary;
+  t: TranslateFunction;
+}) {
+  const contentState = !reaction.reactedBySelf;
+  const pendingKey = getReactionPendingKey(original.signature ?? '', reaction.content);
+  const actionLabel = contentState ? t('action.addReaction') : t('action.removeReaction');
+
+  return (
+    <section
+      aria-label={t('label.reactionDetails')}
+      className="message__reaction-details"
+      id={getReactionDetailsDomId(original.signature ?? '', reaction.content)}
+    >
+      <header className="message__reaction-details-header">
+        <span>
+          {reaction.content} {t('label.reactions')}
+        </span>
+        <button
+          aria-label={t('button.close')}
+          className="message__reaction-details-close"
+          onClick={onClose}
+          title={t('button.close')}
+          type="button"
+        >
+          X
+        </button>
+      </header>
+      <ol className="message__reaction-reactors">
+        {reaction.reactors.map((reactor) => {
+          const profile = avatarProfiles[reactor.sender];
+          const label = getMessageSenderLabel({ sender: reactor.sender, senderName: null }, profile);
+
+          return (
+            <li className="message__reaction-reactor" key={`${reactor.sender}-${reactor.timestamp}`}>
+              <span className="message__reaction-reactor-name" title={reactor.sender}>
+                {label}
+              </span>
+              <time
+                className="message__reaction-reactor-time"
+                dateTime={new Date(reactor.timestamp).toISOString()}
+                title={formatTimestamp(reactor.timestamp)}
+              >
+                {formatTimeAgo(reactor.timestamp, now)}
+              </time>
+            </li>
+          );
+        })}
+      </ol>
+      <button
+        className="button button--secondary message__reaction-details-action"
+        disabled={!canReact || pendingReactionKey === pendingKey}
+        onClick={() => {
+          onClose();
+          onReact(original, reaction.content, contentState);
+        }}
+        type="button"
+      >
+        {actionLabel}
+      </button>
+    </section>
+  );
+}
+
+function MessageReactionChips({
+  avatarProfiles,
+  canReact,
+  now,
+  onCloseReactionDetails,
+  onReact,
+  onToggleReactionDetails,
+  openReactionDetailsKey,
   original,
   pendingReactionKey,
   reactions,
   t,
 }: {
+  avatarProfiles: AvatarProfilesByAddress;
   canReact: boolean;
+  now: number;
+  onCloseReactionDetails: () => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  onToggleReactionDetails: (detailsKey: string) => void;
+  openReactionDetailsKey: string;
   original: ChatMessage;
   pendingReactionKey: string;
   reactions: MessageReactionSummary[];
@@ -895,29 +995,49 @@ function MessageReactionChips({
     return null;
   }
 
-  return (
-    <div className="message__reactions" aria-label={t('label.reactions')}>
-      {reactions.map((reaction) => {
-        const contentState = !reaction.reactedBySelf;
-        const pendingKey = getReactionPendingKey(original.signature ?? '', reaction.content);
-        const label = contentState ? t('action.addReaction') : t('action.removeReaction');
+  const openReaction = reactions.find((reaction) => {
+    return getReactionPendingKey(original.signature ?? '', reaction.content) === openReactionDetailsKey;
+  });
 
-        return (
-          <button
-            aria-label={label}
-            aria-pressed={reaction.reactedBySelf}
-            className={`message__reaction-chip${reaction.reactedBySelf ? ' message__reaction-chip--active' : ''}`}
-            disabled={!canReact || pendingReactionKey === pendingKey}
-            key={reaction.content}
-            onClick={() => onReact(original, reaction.content, contentState)}
-            title={label}
-            type="button"
-          >
-            <span>{reaction.content}</span>
-            <span>{reaction.count}</span>
-          </button>
-        );
-      })}
+  return (
+    <div className="message__reaction-block">
+      <div className="message__reactions" aria-label={t('label.reactions')}>
+        {reactions.map((reaction) => {
+          const pendingKey = getReactionPendingKey(original.signature ?? '', reaction.content);
+          const isOpen = openReactionDetailsKey === pendingKey;
+          const label = t('action.viewReactionDetails', { reaction: reaction.content });
+
+          return (
+            <button
+              aria-controls={isOpen ? getReactionDetailsDomId(original.signature ?? '', reaction.content) : undefined}
+              aria-expanded={isOpen}
+              aria-label={label}
+              className={`message__reaction-chip${reaction.reactedBySelf ? ' message__reaction-chip--active' : ''}`}
+              disabled={pendingReactionKey === pendingKey}
+              key={reaction.content}
+              onClick={() => onToggleReactionDetails(pendingKey)}
+              title={label}
+              type="button"
+            >
+              <span>{reaction.content}</span>
+              <span>{reaction.count}</span>
+            </button>
+          );
+        })}
+      </div>
+      {openReaction ? (
+        <MessageReactionDetails
+          avatarProfiles={avatarProfiles}
+          canReact={canReact}
+          now={now}
+          onClose={onCloseReactionDetails}
+          onReact={onReact}
+          original={original}
+          pendingReactionKey={pendingReactionKey}
+          reaction={openReaction}
+          t={t}
+        />
+      ) : null}
     </div>
   );
 }
@@ -957,6 +1077,7 @@ function MessageList({
   const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
   const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
   const [openReactionPickerKey, setOpenReactionPickerKey] = useState('');
+  const [openReactionDetailsKey, setOpenReactionDetailsKey] = useState('');
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
   const [now, setNow] = useState(() => Date.now());
@@ -1058,7 +1179,13 @@ function MessageList({
   }
 
   function toggleReactionPicker(threadKey: string) {
+    setOpenReactionDetailsKey('');
     setOpenReactionPickerKey((current) => current === threadKey ? '' : threadKey);
+  }
+
+  function toggleReactionDetails(detailsKey: string) {
+    setOpenReactionPickerKey('');
+    setOpenReactionDetailsKey((current) => current === detailsKey ? '' : detailsKey);
   }
 
   function playMedia(resource: QdnMediaResource) {
@@ -1207,8 +1334,13 @@ function MessageList({
               />
             ) : null}
             <MessageReactionChips
+              avatarProfiles={avatarProfiles}
               canReact={canReact}
+              now={now}
+              onCloseReactionDetails={() => setOpenReactionDetailsKey('')}
               onReact={onReact}
+              onToggleReactionDetails={toggleReactionDetails}
+              openReactionDetailsKey={openReactionDetailsKey}
               original={original}
               pendingReactionKey={pendingReactionKey}
               reactions={reactions}

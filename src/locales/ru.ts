@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Оригинал',
   'label.editHistory': 'История изменений',
   'label.reactions': 'Реакции',
+  'label.reactionDetails': 'Сведения о реакции',
   'label.composer.editing': 'Редактирование сообщения',
   'label.composer.replyingTo': 'Ответ для {name}',
   'message.replyUnavailable': 'Исходное сообщение недоступно',
   'action.addReaction': 'Добавить реакцию',
   'action.removeReaction': 'Удалить реакцию',
+  'action.viewReactionDetails': 'Показать реакции {reaction}',
   'action.toggleEditHistory': 'Показать или скрыть историю изменений',
   'action.goToOriginal': 'Перейти к исходному сообщению',
 

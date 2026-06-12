@@ -63,14 +63,17 @@ describe('message reaction helpers', () => {
         count: 2,
         latestTimestamp: 30,
         reactedBySelf: true,
-        senders: ['Qa', 'Qb'],
+        reactors: [
+          { sender: 'Qb', timestamp: 30 },
+          { sender: 'Qa', timestamp: 20 },
+        ],
       },
       {
         content: '❤️',
         count: 1,
         latestTimestamp: 40,
         reactedBySelf: false,
-        senders: ['Qc'],
+        reactors: [{ sender: 'Qc', timestamp: 40 }],
       },
     ]);
   });
@@ -93,7 +96,7 @@ describe('message reaction helpers', () => {
         count: 1,
         latestTimestamp: 40,
         reactedBySelf: true,
-        senders: ['Qa'],
+        reactors: [{ sender: 'Qa', timestamp: 40 }],
       },
     ]);
   });

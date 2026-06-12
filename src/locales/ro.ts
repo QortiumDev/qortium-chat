@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Original',
   'label.editHistory': 'Istoricul editărilor',
   'label.reactions': 'Reacții',
+  'label.reactionDetails': 'Detalii reacție',
   'label.composer.editing': 'Se editează mesajul',
   'label.composer.replyingTo': 'Răspuns către {name}',
   'message.replyUnavailable': 'Mesajul original nu este disponibil',
   'action.addReaction': 'Adaugă reacție',
   'action.removeReaction': 'Elimină reacția',
+  'action.viewReactionDetails': 'Vezi reacțiile {reaction}',
   'action.toggleEditHistory': 'Afișează sau ascunde istoricul editărilor',
   'action.goToOriginal': 'Mergi la mesajul original',
 

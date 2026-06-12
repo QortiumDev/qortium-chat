@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Origineel',
   'label.editHistory': 'Bewerkingsgeschiedenis',
   'label.reactions': 'Reacties',
+  'label.reactionDetails': 'Reactiedetails',
   'label.composer.editing': 'Bericht bewerken',
   'label.composer.replyingTo': 'Antwoord aan {name}',
   'message.replyUnavailable': 'Oorspronkelijk bericht niet beschikbaar',
   'action.addReaction': 'Reactie toevoegen',
   'action.removeReaction': 'Reactie verwijderen',
+  'action.viewReactionDetails': '{reaction}-reacties bekijken',
   'action.toggleEditHistory': 'Bewerkingsgeschiedenis tonen of verbergen',
   'action.goToOriginal': 'Ga naar het oorspronkelijke bericht',
 

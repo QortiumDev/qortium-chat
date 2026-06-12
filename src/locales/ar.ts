@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'الأصل',
   'label.editHistory': 'سجل التعديلات',
   'label.reactions': 'التفاعلات',
+  'label.reactionDetails': 'تفاصيل التفاعل',
   'label.composer.editing': 'تعديل الرسالة',
   'label.composer.replyingTo': 'رد على {name}',
   'message.replyUnavailable': 'الرسالة الأصلية غير متوفرة',
   'action.addReaction': 'إضافة تفاعل',
   'action.removeReaction': 'إزالة التفاعل',
+  'action.viewReactionDetails': 'عرض تفاعلات {reaction}',
   'action.toggleEditHistory': 'إظهار أو إخفاء سجل التعديلات',
   'action.goToOriginal': 'الانتقال إلى الرسالة الأصلية',
 

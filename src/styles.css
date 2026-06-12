@@ -1275,11 +1275,17 @@ button.message__reply-preview:focus-visible {
   border: 0;
 }
 
+.message__reaction-block {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .message__reactions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
 }
 
 .message__reaction-chip {
@@ -1311,6 +1317,85 @@ button.message__reply-preview:focus-visible {
 .message__reaction-chip:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.message__reaction-details {
+  display: grid;
+  gap: 8px;
+  width: min(320px, 100%);
+  padding: 10px;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-tiny);
+  line-height: var(--qc-line-small);
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border-subtle);
+  border-radius: var(--qc-radius-sm);
+  box-shadow: var(--qc-shadow-card);
+}
+
+.message__reaction-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--qc-color-text);
+  font-weight: 700;
+}
+
+.message__reaction-details-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--qc-color-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.message__reaction-details-close:hover,
+.message__reaction-details-close:focus-visible {
+  color: var(--qc-color-accent);
+  outline: none;
+}
+
+.message__reaction-reactors {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.message__reaction-reactor {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.message__reaction-reactor-name {
+  overflow: hidden;
+  color: var(--qc-color-text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message__reaction-reactor-time {
+  flex: 0 0 auto;
+  color: var(--qc-color-text-faint);
+}
+
+.message__reaction-details-action {
+  min-width: 0;
+  min-height: 32px;
+  justify-self: start;
+  padding: 5px 12px;
+  font-size: var(--qc-text-tiny);
 }
 
 .message__meta {

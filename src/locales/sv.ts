@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Original',
   'label.editHistory': 'Redigeringshistorik',
   'label.reactions': 'Reaktioner',
+  'label.reactionDetails': 'Reaktionsdetaljer',
   'label.composer.editing': 'Redigerar meddelande',
   'label.composer.replyingTo': 'Svarar {name}',
   'message.replyUnavailable': 'Det ursprungliga meddelandet är inte tillgängligt',
   'action.addReaction': 'Lägg till reaktion',
   'action.removeReaction': 'Ta bort reaktion',
+  'action.viewReactionDetails': 'Visa {reaction}-reaktioner',
   'action.toggleEditHistory': 'Visa eller dölj redigeringshistorik',
   'action.goToOriginal': 'Gå till det ursprungliga meddelandet',
 

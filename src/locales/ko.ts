@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': '원본',
   'label.editHistory': '수정 기록',
   'label.reactions': '반응',
+  'label.reactionDetails': '반응 세부 정보',
   'label.composer.editing': '메시지 수정 중',
   'label.composer.replyingTo': '{name}에게 답장 중',
   'message.replyUnavailable': '원본 메시지를 사용할 수 없습니다',
   'action.addReaction': '반응 추가',
   'action.removeReaction': '반응 제거',
+  'action.viewReactionDetails': '{reaction} 반응 보기',
   'action.toggleEditHistory': '수정 기록 표시 또는 숨기기',
   'action.goToOriginal': '원본 메시지로 이동',
 

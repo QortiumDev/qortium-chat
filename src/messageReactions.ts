@@ -7,10 +7,10 @@ export type MessageReactionSummary = {
   count: number;
   latestTimestamp: number;
   reactedBySelf: boolean;
-  senders: string[];
+  reactors: MessageReactionParticipant[];
 };
 
-type SenderReaction = {
+export type MessageReactionParticipant = {
   sender: string;
   timestamp: number;
 };
@@ -25,7 +25,7 @@ export function getReactionPendingKey(messageSignature: string, reaction: string
 
 export function buildMessageReactionIndex(messages: ChatMessage[], selfAddress: string | null) {
   const reactionIndex = new Map<string, MessageReactionSummary[]>();
-  const reactionsByReference = new Map<string, Map<string, Map<string, SenderReaction>>>();
+  const reactionsByReference = new Map<string, Map<string, Map<string, MessageReactionParticipant>>>();
 
   for (const message of sortMessagesByTimestamp(messages)) {
     if (!message.chatReference) {
@@ -66,7 +66,9 @@ export function buildMessageReactionIndex(messages: ChatMessage[], selfAddress: 
     const reactions: MessageReactionSummary[] = [];
 
     for (const [content, senderMap] of reactionMap) {
-      const senderReactions = Array.from(senderMap.values());
+      const senderReactions = Array.from(senderMap.values()).sort((first, second) => {
+        return second.timestamp - first.timestamp || first.sender.localeCompare(second.sender);
+      });
 
       if (senderReactions.length === 0) {
         continue;
@@ -77,7 +79,7 @@ export function buildMessageReactionIndex(messages: ChatMessage[], selfAddress: 
         count: senderReactions.length,
         latestTimestamp: Math.max(...senderReactions.map((reaction) => reaction.timestamp)),
         reactedBySelf: selfAddress !== null && senderMap.has(selfAddress),
-        senders: senderReactions.map((reaction) => reaction.sender),
+        reactors: senderReactions,
       });
     }
 

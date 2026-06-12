@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Original',
   'label.editHistory': 'Bearbeitungsverlauf',
   'label.reactions': 'Reaktionen',
+  'label.reactionDetails': 'Reaktionsdetails',
   'label.composer.editing': 'Nachricht bearbeiten',
   'label.composer.replyingTo': 'Antwort an {name}',
   'message.replyUnavailable': 'Ursprüngliche Nachricht nicht verfügbar',
   'action.addReaction': 'Reaktion hinzufügen',
   'action.removeReaction': 'Reaktion entfernen',
+  'action.viewReactionDetails': 'Reaktionen für {reaction} anzeigen',
   'action.toggleEditHistory': 'Bearbeitungsverlauf ein- oder ausblenden',
   'action.goToOriginal': 'Zur ursprünglichen Nachricht springen',
 

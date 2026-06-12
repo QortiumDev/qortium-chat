@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Eredeti',
   'label.editHistory': 'Szerkesztési előzmények',
   'label.reactions': 'Reakciók',
+  'label.reactionDetails': 'Reakció részletei',
   'label.composer.editing': 'Üzenet szerkesztése',
   'label.composer.replyingTo': 'Válasz neki: {name}',
   'message.replyUnavailable': 'Az eredeti üzenet nem érhető el',
   'action.addReaction': 'Reakció hozzáadása',
   'action.removeReaction': 'Reakció eltávolítása',
+  'action.viewReactionDetails': '{reaction} reakciók megtekintése',
   'action.toggleEditHistory': 'Szerkesztési előzmények megjelenítése vagy elrejtése',
   'action.goToOriginal': 'Ugrás az eredeti üzenethez',
 

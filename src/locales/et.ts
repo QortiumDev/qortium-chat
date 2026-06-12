@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Originaal',
   'label.editHistory': 'Muudatuste ajalugu',
   'label.reactions': 'Reaktsioonid',
+  'label.reactionDetails': 'Reaktsiooni üksikasjad',
   'label.composer.editing': 'Sõnumi muutmine',
   'label.composer.replyingTo': 'Vastus kasutajale {name}',
   'message.replyUnavailable': 'Algne sõnum pole saadaval',
   'action.addReaction': 'Lisa reaktsioon',
   'action.removeReaction': 'Eemalda reaktsioon',
+  'action.viewReactionDetails': 'Vaata {reaction} reaktsioone',
   'action.toggleEditHistory': 'Kuva või peida muudatuste ajalugu',
   'action.goToOriginal': 'Mine algse sõnumi juurde',
 

@@ -184,11 +184,13 @@ export const STRINGS = {
   'label.message.original': 'Alkuperäinen',
   'label.editHistory': 'Muokkaushistoria',
   'label.reactions': 'Reaktiot',
+  'label.reactionDetails': 'Reaktion tiedot',
   'label.composer.editing': 'Muokataan viestiä',
   'label.composer.replyingTo': 'Vastataan käyttäjälle {name}',
   'message.replyUnavailable': 'Alkuperäinen viesti ei ole saatavilla',
   'action.addReaction': 'Lisää reaktio',
   'action.removeReaction': 'Poista reaktio',
+  'action.viewReactionDetails': 'Näytä {reaction}-reaktiot',
   'action.toggleEditHistory': 'Näytä tai piilota muokkaushistoria',
   'action.goToOriginal': 'Siirry alkuperäiseen viestiin',
 
