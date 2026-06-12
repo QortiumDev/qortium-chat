@@ -9,7 +9,8 @@ const CLOSING_PAIRS: Record<string, string> = {
   ']': '[',
   '}': '{',
 };
-const IMAGE_QDN_SERVICES = new Set(['IMAGE', 'THUMBNAIL', 'QCHAT_IMAGE']);
+const IMAGE_QDN_SERVICES = new Set<QdnImageService>(['IMAGE', 'THUMBNAIL', 'QCHAT_IMAGE']);
+const MEDIA_QDN_SERVICES = new Set<QdnMediaService>(['AUDIO', 'PODCAST', 'VIDEO', 'VOICE']);
 
 export type MessageTextPart =
   | {
@@ -22,13 +23,19 @@ export type MessageTextPart =
       qdnUrl: string;
     };
 
-export type QdnImageResource = {
+type QdnImageService = 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
+type QdnMediaService = 'AUDIO' | 'PODCAST' | 'VIDEO' | 'VOICE';
+
+type QdnResourceBase<Service extends string> = {
   identifier?: string;
   name: string;
   path: string;
   qdnUrl: string;
-  service: 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
+  service: Service;
 };
+
+export type QdnImageResource = QdnResourceBase<QdnImageService>;
+export type QdnMediaResource = QdnResourceBase<QdnMediaService>;
 
 type QdnResourceProperties = {
   filename?: string;
@@ -85,7 +92,15 @@ function decodeSegment(segment: string) {
   }
 }
 
-function parseQdnImageResource(qdnUrl: string): QdnImageResource | null {
+function isImageQdnService(service: string): service is QdnImageService {
+  return IMAGE_QDN_SERVICES.has(service as QdnImageService);
+}
+
+function isMediaQdnService(service: string): service is QdnMediaService {
+  return MEDIA_QDN_SERVICES.has(service as QdnMediaService);
+}
+
+function parseQdnResource(qdnUrl: string): QdnResourceBase<string> | null {
   if (!/^qdn:\/\//i.test(qdnUrl)) {
     return null;
   }
@@ -96,10 +111,6 @@ function parseQdnImageResource(qdnUrl: string): QdnImageResource | null {
   const queryString = queryIndex === -1 ? '' : withoutProtocol.slice(queryIndex + 1);
   const parts = basePart.replace(/^\/+/, '').split('/');
   const service = decodeSegment(parts.shift() ?? '').toUpperCase();
-
-  if (!IMAGE_QDN_SERVICES.has(service)) {
-    return null;
-  }
 
   const name = decodeSegment(parts.shift() ?? '').trim();
 
@@ -129,7 +140,33 @@ function parseQdnImageResource(qdnUrl: string): QdnImageResource | null {
     name,
     path,
     qdnUrl,
-    service: service as QdnImageResource['service'],
+    service,
+  };
+}
+
+function parseQdnImageResource(qdnUrl: string): QdnImageResource | null {
+  const resource = parseQdnResource(qdnUrl);
+
+  if (!resource || !isImageQdnService(resource.service)) {
+    return null;
+  }
+
+  return {
+    ...resource,
+    service: resource.service,
+  };
+}
+
+function parseQdnMediaResource(qdnUrl: string): QdnMediaResource | null {
+  const resource = parseQdnResource(qdnUrl);
+
+  if (!resource || !isMediaQdnService(resource.service)) {
+    return null;
+  }
+
+  return {
+    ...resource,
+    service: resource.service,
   };
 }
 
@@ -166,18 +203,33 @@ export function getMessageTextParts(text: string): MessageTextPart[] {
   return parts.length > 0 ? parts : [{ kind: 'text', text }];
 }
 
-export function getImageQdnResources(text: string): QdnImageResource[] {
+function getQdnResources<T>(text: string, parseResource: (qdnUrl: string) => T | null): T[] {
   return getMessageTextParts(text)
     .filter((part): part is Extract<MessageTextPart, { kind: 'qdn-link' }> => part.kind === 'qdn-link')
-    .map((part) => parseQdnImageResource(part.qdnUrl))
-    .filter((resource): resource is QdnImageResource => resource !== null);
+    .map((part) => parseResource(part.qdnUrl))
+    .filter((resource): resource is T => resource !== null);
+}
+
+export function getImageQdnResources(text: string): QdnImageResource[] {
+  return getQdnResources(text, parseQdnImageResource);
+}
+
+export function getMediaQdnResources(text: string): QdnMediaResource[] {
+  return getQdnResources(text, parseQdnMediaResource);
 }
 
 export async function openQdnUrlInHomeTab(qdnUrl: string) {
   return qdnRequest<boolean>({ action: 'OPEN_NEW_TAB', qdnUrl });
 }
 
-function getResourceRequest(resource: QdnImageResource) {
+export async function openQdnMediaPlayer(resource: QdnMediaResource) {
+  return qdnRequest<boolean>({
+    action: 'OPEN_QDN_MEDIA_PLAYER',
+    ...getResourceRequest(resource),
+  });
+}
+
+function getResourceRequest(resource: QdnImageResource | QdnMediaResource) {
   return {
     service: resource.service,
     name: resource.name,

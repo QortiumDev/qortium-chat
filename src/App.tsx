@@ -26,9 +26,12 @@ import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import {
   fetchQdnImagePreview,
   getImageQdnResources,
+  getMediaQdnResources,
+  openQdnMediaPlayer,
   renderMessageTextWithQdnLinks,
   type QdnImagePreview,
   type QdnImageResource,
+  type QdnMediaResource,
 } from './messageLinks';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
@@ -643,6 +646,7 @@ function MessageImagePreviews({ resources, t }: { resources: QdnImageResource[];
 function MessageList({
   avatarProfiles,
   canCompose,
+  canOpenMediaPlayer,
   messages,
   onEdit,
   onOpenAvatar,
@@ -652,6 +656,7 @@ function MessageList({
 }: {
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
+  canOpenMediaPlayer: boolean;
   messages: ChatMessage[];
   onEdit: (thread: MessageThread) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
@@ -762,6 +767,12 @@ function MessageList({
     });
   }
 
+  function playMedia(resource: QdnMediaResource) {
+    void openQdnMediaPlayer(resource).catch((error) => {
+      console.warn('Unable to open QDN media player.', error);
+    });
+  }
+
   if (messages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
@@ -790,18 +801,33 @@ function MessageList({
         const canEdit = isOwn && decoded.kind === 'text';
         const isTimeExpanded = expandedTimeKey === threadKey;
         const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
+        const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
         const hasImagePreviews = imageResources.length > 0;
+        const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
         const areImagePreviewsOpen = openImagePreviews.has(threadKey);
         const canReplyOrEdit = canCompose && original.signature;
         const senderProfile = avatarProfiles[original.sender];
         const actionButtons =
-          canReplyOrEdit || hasImagePreviews ? (
+          canReplyOrEdit || hasImagePreviews || hasMediaActions ? (
             <div className="message__actions">
               {hasImagePreviews ? (
                 <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
                   {areImagePreviewsOpen ? t('button.hideImagePreview') : t('button.viewImagePreview')}
                 </button>
               ) : null}
+              {hasMediaActions
+                ? mediaResources.map((resource, resourceIndex) => (
+                    <button
+                      aria-label={t('action.openMediaPlayer')}
+                      key={`${resource.qdnUrl}-${resourceIndex}`}
+                      onClick={() => playMedia(resource)}
+                      title={resource.qdnUrl}
+                      type="button"
+                    >
+                      {t('button.playMedia')}
+                    </button>
+                  ))
+                : null}
               {canReplyOrEdit ? (
                 <button onClick={() => onReply(original)} type="button">
                   {t('button.reply')}
@@ -1054,6 +1080,7 @@ export default function App() {
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
+  const canOpenMediaPlayer = hasAction(actions, 'OPEN_QDN_MEDIA_PLAYER');
   const canSendDirectChat = canSendGroupChat;
   const isAccountUnlocked = account?.isUnlocked === true;
   const canOpenDirectChat = !!account && isAccountUnlocked && (canReadPrivateDirectChat || canSendDirectChat);
@@ -2156,6 +2183,7 @@ export default function App() {
             <MessageList
               avatarProfiles={avatarProfiles}
               canCompose={canComposeMessage}
+              canOpenMediaPlayer={canOpenMediaPlayer}
               messages={messages.value}
               onEdit={startEdit}
               onOpenAvatar={setAvatarLightboxImage}

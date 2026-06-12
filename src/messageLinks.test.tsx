@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchQdnImagePreview,
   getImageQdnResources,
+  getMediaQdnResources,
   getMessageTextParts,
+  openQdnMediaPlayer,
   openQdnUrlInHomeTab,
 } from './messageLinks';
 import { qdnRequest } from './qdnRequest';
@@ -82,6 +84,50 @@ describe('message link helpers', () => {
         service: 'QCHAT_IMAGE',
       },
     ]);
+  });
+
+  it('extracts playable media qdn resources from message text', () => {
+    expect(
+      getMediaQdnResources(
+        'Play qdn://AUDIO/Alice/episode-1, watch qdn://VIDEO/Bob/default/clips/demo.webm?identifier=trailer, and open qdn://IMAGE/Alice/photo.',
+      ),
+    ).toEqual([
+      {
+        identifier: 'episode-1',
+        name: 'Alice',
+        path: '',
+        qdnUrl: 'qdn://AUDIO/Alice/episode-1',
+        service: 'AUDIO',
+      },
+      {
+        identifier: 'trailer',
+        name: 'Bob',
+        path: 'default/clips/demo.webm',
+        qdnUrl: 'qdn://VIDEO/Bob/default/clips/demo.webm?identifier=trailer',
+        service: 'VIDEO',
+      },
+    ]);
+  });
+
+  it('opens media resources through the Home media player bridge action', async () => {
+    qdnRequestMock.mockResolvedValueOnce(true);
+
+    await expect(
+      openQdnMediaPlayer({
+        identifier: 'episode-1',
+        name: 'Alice',
+        path: '',
+        qdnUrl: 'qdn://AUDIO/Alice/episode-1',
+        service: 'AUDIO',
+      }),
+    ).resolves.toBe(true);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'OPEN_QDN_MEDIA_PLAYER',
+      service: 'AUDIO',
+      name: 'Alice',
+      identifier: 'episode-1',
+      path: '',
+    });
   });
 
   it('fetches image previews as base64 through the Home bridge', async () => {
