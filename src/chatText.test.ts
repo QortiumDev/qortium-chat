@@ -80,6 +80,18 @@ describe('chat text helpers', () => {
     });
   });
 
+  it('supports reaction emoji outside the quick picker set', () => {
+    const data = base64(buildReactionMessageText('🔥', true));
+
+    expect(decodeChatMessage({ data, encoding: 'BASE64', isEncrypted: false, isText: true })).toMatchObject({
+      kind: 'reaction',
+      reaction: {
+        content: '🔥',
+        contentState: true,
+      },
+    });
+  });
+
   it('unwraps reaction envelopes nested inside direct message wrappers', () => {
     const data = base64(JSON.stringify({ message: buildReactionMessageText('❤️', false), version: 2 }));
 

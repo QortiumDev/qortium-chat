@@ -1,4 +1,5 @@
-import { type SubmitEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type SubmitEvent, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import type { EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
@@ -100,6 +101,8 @@ type TrackedTransaction = {
   phase: 'confirmed' | 'failed' | 'pending';
   signature?: string;
 };
+
+const FullEmojiPicker = lazy(() => import('emoji-picker-react'));
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -669,31 +672,71 @@ function MessageReactionPicker({
   reactions: MessageReactionSummary[];
   t: TranslateFunction;
 }) {
+  const [fullPickerOpen, setFullPickerOpen] = useState(false);
+
   if (!original.signature) {
     return null;
   }
 
-  return (
-    <div className="message__reaction-picker" aria-label={t('label.reactions')} role="toolbar">
-      {DEFAULT_REACTION_OPTIONS.map((reaction) => {
-        const existingReaction = reactions.find((summary) => summary.content === reaction);
-        const contentState = !existingReaction?.reactedBySelf;
-        const pendingKey = getReactionPendingKey(original.signature ?? '', reaction);
+  const selectReaction = (reaction: string) => {
+    const existingReaction = reactions.find((summary) => summary.content === reaction);
 
-        return (
-          <button
-            aria-label={contentState ? t('action.addReaction') : t('action.removeReaction')}
-            aria-pressed={existingReaction?.reactedBySelf ?? false}
-            disabled={pendingReactionKey === pendingKey}
-            key={reaction}
-            onClick={() => onReact(original, reaction, contentState)}
-            title={contentState ? t('action.addReaction') : t('action.removeReaction')}
-            type="button"
-          >
-            {reaction}
-          </button>
-        );
-      })}
+    onReact(original, reaction, !existingReaction?.reactedBySelf);
+  };
+
+  return (
+    <div className="message__reaction-picker" aria-label={t('label.reactions')}>
+      <div className="message__reaction-quick-row" role="toolbar">
+        {DEFAULT_REACTION_OPTIONS.map((reaction) => {
+          const existingReaction = reactions.find((summary) => summary.content === reaction);
+          const contentState = !existingReaction?.reactedBySelf;
+          const pendingKey = getReactionPendingKey(original.signature ?? '', reaction);
+
+          return (
+            <button
+              aria-label={contentState ? t('action.addReaction') : t('action.removeReaction')}
+              aria-pressed={existingReaction?.reactedBySelf ?? false}
+              disabled={pendingReactionKey === pendingKey}
+              key={reaction}
+              onClick={() => selectReaction(reaction)}
+              title={contentState ? t('action.addReaction') : t('action.removeReaction')}
+              type="button"
+            >
+              {reaction}
+            </button>
+          );
+        })}
+        <button
+          aria-expanded={fullPickerOpen}
+          aria-label={t('label.reactions')}
+          className="message__reaction-more"
+          onClick={() => setFullPickerOpen((current) => !current)}
+          title={t('label.reactions')}
+          type="button"
+        >
+          {fullPickerOpen ? '×' : '+'}
+        </button>
+      </div>
+      {fullPickerOpen ? (
+        <div className="message__emoji-picker-panel">
+          <Suspense fallback={<div className="message__emoji-picker-loading">{t('label.loading')}</div>}>
+            <FullEmojiPicker
+              allowExpandReactions
+              autoFocusSearch={false}
+              emojiStyle={'native' as EmojiStyle}
+              height={360}
+              lazyLoadEmojis
+              onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+              onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+              previewConfig={{ showPreview: false }}
+              reactions={[...DEFAULT_REACTION_OPTIONS]}
+              searchPlaceHolder={t('label.search')}
+              theme={'auto' as Theme}
+              width="100%"
+            />
+          </Suspense>
+        </div>
+      ) : null}
     </div>
   );
 }

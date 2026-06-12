@@ -1207,11 +1207,9 @@ button.message__reply-preview:focus-visible {
 }
 
 .message__reaction-picker {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 6px;
-  width: fit-content;
-  max-width: 100%;
+  width: min(360px, 100%);
   margin-top: 8px;
   padding: 6px;
   background: var(--qc-color-surface-alt);
@@ -1219,7 +1217,13 @@ button.message__reply-preview:focus-visible {
   border-radius: var(--qc-radius-sm);
 }
 
-.message__reaction-picker button {
+.message__reaction-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.message__reaction-quick-row button {
   display: grid;
   place-items: center;
   width: 32px;
@@ -1233,17 +1237,49 @@ button.message__reply-preview:focus-visible {
   cursor: pointer;
 }
 
-.message__reaction-picker button:hover,
-.message__reaction-picker button:focus-visible,
-.message__reaction-picker button[aria-pressed='true'] {
+.message__reaction-quick-row button:hover,
+.message__reaction-quick-row button:focus-visible,
+.message__reaction-quick-row button[aria-pressed='true'] {
   background: var(--qc-color-control-hover);
   border-color: var(--qc-color-accent);
   outline: none;
 }
 
-.message__reaction-picker button:disabled {
+.message__reaction-quick-row button:disabled {
   cursor: wait;
   opacity: 0.6;
+}
+
+.message__reaction-more {
+  color: var(--qc-color-accent);
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.message__emoji-picker-panel {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--qc-color-border-subtle);
+  border-radius: var(--qc-radius-sm);
+}
+
+.message__emoji-picker-panel .EmojiPickerReact {
+  --epr-bg-color: var(--qc-color-surface);
+  --epr-category-label-bg-color: var(--qc-color-surface);
+  --epr-text-color: var(--qc-color-text);
+  --epr-search-input-bg-color: var(--qc-color-input-bg);
+  --epr-search-input-bg-color-active: var(--qc-color-input-bg);
+  --epr-picker-border-color: transparent;
+  --epr-emoji-size: 20px;
+  border: 0;
+}
+
+.message__emoji-picker-loading {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-small);
 }
 
 .message__reactions {
