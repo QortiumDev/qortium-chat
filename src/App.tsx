@@ -49,6 +49,7 @@ import {
 } from './messageLinks';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
+import { getGroupTitle, isGeneralChatGroup, sortGroups, withGeneralChatGroup } from './generalChat';
 import {
   getAvatarFallbackCharacter,
   loadAvatarProfile,
@@ -173,10 +174,6 @@ function LoadingRows({ count = 3, label }: { count?: number; label: string }) {
   );
 }
 
-function getGroupTitle(group: GroupData, t: TranslateFunction) {
-  return group.groupName || t('title.groupTitle', { groupId: group.groupId });
-}
-
 function getShortAddress(address: string) {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }
@@ -195,13 +192,16 @@ function getMemberLabel(member: GroupMember, t: TranslateFunction) {
   return member.primaryName || member.name || (address ? getShortAddress(address) : t('member.label'));
 }
 
-function sortGroups(groups: GroupData[], t: TranslateFunction) {
-  return [...groups].sort((first, second) => {
-    const firstName = getGroupTitle(first, t).toLocaleLowerCase();
-    const secondName = getGroupTitle(second, t).toLocaleLowerCase();
+function getGroupListMeta(group: GroupData, joinedIds: Set<number>, t: TranslateFunction) {
+  if (isGeneralChatGroup(group)) {
+    return t('label.group.global');
+  }
 
-    return firstName.localeCompare(secondName);
-  });
+  return joinedIds.has(group.groupId)
+    ? t('label.group.joined')
+    : group.isOpen === false
+      ? t('label.group.closed')
+      : t('label.group.open');
 }
 
 function getMessageKey(message: ChatMessage, index = 0) {
@@ -528,8 +528,10 @@ function GroupList({
         >
           <span className="group-row__name">{getGroupTitle(group, t)}</span>
           <span className="group-row__meta">
-            {joinedIds.has(group.groupId) ? t('label.joined') : group.isOpen === false ? t('label.group.closed') : t('label.group.open')}
-            {typeof group.memberCount === 'number' ? ` / ${group.memberCount.toLocaleString()}` : ''}
+            {getGroupListMeta(group, joinedIds, t)}
+            {!isGeneralChatGroup(group) && typeof group.memberCount === 'number'
+              ? ` / ${group.memberCount.toLocaleString()}`
+              : ''}
           </span>
         </button>
       ))}
@@ -1177,7 +1179,7 @@ export default function App() {
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
 
   const joinedIds = useMemo(
-    () => new Set(memberGroups.value.map((group) => group.groupId)),
+    () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
     [memberGroups.value],
   );
   const sortedGroups = useMemo(() => sortGroups(groups.value, t), [groups.value, t]);
@@ -1185,6 +1187,8 @@ export default function App() {
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
   const selectedDirectAddress = selectedDirect?.address ?? null;
+  const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
+  const showGroupMembers = !!selectedGroup && !isSelectedGeneralChat;
   const pendingJoinGroupIds = useMemo(
     () => new Set(accountJoinRequests.value.map((request) => request.groupId)),
     [accountJoinRequests.value],
@@ -1212,7 +1216,7 @@ export default function App() {
     [adminJoinRequests.value],
   );
   const selectedAdminJoinRequests =
-    selectedGroupId === null ? [] : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
+    selectedGroupId === null || isSelectedGeneralChat ? [] : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
   const selectedTransactions = Object.values(trackedTransactions).filter(
     (transaction) => selectedGroupId !== null && transaction.groupId === selectedGroupId,
   );
@@ -1383,22 +1387,32 @@ export default function App() {
     setGroups({ phase: 'loading', value: groups.value });
 
     try {
-      const nextGroups = await searchGroups(nextSearch, actionList);
+      const nextGroups = withGeneralChatGroup(await searchGroups(nextSearch, actionList), nextSearch, t);
 
       setGroups({ phase: 'ready', value: nextGroups });
       if (!selectedChat && nextGroups.length > 0) {
         setSelectedChat({ group: nextGroups[0], kind: 'group' });
       }
     } catch (error) {
+      const fallbackGroups = withGeneralChatGroup(emptyGroups, nextSearch, t);
+
       setGroups({
         error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
         phase: 'error',
-        value: groups.value,
+        value: fallbackGroups,
       });
+      if (!selectedChat && fallbackGroups.length > 0) {
+        setSelectedChat({ group: fallbackGroups[0], kind: 'group' });
+      }
     }
   }
 
   async function loadGroupMembers(group: GroupData, actionList = actions, options: { quiet?: boolean } = {}) {
+    if (isGeneralChatGroup(group)) {
+      setGroupMembers({ phase: 'ready', value: emptyMembers });
+      return;
+    }
+
     if (!options.quiet) {
       setGroupMembers({ phase: 'loading', value: groupMembers.value });
     }
@@ -2135,7 +2149,7 @@ export default function App() {
   }, [account?.address, actionsKey]);
 
   useEffect(() => {
-    if (!selectedGroup) {
+    if (!selectedGroup || isGeneralChatGroup(selectedGroup)) {
       return undefined;
     }
 
@@ -2165,7 +2179,7 @@ export default function App() {
         </div>
       </header>
 
-      <section className={`layout${selectedGroup && membersOpen ? ' layout--members-open' : ''}`}>
+      <section className={`layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}`}>
         <aside className="sidebar" aria-label={t('aria.navigation')}>
           <section className="panel">
             <div className="panel__header">
@@ -2254,11 +2268,13 @@ export default function App() {
               </h2>
               {selectedChat?.kind === 'group' ? (
                 <p>
-                  {selectedChat.group.isOpen === false
-                    ? canReadPrivateGroupChat
-                      ? t('hint.groupMeta.privateRead')
-                      : t('hint.groupMeta.privateHistoryUnavailable')
-                    : t('group.meta.open')}
+                  {isGeneralChatGroup(selectedChat.group)
+                    ? t('group.meta.general')
+                    : selectedChat.group.isOpen === false
+                      ? canReadPrivateGroupChat
+                        ? t('hint.groupMeta.privateRead')
+                        : t('hint.groupMeta.privateHistoryUnavailable')
+                      : t('group.meta.open')}
                   {isSelectedMintingGroup ? t('group.status.minting.group') : ''}
                   {showMintingControls
                     ? accountMintingStatus?.isMinting === true
@@ -2276,7 +2292,7 @@ export default function App() {
                     : hasPendingJoinRequest
                       ? t('group.status.request.pending')
                       : ''}
-                  {typeof selectedChat.group.memberCount === 'number'
+                  {!isGeneralChatGroup(selectedChat.group) && typeof selectedChat.group.memberCount === 'number'
                     ? ` / ${selectedChat.group.memberCount.toLocaleString()} ${t('label.common.members')}`
                     : ''}
                 </p>
@@ -2289,7 +2305,7 @@ export default function App() {
               ) : null}
             </div>
             <div className="chat-pane__actions">
-              {selectedChat?.kind === 'group' ? (
+              {selectedChat?.kind === 'group' && !isSelectedGeneralChat ? (
                 <button
                   className="button button--secondary"
                   onClick={() => setMembersOpen((current) => !current)}
@@ -2470,7 +2486,7 @@ export default function App() {
           </form>
         </section>
 
-        {selectedGroup && membersOpen ? (
+        {showGroupMembers && membersOpen ? (
           <aside className="members-drawer" aria-label={t('aria.groupMembers')}>
             <div className="members-drawer__header">
               <div>
