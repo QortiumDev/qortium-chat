@@ -7,8 +7,14 @@ function localizeMessage(t: TranslateFunction | undefined, key: Parameters<Trans
 
 export type DisplayChatMessage = {
   body: string;
-  kind: 'binary' | 'empty' | 'encrypted' | 'text' | 'unsupported';
+  kind: 'binary' | 'empty' | 'encrypted' | 'reaction' | 'text' | 'unsupported';
+  reaction?: ChatReaction;
   repliedTo: string | null;
+};
+
+export type ChatReaction = {
+  content: string;
+  contentState: boolean;
 };
 
 function decodeBase64(value: string) {
@@ -18,13 +24,42 @@ function decodeBase64(value: string) {
   return new TextDecoder().decode(bytes);
 }
 
+const MAX_REACTION_CONTENT_LENGTH = 32;
+
+export const DEFAULT_REACTION_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
+
+function normalizeReactionContent(value: string) {
+  const content = value.trim();
+
+  return content.length > 0 && content.length <= MAX_REACTION_CONTENT_LENGTH ? content : null;
+}
+
+function getEnvelopeReaction(envelope: { content?: unknown; contentState?: unknown; type?: unknown }) {
+  if (envelope.type !== 'reaction' || typeof envelope.content !== 'string') {
+    return null;
+  }
+
+  const content = normalizeReactionContent(envelope.content);
+
+  if (!content) {
+    return null;
+  }
+
+  return {
+    content,
+    contentState: envelope.contentState === false ? false : true,
+  };
+}
+
 type UnwrappedChatText = {
   body: string;
+  reaction: ChatReaction | null;
   repliedTo: string | null;
 };
 
 function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
   let body = value;
+  let reaction: ChatReaction | null = null;
   let repliedTo: string | null = null;
 
   // Direct sends wrap the text in {message}; reply envelopes add repliedTo. A
@@ -44,9 +79,22 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
       break;
     }
 
-    const envelope = parsed as { message?: unknown; repliedTo?: unknown };
+    const envelope = parsed as {
+      content?: unknown;
+      contentState?: unknown;
+      message?: unknown;
+      repliedTo?: unknown;
+      type?: unknown;
+    };
 
     if (typeof envelope.message !== 'string') {
+      break;
+    }
+
+    reaction = getEnvelopeReaction(envelope);
+
+    if (reaction) {
+      body = envelope.message;
       break;
     }
 
@@ -57,11 +105,30 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     }
   }
 
-  return { body, repliedTo };
+  return { body, reaction, repliedTo };
 }
 
 export function buildChatMessageText(text: string, repliedTo?: string | null) {
   return repliedTo ? JSON.stringify({ message: text, repliedTo }) : text;
+}
+
+export function buildReactionMessageText(content: string, contentState: boolean) {
+  const normalizedContent = normalizeReactionContent(content);
+
+  if (!normalizedContent) {
+    throw new Error('Reaction content must be a short emoji string.');
+  }
+
+  return JSON.stringify({
+    message: '',
+    type: 'reaction',
+    content: normalizedContent,
+    contentState,
+  });
+}
+
+export function isReactionChatMessage(message: Pick<ChatMessage, 'data' | 'encoding' | 'isEncrypted' | 'isText'>) {
+  return decodeChatMessage(message).kind === 'reaction';
 }
 
 export function decodeChatMessage(
@@ -101,7 +168,16 @@ export function decodeChatMessage(
   }
 
   try {
-    const { body, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
+    const { body, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
+
+    if (reaction) {
+      return {
+        body,
+        kind: 'reaction',
+        reaction,
+        repliedTo: null,
+      };
+    }
 
     return {
       body,

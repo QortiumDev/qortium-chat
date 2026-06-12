@@ -1,4 +1,5 @@
 import type { ChatMessage } from './types';
+import { isReactionChatMessage } from './chatText';
 
 /**
  * A chat transaction cannot be edited, so an "edit" is a new CHAT transaction
@@ -38,13 +39,17 @@ export function buildMessageThreads(messages: ChatMessage[]): MessageThread[] {
   const revisionsByReference = new Map<string, ChatMessage[]>();
 
   for (const message of messages) {
+    if (isReactionChatMessage(message)) {
+      continue;
+    }
+
     if (message.signature && !message.chatReference) {
       originalsBySignature.set(message.signature, message);
     }
   }
 
   for (const message of messages) {
-    if (!message.chatReference) {
+    if (!message.chatReference || isReactionChatMessage(message)) {
       continue;
     }
 
@@ -57,6 +62,10 @@ export function buildMessageThreads(messages: ChatMessage[]): MessageThread[] {
   const threads: MessageThread[] = [];
 
   for (const message of messages) {
+    if (isReactionChatMessage(message)) {
+      continue;
+    }
+
     const referencedOriginal = message.chatReference
       ? originalsBySignature.get(message.chatReference)
       : undefined;

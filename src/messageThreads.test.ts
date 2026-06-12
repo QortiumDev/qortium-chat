@@ -5,6 +5,7 @@ import {
   THREAD_CONTINUATION_WINDOW_MS,
   type MessageThread,
 } from './messageThreads';
+import { buildReactionMessageText } from './chatText';
 import type { ChatMessage } from './types';
 
 function message(overrides: Partial<ChatMessage> & Pick<ChatMessage, 'sender' | 'timestamp'>): ChatMessage {
@@ -12,6 +13,23 @@ function message(overrides: Partial<ChatMessage> & Pick<ChatMessage, 'sender' | 
     txGroupId: 7,
     ...overrides,
   };
+}
+
+function base64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function reaction(overrides: Partial<ChatMessage> & Pick<ChatMessage, 'chatReference' | 'sender' | 'timestamp'>) {
+  return message({
+    data: base64(buildReactionMessageText('👍', true)),
+    encoding: 'BASE64',
+    isEncrypted: false,
+    isText: true,
+    signature: `reaction-${overrides.sender}-${overrides.timestamp}`,
+    ...overrides,
+  });
 }
 
 describe('buildMessageThreads', () => {
@@ -65,6 +83,22 @@ describe('buildMessageThreads', () => {
       { latest: unsigned, original: unsigned, revisions: [] },
       { latest: edit, original: edit, revisions: [] },
     ]);
+  });
+
+  it('keeps reactions out of message threads and edit revisions', () => {
+    const original = message({ sender: 'Qa', signature: 'sig-a', timestamp: 10 });
+    const ownReaction = reaction({ chatReference: 'sig-a', sender: 'Qa', timestamp: 20 });
+    const peerReaction = reaction({ chatReference: 'sig-a', sender: 'Qb', timestamp: 30 });
+
+    expect(buildMessageThreads([original, ownReaction, peerReaction])).toEqual([
+      { latest: original, original, revisions: [] },
+    ]);
+  });
+
+  it('does not show orphaned reaction messages', () => {
+    const orphanReaction = reaction({ chatReference: 'sig-missing', sender: 'Qa', timestamp: 20 });
+
+    expect(buildMessageThreads([orphanReaction])).toEqual([]);
   });
 });
 

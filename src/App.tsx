@@ -20,8 +20,21 @@ import {
   sendDirectChatMessage,
   startMinting,
 } from './coreApi';
-import { buildChatMessageText, decodeChatMessage, formatTimeAgo, formatTimestamp, getSenderLabel } from './chatText';
+import {
+  DEFAULT_REACTION_OPTIONS,
+  buildChatMessageText,
+  buildReactionMessageText,
+  decodeChatMessage,
+  formatTimeAgo,
+  formatTimestamp,
+  getSenderLabel,
+} from './chatText';
 import { buildMessageThreads, isThreadContinuation, sortMessagesByTimestamp, type MessageThread } from './messageThreads';
+import {
+  buildMessageReactionIndex,
+  getReactionPendingKey,
+  type MessageReactionSummary,
+} from './messageReactions';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import {
   fetchQdnImagePreview,
@@ -643,6 +656,94 @@ function MessageImagePreviews({ resources, t }: { resources: QdnImageResource[];
   );
 }
 
+function MessageReactionPicker({
+  onReact,
+  original,
+  pendingReactionKey,
+  reactions,
+  t,
+}: {
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  original: ChatMessage;
+  pendingReactionKey: string;
+  reactions: MessageReactionSummary[];
+  t: TranslateFunction;
+}) {
+  if (!original.signature) {
+    return null;
+  }
+
+  return (
+    <div className="message__reaction-picker" aria-label={t('label.reactions')} role="toolbar">
+      {DEFAULT_REACTION_OPTIONS.map((reaction) => {
+        const existingReaction = reactions.find((summary) => summary.content === reaction);
+        const contentState = !existingReaction?.reactedBySelf;
+        const pendingKey = getReactionPendingKey(original.signature ?? '', reaction);
+
+        return (
+          <button
+            aria-label={contentState ? t('action.addReaction') : t('action.removeReaction')}
+            aria-pressed={existingReaction?.reactedBySelf ?? false}
+            disabled={pendingReactionKey === pendingKey}
+            key={reaction}
+            onClick={() => onReact(original, reaction, contentState)}
+            title={contentState ? t('action.addReaction') : t('action.removeReaction')}
+            type="button"
+          >
+            {reaction}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MessageReactionChips({
+  canReact,
+  onReact,
+  original,
+  pendingReactionKey,
+  reactions,
+  t,
+}: {
+  canReact: boolean;
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  original: ChatMessage;
+  pendingReactionKey: string;
+  reactions: MessageReactionSummary[];
+  t: TranslateFunction;
+}) {
+  if (!original.signature || reactions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="message__reactions" aria-label={t('label.reactions')}>
+      {reactions.map((reaction) => {
+        const contentState = !reaction.reactedBySelf;
+        const pendingKey = getReactionPendingKey(original.signature ?? '', reaction.content);
+        const label = contentState ? t('action.addReaction') : t('action.removeReaction');
+
+        return (
+          <button
+            aria-label={label}
+            aria-pressed={reaction.reactedBySelf}
+            className={`message__reaction-chip${reaction.reactedBySelf ? ' message__reaction-chip--active' : ''}`}
+            disabled={!canReact || pendingReactionKey === pendingKey}
+            key={reaction.content}
+            onClick={() => onReact(original, reaction.content, contentState)}
+            title={label}
+            type="button"
+          >
+            <span>{reaction.content}</span>
+            <span>{reaction.count}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function MessageList({
   avatarProfiles,
   canCompose,
@@ -650,7 +751,9 @@ function MessageList({
   messages,
   onEdit,
   onOpenAvatar,
+  onReact,
   onReply,
+  pendingReactionKey,
   selfAddress,
   t,
 }: {
@@ -660,7 +763,9 @@ function MessageList({
   messages: ChatMessage[];
   onEdit: (thread: MessageThread) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   onReply: (message: ChatMessage) => void;
+  pendingReactionKey: string;
   selfAddress: string | null;
   t: TranslateFunction;
 }) {
@@ -671,10 +776,15 @@ function MessageList({
   const expandedTimeTimeoutRef = useRef(0);
   const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
   const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
+  const [openReactionPickerKey, setOpenReactionPickerKey] = useState('');
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
+  const reactionsBySignature = useMemo(
+    () => buildMessageReactionIndex(messages, selfAddress),
+    [messages, selfAddress],
+  );
   const threadsBySignature = useMemo(() => {
     const bySignature = new Map<string, MessageThread>();
 
@@ -767,6 +877,10 @@ function MessageList({
     });
   }
 
+  function toggleReactionPicker(threadKey: string) {
+    setOpenReactionPickerKey((current) => current === threadKey ? '' : threadKey);
+  }
+
   function playMedia(resource: QdnMediaResource) {
     void openQdnMediaPlayer(resource).catch((error) => {
       console.warn('Unable to open QDN media player.', error);
@@ -805,10 +919,13 @@ function MessageList({
         const hasImagePreviews = imageResources.length > 0;
         const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
         const areImagePreviewsOpen = openImagePreviews.has(threadKey);
-        const canReplyOrEdit = canCompose && original.signature;
+        const canReplyOrEdit = canCompose && !!original.signature;
+        const canReact = canReplyOrEdit;
+        const isReactionPickerOpen = openReactionPickerKey === threadKey;
+        const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
         const senderProfile = avatarProfiles[original.sender];
         const actionButtons =
-          canReplyOrEdit || hasImagePreviews || hasMediaActions ? (
+          canReplyOrEdit || canReact || hasImagePreviews || hasMediaActions ? (
             <div className="message__actions">
               {hasImagePreviews ? (
                 <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
@@ -831,6 +948,11 @@ function MessageList({
               {canReplyOrEdit ? (
                 <button onClick={() => onReply(original)} type="button">
                   {t('button.reply')}
+                </button>
+              ) : null}
+              {canReact ? (
+                <button aria-expanded={isReactionPickerOpen} onClick={() => toggleReactionPicker(threadKey)} type="button">
+                  {t('button.react')}
                 </button>
               ) : null}
               {canReplyOrEdit && canEdit ? (
@@ -890,6 +1012,26 @@ function MessageList({
               {decoded.body ? renderMessageTextWithQdnLinks(decoded.body) : t('message.empty')}
             </div>
             {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
+            {isReactionPickerOpen ? (
+              <MessageReactionPicker
+                onReact={(message, reaction, contentState) => {
+                  setOpenReactionPickerKey('');
+                  onReact(message, reaction, contentState);
+                }}
+                original={original}
+                pendingReactionKey={pendingReactionKey}
+                reactions={reactions}
+                t={t}
+              />
+            ) : null}
+            <MessageReactionChips
+              canReact={canReact}
+              onReact={onReact}
+              original={original}
+              pendingReactionKey={pendingReactionKey}
+              reactions={reactions}
+              t={t}
+            />
             <div className="message__footer">
               <button
                 className="message__time"
@@ -987,6 +1129,7 @@ export default function App() {
   const [startMintingPending, setStartMintingPending] = useState(false);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
+  const [reactionPendingKey, setReactionPendingKey] = useState('');
   const [writeError, setWriteError] = useState('');
   const [membersOpen, setMembersOpen] = useState(true);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
@@ -1602,6 +1745,38 @@ export default function App() {
     }
   }
 
+  async function handleMessageReaction(message: ChatMessage, reaction: string, contentState: boolean) {
+    if (!selectedChat || !canComposeMessage || !message.signature) {
+      return;
+    }
+
+    const chat = selectedChat;
+    const pendingKey = getReactionPendingKey(message.signature, reaction);
+
+    setReactionPendingKey(pendingKey);
+    setWriteError('');
+
+    try {
+      const reactionMessage = buildReactionMessageText(reaction, contentState);
+
+      if (chat.kind === 'group') {
+        await sendChatMessage(chat.group.groupId, reactionMessage, message.signature);
+      } else {
+        await sendDirectChatMessage(chat.direct.address, reactionMessage, message.signature);
+      }
+
+      if (chat.kind === 'direct' && account) {
+        await loadAccountData(account);
+      }
+
+      await loadMessages(chat, actions, { quiet: true });
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendReaction'), t));
+    } finally {
+      setReactionPendingKey('');
+    }
+  }
+
   function selectGroup(group: GroupData) {
     setWriteError('');
     setComposeContext(null);
@@ -2187,7 +2362,9 @@ export default function App() {
               messages={messages.value}
               onEdit={startEdit}
               onOpenAvatar={setAvatarLightboxImage}
+              onReact={(message, reaction, contentState) => void handleMessageReaction(message, reaction, contentState)}
               onReply={startReply}
+              pendingReactionKey={reactionPendingKey}
               selfAddress={account?.address ?? null}
               t={t}
             />

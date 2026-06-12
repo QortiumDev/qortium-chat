@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { buildChatMessageText, decodeChatMessage, formatTimeAgo, formatTimestamp, getSenderLabel } from './chatText';
+import {
+  buildChatMessageText,
+  buildReactionMessageText,
+  decodeChatMessage,
+  formatTimeAgo,
+  formatTimestamp,
+  getSenderLabel,
+} from './chatText';
 
 function base64(value: string) {
-  return btoa(value);
+  const bytes = new TextEncoder().encode(value);
+
+  return btoa(String.fromCharCode(...bytes));
 }
 
 describe('chat text helpers', () => {
@@ -48,6 +57,41 @@ describe('chat text helpers', () => {
     expect(buildChatMessageText('hello')).toBe('hello');
     expect(buildChatMessageText('hello', null)).toBe('hello');
     expect(JSON.parse(buildChatMessageText('hello', 'sig'))).toEqual({ message: 'hello', repliedTo: 'sig' });
+  });
+
+  it('builds and decodes reaction envelopes', () => {
+    const reactionMessage = buildReactionMessageText('👍', true);
+    const data = base64(reactionMessage);
+
+    expect(JSON.parse(reactionMessage)).toEqual({
+      message: '',
+      type: 'reaction',
+      content: '👍',
+      contentState: true,
+    });
+    expect(decodeChatMessage({ data, encoding: 'BASE64', isEncrypted: false, isText: true })).toEqual({
+      body: '',
+      kind: 'reaction',
+      reaction: {
+        content: '👍',
+        contentState: true,
+      },
+      repliedTo: null,
+    });
+  });
+
+  it('unwraps reaction envelopes nested inside direct message wrappers', () => {
+    const data = base64(JSON.stringify({ message: buildReactionMessageText('❤️', false), version: 2 }));
+
+    expect(decodeChatMessage({ data, encoding: 'BASE64', isEncrypted: false, isText: true })).toEqual({
+      body: '',
+      kind: 'reaction',
+      reaction: {
+        content: '❤️',
+        contentState: false,
+      },
+      repliedTo: null,
+    });
   });
 
   it('returns placeholders for encrypted and binary messages', () => {
