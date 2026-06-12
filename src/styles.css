@@ -1326,7 +1326,7 @@ button.message__reply-preview:focus-visible {
   white-space: pre-wrap;
 }
 
-.message__qdn-link {
+.message__app-link {
   color: var(--qc-color-link);
   font-weight: 600;
   text-decoration: underline;
@@ -1334,12 +1334,12 @@ button.message__reply-preview:focus-visible {
   text-underline-offset: 0.16em;
 }
 
-.message__qdn-link:hover,
-.message__qdn-link:focus-visible {
+.message__app-link:hover,
+.message__app-link:focus-visible {
   color: var(--qc-color-accent-hover);
 }
 
-.message__qdn-link:focus-visible {
+.message__app-link:focus-visible {
   outline: 2px solid var(--qc-color-accent);
   outline-offset: 2px;
   border-radius: 2px;

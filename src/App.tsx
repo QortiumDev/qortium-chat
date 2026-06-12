@@ -41,7 +41,7 @@ import {
   getImageQdnResources,
   getMediaQdnResources,
   openQdnMediaPlayer,
-  renderMessageTextWithQdnLinks,
+  renderMessageTextWithAppLinks,
   type QdnImagePreview,
   type QdnImageResource,
   type QdnMediaResource,
@@ -1009,7 +1009,7 @@ function MessageList({
               )
             ) : null}
             <div className="message__body">
-              {decoded.body ? renderMessageTextWithQdnLinks(decoded.body) : t('message.empty')}
+              {decoded.body ? renderMessageTextWithAppLinks(decoded.body) : t('message.empty')}
             </div>
             {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
             {isReactionPickerOpen ? (
@@ -1066,7 +1066,7 @@ function MessageList({
                         {formatTimestamp(version.timestamp)}
                       </span>
                       <span className="message__history-body">
-                        {versionBody ? renderMessageTextWithQdnLinks(versionBody) : t('message.empty')}
+                        {versionBody ? renderMessageTextWithAppLinks(versionBody) : t('message.empty')}
                       </span>
                     </li>
                   );

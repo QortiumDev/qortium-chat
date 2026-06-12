@@ -4,8 +4,8 @@ import {
   getImageQdnResources,
   getMediaQdnResources,
   getMessageTextParts,
+  openAppLinkInHomeTab,
   openQdnMediaPlayer,
-  openQdnUrlInHomeTab,
 } from './messageLinks';
 import { qdnRequest } from './qdnRequest';
 
@@ -20,21 +20,27 @@ describe('message link helpers', () => {
     qdnRequestMock.mockReset();
   });
 
-  it('splits message text around qdn links', () => {
-    expect(getMessageTextParts('Open qdn://APP/Chat/Chat now')).toEqual([
+  it('splits message text around supported app links', () => {
+    expect(getMessageTextParts('Open qdn://APP/Chat/Chat, home://settings, core://names, or core:// now')).toEqual([
       { kind: 'text', text: 'Open ' },
-      { kind: 'qdn-link', text: 'qdn://APP/Chat/Chat', qdnUrl: 'qdn://APP/Chat/Chat' },
+      { address: 'qdn://APP/Chat/Chat', kind: 'app-link', text: 'qdn://APP/Chat/Chat' },
+      { kind: 'text', text: ', ' },
+      { address: 'home://settings', kind: 'app-link', text: 'home://settings' },
+      { kind: 'text', text: ', ' },
+      { address: 'core://names', kind: 'app-link', text: 'core://names' },
+      { kind: 'text', text: ', or ' },
+      { address: 'core://', kind: 'app-link', text: 'core://' },
       { kind: 'text', text: ' now' },
     ]);
   });
 
-  it('keeps common trailing punctuation outside the qdn link', () => {
-    expect(getMessageTextParts('Look at (qdn://APP/Chat/Chat/default/index.html).')).toEqual([
+  it('keeps common trailing punctuation outside app links', () => {
+    expect(getMessageTextParts('Look at (home://settings).')).toEqual([
       { kind: 'text', text: 'Look at (' },
       {
-        kind: 'qdn-link',
-        text: 'qdn://APP/Chat/Chat/default/index.html',
-        qdnUrl: 'qdn://APP/Chat/Chat/default/index.html',
+        address: 'home://settings',
+        kind: 'app-link',
+        text: 'home://settings',
       },
       { kind: 'text', text: ').' },
     ]);
@@ -44,21 +50,27 @@ describe('message link helpers', () => {
     expect(getMessageTextParts('Open qdn://APP/Name/default/path(foo).')).toEqual([
       { kind: 'text', text: 'Open ' },
       {
-        kind: 'qdn-link',
+        address: 'qdn://APP/Name/default/path(foo)',
+        kind: 'app-link',
         text: 'qdn://APP/Name/default/path(foo)',
-        qdnUrl: 'qdn://APP/Name/default/path(foo)',
       },
       { kind: 'text', text: '.' },
     ]);
   });
 
-  it('opens qdn urls through the upcoming Home tab bridge action', async () => {
+  it('requires app links to use scheme slashes', () => {
+    expect(getMessageTextParts('Open home:settings or core:names')).toEqual([
+      { kind: 'text', text: 'Open home:settings or core:names' },
+    ]);
+  });
+
+  it('opens app links through the Home tab bridge action', async () => {
     qdnRequestMock.mockResolvedValueOnce(true);
 
-    await expect(openQdnUrlInHomeTab('qdn://APP/Chat/Chat')).resolves.toBe(true);
+    await expect(openAppLinkInHomeTab('core://admin/status')).resolves.toBe(true);
     expect(qdnRequestMock).toHaveBeenCalledWith({
       action: 'OPEN_NEW_TAB',
-      qdnUrl: 'qdn://APP/Chat/Chat',
+      address: 'core://admin/status',
     });
   });
 

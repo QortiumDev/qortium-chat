@@ -2,7 +2,7 @@ import { type ReactNode } from 'react';
 import { qdnRequest } from './qdnRequest';
 
 const IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
-const QDN_URL_PATTERN = /qdn:\/\/[^\s<>"'`]+/gi;
+const APP_LINK_PATTERN = /\b(?:qdn|home|core):\/\/[^\s<>"'`]*/gi;
 const TRAILING_SIMPLE_PUNCTUATION = new Set(['.', ',', '!', '?', ';', ':']);
 const CLOSING_PAIRS: Record<string, string> = {
   ')': '(',
@@ -18,9 +18,9 @@ export type MessageTextPart =
       text: string;
     }
   | {
-      kind: 'qdn-link';
+      address: string;
+      kind: 'app-link';
       text: string;
-      qdnUrl: string;
     };
 
 type QdnImageService = 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
@@ -63,25 +63,25 @@ function countCharacter(value: string, character: string) {
 }
 
 function splitTrailingPunctuation(value: string) {
-  let qdnUrl = value;
+  let address = value;
   let trailing = '';
 
-  while (qdnUrl) {
-    const lastCharacter = qdnUrl[qdnUrl.length - 1];
+  while (address) {
+    const lastCharacter = address[address.length - 1];
     const matchingOpening = CLOSING_PAIRS[lastCharacter];
     const shouldTrimClosing =
       matchingOpening !== undefined &&
-      countCharacter(qdnUrl, lastCharacter) > countCharacter(qdnUrl, matchingOpening);
+      countCharacter(address, lastCharacter) > countCharacter(address, matchingOpening);
 
     if (!TRAILING_SIMPLE_PUNCTUATION.has(lastCharacter) && !shouldTrimClosing) {
       break;
     }
 
     trailing = `${lastCharacter}${trailing}`;
-    qdnUrl = qdnUrl.slice(0, -1);
+    address = address.slice(0, -1);
   }
 
-  return { qdnUrl, trailing };
+  return { address, trailing };
 }
 
 function decodeSegment(segment: string) {
@@ -173,31 +173,44 @@ function parseQdnMediaResource(qdnUrl: string): QdnMediaResource | null {
 export function getMessageTextParts(text: string): MessageTextPart[] {
   const parts: MessageTextPart[] = [];
   let previousIndex = 0;
+  const appendText = (textPart: string) => {
+    if (!textPart) {
+      return;
+    }
 
-  for (const match of text.matchAll(QDN_URL_PATTERN)) {
-    const rawUrl = match[0];
+    const previousPart = parts[parts.length - 1];
+
+    if (previousPart?.kind === 'text') {
+      previousPart.text += textPart;
+    } else {
+      parts.push({ kind: 'text', text: textPart });
+    }
+  };
+
+  for (const match of text.matchAll(APP_LINK_PATTERN)) {
+    const rawAddress = match[0];
     const matchIndex = match.index ?? 0;
-    const { qdnUrl, trailing } = splitTrailingPunctuation(rawUrl);
+    const { address, trailing } = splitTrailingPunctuation(rawAddress);
 
-    if (!qdnUrl) {
+    if (!address) {
       continue;
     }
 
     if (matchIndex > previousIndex) {
-      parts.push({ kind: 'text', text: text.slice(previousIndex, matchIndex) });
+      appendText(text.slice(previousIndex, matchIndex));
     }
 
-    parts.push({ kind: 'qdn-link', text: qdnUrl, qdnUrl });
+    parts.push({ address, kind: 'app-link', text: address });
 
     if (trailing) {
-      parts.push({ kind: 'text', text: trailing });
+      appendText(trailing);
     }
 
-    previousIndex = matchIndex + rawUrl.length;
+    previousIndex = matchIndex + rawAddress.length;
   }
 
   if (previousIndex < text.length) {
-    parts.push({ kind: 'text', text: text.slice(previousIndex) });
+    appendText(text.slice(previousIndex));
   }
 
   return parts.length > 0 ? parts : [{ kind: 'text', text }];
@@ -205,8 +218,8 @@ export function getMessageTextParts(text: string): MessageTextPart[] {
 
 function getQdnResources<T>(text: string, parseResource: (qdnUrl: string) => T | null): T[] {
   return getMessageTextParts(text)
-    .filter((part): part is Extract<MessageTextPart, { kind: 'qdn-link' }> => part.kind === 'qdn-link')
-    .map((part) => parseResource(part.qdnUrl))
+    .filter((part): part is Extract<MessageTextPart, { kind: 'app-link' }> => part.kind === 'app-link')
+    .map((part) => parseResource(part.address))
     .filter((resource): resource is T => resource !== null);
 }
 
@@ -218,8 +231,8 @@ export function getMediaQdnResources(text: string): QdnMediaResource[] {
   return getQdnResources(text, parseQdnMediaResource);
 }
 
-export async function openQdnUrlInHomeTab(qdnUrl: string) {
-  return qdnRequest<boolean>({ action: 'OPEN_NEW_TAB', qdnUrl });
+export async function openAppLinkInHomeTab(address: string) {
+  return qdnRequest<boolean>({ action: 'OPEN_NEW_TAB', address });
 }
 
 export async function openQdnMediaPlayer(resource: QdnMediaResource) {
@@ -339,7 +352,7 @@ export async function fetchQdnImagePreview(resource: QdnImageResource): Promise<
   };
 }
 
-export function renderMessageTextWithQdnLinks(text: string): ReactNode {
+export function renderMessageTextWithAppLinks(text: string): ReactNode {
   return getMessageTextParts(text).map((part, index) => {
     if (part.kind === 'text') {
       return part.text;
@@ -347,14 +360,14 @@ export function renderMessageTextWithQdnLinks(text: string): ReactNode {
 
     return (
       <a
-        className="message__qdn-link"
-        href={part.qdnUrl}
-        key={`${part.qdnUrl}-${index}`}
+        className="message__app-link"
+        href={part.address}
+        key={`${part.address}-${index}`}
         onClick={(event) => {
           event.preventDefault();
 
-          void openQdnUrlInHomeTab(part.qdnUrl).catch((error) => {
-            console.warn('Unable to open QDN link.', error);
+          void openAppLinkInHomeTab(part.address).catch((error) => {
+            console.warn('Unable to open app link.', error);
           });
         }}
         rel="noopener noreferrer"
