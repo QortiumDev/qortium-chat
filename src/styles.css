@@ -626,14 +626,19 @@ samp,
   height: 38px;
   flex: 0 0 auto;
   border-radius: var(--qc-radius-md);
-  object-fit: cover;
   box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
 }
 
-.account-summary__avatar--fallback {
+.user-avatar {
+  overflow: hidden;
+  object-fit: cover;
+}
+
+.user-avatar--fallback {
   display: inline-grid;
   place-items: center;
   color: var(--qc-color-avatar-text);
+  font-weight: 700;
   background: var(--qc-color-avatar);
 }
 
@@ -1148,6 +1153,7 @@ button.message__reply-preview:focus-visible {
 
 .message__actions {
   display: flex;
+  flex: 0 0 auto;
   gap: 12px;
 }
 
@@ -1170,11 +1176,30 @@ button.message__reply-preview:focus-visible {
 
 .message__meta {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   margin-bottom: 6px;
   font-size: var(--qc-text-small);
   line-height: var(--qc-line-small);
+}
+
+.message__identity {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.message__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--qc-radius-sm);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+}
+
+.message__avatar.user-avatar--fallback {
+  font-size: var(--qc-text-small);
 }
 
 .message__meta strong {

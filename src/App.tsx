@@ -32,6 +32,12 @@ import {
 } from './messageLinks';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
+import {
+  getAvatarFallbackCharacter,
+  loadAvatarProfile,
+  normalizeRegisteredName,
+  type AvatarProfile,
+} from './avatarProfiles';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -42,6 +48,7 @@ import type {
   GroupWithJoinRequests,
   GroupMember,
   MintingStatus,
+  QdnAction,
   QdnSelectedAccount,
 } from './types';
 
@@ -228,31 +235,126 @@ function normalizeSelectedAccount(account: QdnSelectedAccount): QdnSelectedAccou
   };
 }
 
+type CachedAvatarProfile = AvatarProfile & {
+  requestKey: string;
+};
+
+type AvatarProfilesByAddress = Record<string, CachedAvatarProfile | undefined>;
+
+function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
+  const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
+  const avatarSrc = profile?.name === name ? profile.avatarSrc : null;
+
+  return { avatarSrc, name };
+}
+
+function getMessageSenderName(message: Pick<ChatMessage, 'senderName'>, profile: AvatarProfile | undefined) {
+  return normalizeRegisteredName(message.senderName) ?? profile?.name ?? null;
+}
+
+function getMessageSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName'>, profile: AvatarProfile | undefined) {
+  return getMessageSenderName(message, profile) ?? getSenderLabel(message);
+}
+
+function UserAvatar({ className, name, src }: { className: string; name: string | null; src: string | null }) {
+  const avatarClassName = `${className} user-avatar`;
+
+  if (src) {
+    return <img alt="" className={avatarClassName} src={src} />;
+  }
+
+  return (
+    <span aria-hidden="true" className={`${avatarClassName} user-avatar--fallback`}>
+      {getAvatarFallbackCharacter(name)}
+    </span>
+  );
+}
+
+function MessageIdentity({ message, profile }: { message: ChatMessage; profile: AvatarProfile | undefined }) {
+  const { avatarSrc, name } = getAvatarView(profile, message.senderName);
+
+  return (
+    <span className="message__identity" title={message.sender}>
+      <UserAvatar className="message__avatar" name={name} src={avatarSrc} />
+      <strong>{getMessageSenderLabel(message, profile)}</strong>
+    </span>
+  );
+}
+
+function getAvatarRequestKey(address: string, preferredName: string | null | undefined, actionsKey: string) {
+  return JSON.stringify([address, normalizeRegisteredName(preferredName) ?? '', actionsKey]);
+}
+
+function useAvatarProfiles(
+  addresses: string[],
+  knownNamesByAddress: ReadonlyMap<string, string>,
+  actions: QdnAction[],
+  actionsKey: string,
+) {
+  const [profiles, setProfiles] = useState<AvatarProfilesByAddress>({});
+  const latestRequestKeysRef = useRef(new Map<string, string>());
+  const addressKey = JSON.stringify(addresses);
+  const knownNamesKey = JSON.stringify(Array.from(knownNamesByAddress.entries()));
+
+  useEffect(() => {
+    let isDisposed = false;
+
+    for (const address of addresses) {
+      const preferredName = knownNamesByAddress.get(address) ?? null;
+      const requestKey = getAvatarRequestKey(address, preferredName, actionsKey);
+
+      latestRequestKeysRef.current.set(address, requestKey);
+
+      if (profiles[address]?.requestKey === requestKey) {
+        continue;
+      }
+
+      void loadAvatarProfile({ actions, address, preferredName })
+        .then((profile) => {
+          if (isDisposed || latestRequestKeysRef.current.get(address) !== requestKey) {
+            return;
+          }
+
+          setProfiles((current) => ({
+            ...current,
+            [address]: {
+              ...profile,
+              requestKey,
+            },
+          }));
+        });
+    }
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [actionsKey, addressKey, knownNamesKey]);
+
+  return profiles;
+}
+
 function AccountSummary({
   account,
   error,
   isHomeBridge,
   onConnect,
+  profile,
   t,
 }: {
   account: QdnSelectedAccount | null;
   error: string;
   isHomeBridge: boolean;
   onConnect: () => void;
+  profile?: AvatarProfile;
   t: TranslateFunction;
 }) {
   if (account) {
-    const label = account.name || getShortAddress(account.address);
+    const { avatarSrc, name } = getAvatarView(profile, account.name);
+    const label = name || getShortAddress(account.address);
 
     return (
       <div className="account-summary">
-        {account.avatarUrl ? (
-          <img alt="" className="account-summary__avatar" src={account.avatarUrl} />
-        ) : (
-          <span className="account-summary__avatar account-summary__avatar--fallback">
-            {(account.name || account.address).slice(0, 1).toUpperCase()}
-          </span>
-        )}
+        <UserAvatar className="account-summary__avatar" name={name} src={avatarSrc} />
         <div className="account-summary__text">
           <strong>{label}</strong>
           <span
@@ -436,6 +538,7 @@ function MessageImagePreviews({ resources, t }: { resources: QdnImageResource[];
 }
 
 function MessageList({
+  avatarProfiles,
   canCompose,
   messages,
   onEdit,
@@ -443,6 +546,7 @@ function MessageList({
   selfAddress,
   t,
 }: {
+  avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
   messages: ChatMessage[];
   onEdit: (thread: MessageThread) => void;
@@ -584,6 +688,7 @@ function MessageList({
         const hasImagePreviews = imageResources.length > 0;
         const areImagePreviewsOpen = openImagePreviews.has(threadKey);
         const canReplyOrEdit = canCompose && original.signature;
+        const senderProfile = avatarProfiles[original.sender];
         const actionButtons =
           canReplyOrEdit || hasImagePreviews ? (
             <div className="message__actions">
@@ -619,7 +724,7 @@ function MessageList({
           >
             {isContinuation ? null : (
               <div className="message__meta">
-                <strong>{getSenderLabel(original)}</strong>
+                <MessageIdentity message={original} profile={senderProfile} />
                 {actionButtons}
               </div>
             )}
@@ -631,7 +736,12 @@ function MessageList({
                   title={t('action.goToOriginal')}
                   type="button"
                 >
-                  <strong>{getSenderLabel(repliedThread.original)}</strong>
+                  <strong>
+                    {getMessageSenderLabel(
+                      repliedThread.original,
+                      avatarProfiles[repliedThread.original.sender],
+                    )}
+                  </strong>
                   <span>{getMessageSnippet(repliedThread.latest, t)}</span>
                 </button>
               ) : (
@@ -794,6 +904,38 @@ export default function App() {
     : '';
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
+  const knownAvatarNames = useMemo(() => {
+    const namesByAddress = new Map<string, string>();
+    const accountName = normalizeRegisteredName(account?.name);
+
+    if (account?.address && accountName) {
+      namesByAddress.set(account.address, accountName);
+    }
+
+    for (const message of messages.value) {
+      const senderName = normalizeRegisteredName(message.senderName);
+
+      if (senderName && !namesByAddress.has(message.sender)) {
+        namesByAddress.set(message.sender, senderName);
+      }
+    }
+
+    return namesByAddress;
+  }, [account?.address, account?.name, messages.value]);
+  const avatarAddresses = useMemo(() => {
+    const addresses = new Set<string>();
+
+    if (account?.address) {
+      addresses.add(account.address);
+    }
+
+    for (const message of messages.value) {
+      addresses.add(message.sender);
+    }
+
+    return Array.from(addresses);
+  }, [account?.address, messages.value]);
+  const avatarProfiles = useAvatarProfiles(avatarAddresses, knownAvatarNames, actions, actionsKey);
   const canJoinGroup = hasAction(actions, 'JOIN_GROUP');
   const canLeaveGroup = hasAction(actions, 'LEAVE_GROUP');
   const canApproveGroupJoinRequests = hasAction(actions, 'APPROVE_GROUP_JOIN_REQUEST');
@@ -1664,6 +1806,7 @@ export default function App() {
             error={accountError}
             isHomeBridge={bridge.value.isHomeBridge}
             onConnect={() => void connectSelectedAccount()}
+            profile={account ? avatarProfiles[account.address] : undefined}
             t={t}
           />
         </div>
@@ -1899,6 +2042,7 @@ export default function App() {
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
             <MessageList
+              avatarProfiles={avatarProfiles}
               canCompose={canComposeMessage}
               messages={messages.value}
               onEdit={startEdit}
@@ -1915,7 +2059,12 @@ export default function App() {
                   <strong>
                     {composeContext.kind === 'edit'
                       ? t('label.composer.editing')
-                      : t('label.composer.replyingTo', { name: getSenderLabel(composeContext.message) })}
+                      : t('label.composer.replyingTo', {
+                          name: getMessageSenderLabel(
+                            composeContext.message,
+                            avatarProfiles[composeContext.message.sender],
+                          ),
+                        })}
                   </strong>
                   <span>
                     {getMessageSnippet(

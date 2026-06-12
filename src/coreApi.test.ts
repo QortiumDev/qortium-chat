@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildActiveChatsPath,
   buildActiveChatsWebSocketUrl,
+  buildAccountNamesPath,
   buildAccountGroupJoinRequestsPath,
   buildAdminGroupJoinRequestsPath,
   buildGroupMessagesPath,
@@ -14,6 +15,7 @@ import {
   buildTransactionStatusPath,
   approveGroupJoinRequest,
   getActiveChats,
+  getAccountNames,
   getAccountGroupJoinRequests,
   getAdminGroupJoinRequests,
   getDirectMessages,
@@ -58,6 +60,7 @@ describe('Core API path builders', () => {
     expect(buildAdminGroupJoinRequestsPath('Qabc')).toBe('/groups/joinrequests/admin/Qabc');
     expect(buildGroupJoinRequestsPath(7)).toBe('/groups/joinrequests/7');
     expect(buildActiveChatsPath('Qabc')).toBe('/chat/active/Qabc?encoding=BASE64&haschatreference=false');
+    expect(buildAccountNamesPath('Qabc')).toBe('/names/address/Qabc');
   });
 
   it('builds chat message paths', () => {
@@ -133,6 +136,36 @@ describe('Core API path builders', () => {
       address: 'Qabc',
       encoding: 'BASE64',
       hasChatReference: false,
+    });
+  });
+
+  it('uses the account names bridge action when available', async () => {
+    qdnRequestMock.mockResolvedValueOnce([{ name: 'alice', owner: 'Qabc' }]);
+
+    await expect(getAccountNames('Qabc', ['GET_ACCOUNT_NAMES'])).resolves.toEqual([
+      { name: 'alice', owner: 'Qabc' },
+    ]);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'GET_ACCOUNT_NAMES',
+      address: 'Qabc',
+    });
+  });
+
+  it('falls back to FETCH_NODE_API for account names', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      body: '[]',
+      contentType: 'application/json',
+      data: [{ name: 'alice', owner: 'Qabc' }],
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getAccountNames('Qabc', [])).resolves.toEqual([{ name: 'alice', owner: 'Qabc' }]);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/names/address/Qabc',
     });
   });
 

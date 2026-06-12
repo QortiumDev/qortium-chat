@@ -38,6 +38,11 @@ export type NodeStatus = {
   [key: string]: unknown;
 };
 
+export type NameSummary = {
+  name?: string | null;
+  owner?: string | null;
+};
+
 export type GroupData = {
   approvalThreshold?: string;
   created?: number;

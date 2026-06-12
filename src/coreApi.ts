@@ -10,6 +10,7 @@ import type {
   GroupMembersResponse,
   GroupWithJoinRequests,
   MintingStatus,
+  NameSummary,
   NodeApiFetchResult,
   NodeMintingAccount,
   NodeStatus,
@@ -106,6 +107,10 @@ export function buildActiveChatsPath(address: string) {
   return `/chat/active/${encodeURIComponent(address)}?encoding=BASE64&haschatreference=false`;
 }
 
+export function buildAccountNamesPath(address: string) {
+  return `/names/address/${encodeURIComponent(address)}`;
+}
+
 export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIMIT) {
   // No haschatreference filter: edit revisions (messages with a chatReference)
   // are needed to render edited messages.
@@ -186,6 +191,17 @@ export async function getMemberGroups(address: string, actions?: QdnAction[]) {
   }
 
   return fetchNodeApiData<GroupData[]>(buildMemberGroupsPath(address), 'Member groups');
+}
+
+export async function getAccountNames(address: string, actions?: QdnAction[]) {
+  if (hasBridgeAction(actions, 'GET_ACCOUNT_NAMES')) {
+    return qdnRequest<NameSummary[]>({
+      action: 'GET_ACCOUNT_NAMES',
+      address,
+    });
+  }
+
+  return fetchNodeApiData<NameSummary[]>(buildAccountNamesPath(address), 'Account names');
 }
 
 export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
