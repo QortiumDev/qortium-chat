@@ -241,6 +241,11 @@ type CachedAvatarProfile = AvatarProfile & {
 
 type AvatarProfilesByAddress = Record<string, CachedAvatarProfile | undefined>;
 
+type AvatarLightboxImage = {
+  name: string | null;
+  src: string;
+};
+
 function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
   const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
   const avatarSrc = profile?.name === name ? profile.avatarSrc : null;
@@ -256,10 +261,36 @@ function getMessageSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName
   return getMessageSenderName(message, profile) ?? getSenderLabel(message);
 }
 
-function UserAvatar({ className, name, src }: { className: string; name: string | null; src: string | null }) {
+function UserAvatar({
+  className,
+  name,
+  onOpen,
+  openLabel,
+  src,
+}: {
+  className: string;
+  name: string | null;
+  onOpen?: (image: AvatarLightboxImage) => void;
+  openLabel?: string;
+  src: string | null;
+}) {
   const avatarClassName = `${className} user-avatar`;
 
   if (src) {
+    if (onOpen) {
+      return (
+        <button
+          aria-label={openLabel}
+          className={`${avatarClassName} user-avatar--button`}
+          onClick={() => onOpen({ name, src })}
+          title={openLabel}
+          type="button"
+        >
+          <img alt="" className="user-avatar__image" src={src} />
+        </button>
+      );
+    }
+
     return <img alt="" className={avatarClassName} src={src} />;
   }
 
@@ -270,14 +301,76 @@ function UserAvatar({ className, name, src }: { className: string; name: string 
   );
 }
 
-function MessageIdentity({ message, profile }: { message: ChatMessage; profile: AvatarProfile | undefined }) {
+function MessageIdentity({
+  message,
+  onOpenAvatar,
+  openAvatarLabel,
+  profile,
+}: {
+  message: ChatMessage;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
+  openAvatarLabel: string;
+  profile: AvatarProfile | undefined;
+}) {
   const { avatarSrc, name } = getAvatarView(profile, message.senderName);
 
   return (
     <span className="message__identity" title={message.sender}>
-      <UserAvatar className="message__avatar" name={name} src={avatarSrc} />
+      <UserAvatar
+        className="message__avatar"
+        name={name}
+        onOpen={onOpenAvatar}
+        openLabel={openAvatarLabel}
+        src={avatarSrc}
+      />
       <strong>{getMessageSenderLabel(message, profile)}</strong>
     </span>
+  );
+}
+
+function AvatarLightbox({
+  image,
+  onClose,
+  t,
+}: {
+  image: AvatarLightboxImage;
+  onClose: () => void;
+  t: TranslateFunction;
+}) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      aria-label={t('aria.avatarLightbox')}
+      aria-modal="true"
+      className="avatar-lightbox"
+      onClick={onClose}
+      role="dialog"
+    >
+      <button
+        aria-label={t('button.close')}
+        className="avatar-lightbox__close"
+        onClick={onClose}
+        title={t('button.close')}
+        type="button"
+      >
+        X
+      </button>
+      <figure className="avatar-lightbox__stage" onClick={(event) => event.stopPropagation()}>
+        <img alt={image.name ? t('label.avatarImageForName', { name: image.name }) : t('label.avatarImage')} src={image.src} />
+        {image.name ? <figcaption>{image.name}</figcaption> : null}
+      </figure>
+    </div>
   );
 }
 
@@ -338,6 +431,7 @@ function AccountSummary({
   error,
   isHomeBridge,
   onConnect,
+  onOpenAvatar,
   profile,
   t,
 }: {
@@ -345,6 +439,7 @@ function AccountSummary({
   error: string;
   isHomeBridge: boolean;
   onConnect: () => void;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
   profile?: AvatarProfile;
   t: TranslateFunction;
 }) {
@@ -354,15 +449,23 @@ function AccountSummary({
 
     return (
       <div className="account-summary">
-        <UserAvatar className="account-summary__avatar" name={name} src={avatarSrc} />
+        <UserAvatar
+          className="account-summary__avatar"
+          name={name}
+          onOpen={onOpenAvatar}
+          openLabel={t('action.openAvatarImage')}
+          src={avatarSrc}
+        />
         <div className="account-summary__text">
-          <strong>{label}</strong>
-          <span
-            className={`account-summary__status account-summary__status--${account.isUnlocked ? 'unlocked' : 'locked'}`}
-          >
-            {account.isUnlocked ? t('status.account.unlocked') : t('status.account.locked')}
-          </span>
-          <span>{account.address}</span>
+          <div className="account-summary__primary">
+            <strong>{label}</strong>
+            <span
+              className={`account-summary__status account-summary__status--${account.isUnlocked ? 'unlocked' : 'locked'}`}
+            >
+              {account.isUnlocked ? t('status.account.unlocked') : t('status.account.locked')}
+            </span>
+          </div>
+          <span className="account-summary__address">{account.address}</span>
         </div>
       </div>
     );
@@ -542,6 +645,7 @@ function MessageList({
   canCompose,
   messages,
   onEdit,
+  onOpenAvatar,
   onReply,
   selfAddress,
   t,
@@ -550,6 +654,7 @@ function MessageList({
   canCompose: boolean;
   messages: ChatMessage[];
   onEdit: (thread: MessageThread) => void;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
   onReply: (message: ChatMessage) => void;
   selfAddress: string | null;
   t: TranslateFunction;
@@ -724,7 +829,12 @@ function MessageList({
           >
             {isContinuation ? null : (
               <div className="message__meta">
-                <MessageIdentity message={original} profile={senderProfile} />
+                <MessageIdentity
+                  message={original}
+                  onOpenAvatar={onOpenAvatar}
+                  openAvatarLabel={t('action.openAvatarImage')}
+                  profile={senderProfile}
+                />
                 {actionButtons}
               </div>
             )}
@@ -855,6 +965,7 @@ export default function App() {
   const [membersOpen, setMembersOpen] = useState(true);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
+  const [avatarLightboxImage, setAvatarLightboxImage] = useState<AvatarLightboxImage | null>(null);
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
 
   const joinedIds = useMemo(
@@ -1806,6 +1917,7 @@ export default function App() {
             error={accountError}
             isHomeBridge={bridge.value.isHomeBridge}
             onConnect={() => void connectSelectedAccount()}
+            onOpenAvatar={setAvatarLightboxImage}
             profile={account ? avatarProfiles[account.address] : undefined}
             t={t}
           />
@@ -2046,6 +2158,7 @@ export default function App() {
               canCompose={canComposeMessage}
               messages={messages.value}
               onEdit={startEdit}
+              onOpenAvatar={setAvatarLightboxImage}
               onReply={startReply}
               selfAddress={account?.address ?? null}
               t={t}
@@ -2159,6 +2272,13 @@ export default function App() {
           </aside>
         ) : null}
       </section>
+      {avatarLightboxImage ? (
+        <AvatarLightbox
+          image={avatarLightboxImage}
+          onClose={() => setAvatarLightboxImage(null)}
+          t={t}
+        />
+      ) : null}
     </main>
   );
 }
