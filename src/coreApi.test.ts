@@ -11,9 +11,12 @@ import {
   buildGroupJoinRequestsPath,
   buildGroupMembersPath,
   buildMemberGroupsPath,
+  buildPendingTransactionsPath,
   buildSelfRewardSharesPath,
   buildTransactionStatusPath,
   approveGroupJoinRequest,
+  getPendingGroupApprovals,
+  submitGroupApproval,
   getActiveChats,
   getAccountNames,
   getAccountGroupJoinRequests,
@@ -77,6 +80,49 @@ describe('Core API path builders', () => {
       'ws://127.0.0.1:24891/websockets/chat/active/Qabc?encoding=BASE64&haschatreference=false',
     );
     expect(buildTransactionStatusPath('sig/with+chars')).toBe('/transactions/signature/sig%2Fwith%2Bchars');
+    expect(buildPendingTransactionsPath(1)).toBe('/transactions/pending?txGroupId=1&limit=100&reverse=false');
+  });
+
+  it('reads pending group approvals over the keyless FETCH_NODE_API fallback', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      body: '[]',
+      contentType: 'application/json',
+      data: [{ signature: 'sig1', type: 'ARBITRARY' }],
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getPendingGroupApprovals(1)).resolves.toEqual([{ signature: 'sig1', type: 'ARBITRARY' }]);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/transactions/pending?txGroupId=1&limit=100&reverse=false',
+    });
+  });
+
+  it('submits an approve or oppose vote through the GROUP_APPROVAL bridge action', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ accepted: true, transactionSignature: 'vote1' })
+      .mockResolvedValueOnce({ accepted: true, transactionSignature: 'vote2' });
+
+    await expect(submitGroupApproval('pending1', true, 1)).resolves.toEqual({
+      accepted: true,
+      transactionSignature: 'vote1',
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'GROUP_APPROVAL',
+      approval: true,
+      groupId: 1,
+      pendingSignature: 'pending1',
+    });
+
+    await submitGroupApproval('pending2', false);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'GROUP_APPROVAL',
+      approval: false,
+      pendingSignature: 'pending2',
+    });
   });
 
   it('prefers native group bridge actions when available', async () => {

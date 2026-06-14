@@ -13,6 +13,7 @@ import {
   getMemberGroups,
   getMissingPrivateGroupKeyRequests,
   getMintingStatus,
+  getPendingGroupApprovals,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   leaveGroup,
@@ -23,6 +24,7 @@ import {
   sendChatMessage,
   sendDirectChatMessage,
   startMinting,
+  submitGroupApproval,
 } from './coreApi';
 import {
   DEFAULT_REACTION_OPTIONS,
@@ -90,6 +92,7 @@ import type {
   GroupWithJoinRequests,
   GroupMember,
   MintingStatus,
+  PendingApprovalTransaction,
   QdnAction,
   QdnSelectedAccount,
 } from './types';
@@ -104,7 +107,18 @@ const emptyMembers: GroupMember[] = [];
 const emptyMessages: ChatMessage[] = [];
 const emptyJoinRequests: GroupJoinRequest[] = [];
 const emptyAdminJoinRequests: GroupWithJoinRequests[] = [];
+const emptyPendingApprovals: PendingApprovalTransaction[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
+
+// Groups whose transactions are gated by development-group approval (e.g. Core
+// auto-updates). Previewnet uses group id 1 ("development"); override with the
+// VITE_QORTIUM_DEV_GROUP_IDS env var (comma-separated) for other networks.
+const DEV_GROUP_IDS = new Set(
+  (import.meta.env.VITE_QORTIUM_DEV_GROUP_IDS || '1')
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0),
+);
 
 type SelectedChat =
   | {
@@ -125,7 +139,7 @@ function getSelectedChatKey(chat: SelectedChat | null) {
 }
 
 type TrackedTransaction = {
-  action: 'approve' | 'join' | 'leave' | 'rewardshare';
+  action: 'approve' | 'groupApproval' | 'join' | 'leave' | 'rewardshare';
   groupId: number;
   groupName: string;
   id: string;
@@ -569,6 +583,162 @@ function AccountInfoDialog({
           ) : null}
         </div>
         {copyStatus === 'error' ? <p className="error">{t('status.copyAddress.failed')}</p> : null}
+      </section>
+    </div>
+  );
+}
+
+function shortenSignature(signature: string) {
+  return signature.length > 24 ? `${signature.slice(0, 12)}...${signature.slice(-8)}` : signature;
+}
+
+function describeApprovalType(transaction: PendingApprovalTransaction, t: TranslateFunction) {
+  // service id 1 === AUTO_UPDATE manifest (a Core auto-update).
+  if (transaction.type === 'ARBITRARY' && transaction.service === 1) {
+    return t('label.approval.type.autoUpdate');
+  }
+
+  return transaction.type ?? t('label.approval.type.unknown');
+}
+
+function GroupApprovalDialog({
+  actionSignature,
+  canVote,
+  onApprove,
+  onClose,
+  onOppose,
+  pending,
+  t,
+  voteUnavailableLabel,
+}: {
+  actionSignature: string | null;
+  canVote: boolean;
+  onApprove: (signature: string) => void;
+  onClose: () => void;
+  onOppose: (signature: string) => void;
+  pending: AsyncState<PendingApprovalTransaction[]>;
+  t: TranslateFunction;
+  voteUnavailableLabel: string;
+}) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const [copiedSignature, setCopiedSignature] = useState<string | null>(null);
+
+  async function copySignature(signature: string) {
+    if (await copyTextToClipboard(signature)) {
+      setCopiedSignature(signature);
+    }
+  }
+
+  const transactions = pending.value;
+
+  return (
+    <div
+      aria-label={t('aria.groupApproval')}
+      aria-modal="true"
+      className="account-dialog"
+      onClick={onClose}
+      role="dialog"
+    >
+      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()}>
+        <header className="account-dialog__header">
+          <div className="account-dialog__heading">
+            <span>{t('label.groupApproval.section')}</span>
+            <h2>{t('title.groupApproval')}</h2>
+          </div>
+          <button
+            aria-label={t('button.close')}
+            className="account-dialog__close"
+            onClick={onClose}
+            title={t('button.close')}
+            type="button"
+          >
+            X
+          </button>
+        </header>
+
+        <p className="muted">{t('label.groupApproval.intro')}</p>
+
+        {pending.phase === 'error' ? <p className="error">{pending.error}</p> : null}
+
+        {pending.phase === 'loading' && transactions.length === 0 ? (
+          <p className="muted">{t('label.loading')}</p>
+        ) : transactions.length === 0 ? (
+          <p className="muted">{t('status.approval.empty')}</p>
+        ) : (
+          <ul className="approval-list">
+            {transactions.map((transaction) => {
+              const busy = actionSignature === transaction.signature;
+
+              return (
+                <li className="approval-item" key={transaction.signature}>
+                  <div className="approval-item__details">
+                    <strong>{describeApprovalType(transaction, t)}</strong>
+                    <dl className="approval-item__meta">
+                      <div>
+                        <dt>{t('label.approval.creator')}</dt>
+                        <dd>{transaction.creatorAddress ?? '-'}</dd>
+                      </div>
+                      <div>
+                        <dt>{t('label.approval.time')}</dt>
+                        <dd>{transaction.timestamp ? formatTimestamp(transaction.timestamp) : '-'}</dd>
+                      </div>
+                      {typeof transaction.blockHeight === 'number' ? (
+                        <div>
+                          <dt>{t('label.approval.block')}</dt>
+                          <dd>{transaction.blockHeight}</dd>
+                        </div>
+                      ) : null}
+                      <div>
+                        <dt>{t('label.approval.signature')}</dt>
+                        <dd className="approval-item__signature">
+                          <span title={transaction.signature}>{shortenSignature(transaction.signature)}</span>
+                          <button
+                            className="button button--secondary"
+                            onClick={() => void copySignature(transaction.signature)}
+                            type="button"
+                          >
+                            {copiedSignature === transaction.signature ? t('button.copied') : t('button.copy')}
+                          </button>
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                  <div className="approval-item__actions">
+                    <button
+                      className="button"
+                      disabled={!canVote || busy}
+                      onClick={() => onApprove(transaction.signature)}
+                      title={canVote ? t('button.approve') : voteUnavailableLabel}
+                      type="button"
+                    >
+                      {busy ? t('button.approving') : t('button.approve')}
+                    </button>
+                    <button
+                      className="button button--secondary"
+                      disabled={!canVote || busy}
+                      onClick={() => onOppose(transaction.signature)}
+                      title={canVote ? t('button.oppose') : voteUnavailableLabel}
+                      type="button"
+                    >
+                      {busy ? t('button.opposing') : t('button.oppose')}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
     </div>
   );
@@ -1651,11 +1821,16 @@ export default function App() {
   const loadedDirectActivityRef = useRef<ReadonlyMap<string, number | null>>(new Map());
   const requestedPrivateGroupKeysRef = useRef(new Set<string>());
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
+  const pendingApprovalsRequestRef = useRef(0);
   const [directAddress, setDirectAddress] = useState('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
   const [startMintingPending, setStartMintingPending] = useState(false);
+  const [pendingApprovals, setPendingApprovals] =
+    useState<AsyncState<PendingApprovalTransaction[]>>(createState(emptyPendingApprovals));
+  const [approvalModalOpen, setApprovalModalOpen] = useState(false);
+  const [approvalActionSignature, setApprovalActionSignature] = useState<string | null>(null);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
   const [reactionPendingKey, setReactionPendingKey] = useState('');
@@ -1678,6 +1853,9 @@ export default function App() {
   const selectedGroupId = selectedGroup?.groupId ?? null;
   const selectedDirectAddress = selectedDirect?.address ?? null;
   const selectedChatKey = getSelectedChatKey(selectedChat);
+  const selectedGroupIdRef = useRef<number | null>(selectedGroupId);
+
+  selectedGroupIdRef.current = selectedGroupId;
   const groupActivityById = useMemo(() => {
     const activity = new Map<number, number>();
 
@@ -2016,6 +2194,22 @@ export default function App() {
     : !isAccountUnlocked
       ? accountLockedLabel
       : t('action.closedGroupHistoryUnsupported');
+  const canGroupApproval = hasAction(actions, 'GROUP_APPROVAL');
+  const isSelectedDevGroup = selectedGroupId !== null && DEV_GROUP_IDS.has(selectedGroupId);
+  const isAdminOfSelectedGroup =
+    selectedGroupId !== null &&
+    memberGroups.value.some((group) => group.groupId === selectedGroupId && group.isAdmin === true);
+  const showApprovalControls = isSelectedDevGroup && isAdminOfSelectedGroup && !!account;
+  const pendingApprovalCount = pendingApprovals.value.length;
+  const canSubmitGroupApproval =
+    showApprovalControls && canUseSelectedAccount && canGroupApproval && approvalActionSignature === null;
+  const groupApprovalUnavailableLabel = !account
+    ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
+      : bridge.value.isHomeBridge
+        ? t('action.groupApprovalUnavailable')
+        : t('action.groupApprovalUnavailableBrowser');
 
   async function loadGroups(nextSearch = search, actionList = actions) {
     setGroups({ phase: 'loading', value: groups.value });
@@ -2452,6 +2646,70 @@ export default function App() {
     }
   }
 
+  async function loadPendingApprovals(groupId: number, options: { quiet?: boolean } = {}) {
+    const requestId = pendingApprovalsRequestRef.current + 1;
+
+    pendingApprovalsRequestRef.current = requestId;
+
+    if (!options.quiet) {
+      // Clear the previous group's queue while a non-quiet (selection) load runs;
+      // quiet refreshes keep the current value to avoid flicker.
+      setPendingApprovals({ phase: 'loading', value: emptyPendingApprovals });
+    }
+
+    try {
+      const value = await getPendingGroupApprovals(groupId);
+
+      if (pendingApprovalsRequestRef.current !== requestId || selectedGroupIdRef.current !== groupId) {
+        return;
+      }
+
+      setPendingApprovals({ phase: 'ready', value });
+    } catch (error) {
+      if (pendingApprovalsRequestRef.current !== requestId || selectedGroupIdRef.current !== groupId) {
+        return;
+      }
+
+      setPendingApprovals({
+        error: getBridgeErrorMessage(error, t('status.loadingError.pendingApprovals'), t),
+        phase: 'error',
+        value: emptyPendingApprovals,
+      });
+    }
+  }
+
+  async function handleGroupApproval(pendingSignature: string, approval: boolean) {
+    if (!selectedGroup || !canSubmitGroupApproval) {
+      return;
+    }
+
+    setApprovalActionSignature(pendingSignature);
+    setWriteError('');
+
+    try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
+      const result = await submitGroupApproval(pendingSignature, approval, selectedGroup.groupId);
+
+      trackTransaction({
+        action: 'groupApproval',
+        group: selectedGroup,
+        message: approval ? t('status.approval.vote.submitted') : t('status.approval.oppose.submitted'),
+        result,
+      });
+
+      await loadPendingApprovals(selectedGroup.groupId);
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.submitError.groupApproval'), t));
+    } finally {
+      setApprovalActionSignature(null);
+    }
+  }
+
   async function handleApproveJoinRequest(request: GroupJoinRequest) {
     if (!selectedGroup || !canApproveGroupJoinRequests || !canUseSelectedAccount || approvePendingJoiner) {
       return;
@@ -2741,11 +2999,26 @@ export default function App() {
     if (selectedGroup?.groupId === transaction.groupId) {
       await loadGroupMembers(selectedGroup);
     }
+
+    if (transaction.action === 'groupApproval' && selectedGroupId === transaction.groupId) {
+      await loadPendingApprovals(transaction.groupId);
+    }
   }
 
   useEffect(() => {
     void initializeSession();
   }, []);
+
+  useEffect(() => {
+    if (!account || selectedGroupId === null || !isSelectedDevGroup || !isAdminOfSelectedGroup) {
+      pendingApprovalsRequestRef.current += 1;
+      setPendingApprovals(createState(emptyPendingApprovals));
+      setApprovalModalOpen(false);
+      return;
+    }
+
+    void loadPendingApprovals(selectedGroupId);
+  }, [account?.address, selectedGroupId, isSelectedDevGroup, isAdminOfSelectedGroup]);
 
   useEffect(() => {
     if (isGroupSearchVisible) {
@@ -2897,7 +3170,9 @@ export default function App() {
               [transaction.id]: {
                 ...transaction,
                 message:
-                  transaction.action === 'approve'
+                  transaction.action === 'groupApproval'
+                    ? t('status.approval.transaction.confirmed')
+                    : transaction.action === 'approve'
                     ? t('status.approval.confirmed')
                     : transaction.action === 'rewardshare'
                       ? t('status.minting.authorization.confirmed')
@@ -3091,6 +3366,18 @@ export default function App() {
 
     return () => window.clearInterval(interval);
   }, [selectedGroupId, actionsKey]);
+
+  useEffect(() => {
+    if (!account || selectedGroupId === null || !isSelectedDevGroup || !isAdminOfSelectedGroup) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      void loadPendingApprovals(selectedGroupId, { quiet: true });
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [account?.address, selectedGroupId, isSelectedDevGroup, isAdminOfSelectedGroup]);
 
   function renderJoinGroupButton() {
     if (!(
@@ -3341,6 +3628,16 @@ export default function App() {
                       : t('button.startMinting')}
                 </button>
               ) : null}
+              {showApprovalControls && pendingApprovalCount > 0 ? (
+                <button
+                  className="button button--secondary"
+                  onClick={() => setApprovalModalOpen(true)}
+                  title={t('button.pendingApproval.title')}
+                  type="button"
+                >
+                  {t('button.pendingApproval')} ({pendingApprovalCount})
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -3351,6 +3648,9 @@ export default function App() {
           {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
           {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
           {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
+          {showApprovalControls && pendingApprovals.phase === 'error' ? (
+            <p className="error">{pendingApprovals.error}</p>
+          ) : null}
           {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
@@ -3534,6 +3834,18 @@ export default function App() {
           image={avatarLightboxImage}
           onClose={() => setAvatarLightboxImage(null)}
           t={t}
+        />
+      ) : null}
+      {approvalModalOpen ? (
+        <GroupApprovalDialog
+          actionSignature={approvalActionSignature}
+          canVote={canSubmitGroupApproval}
+          onApprove={(signature) => void handleGroupApproval(signature, true)}
+          onClose={() => setApprovalModalOpen(false)}
+          onOppose={(signature) => void handleGroupApproval(signature, false)}
+          pending={pendingApprovals}
+          t={t}
+          voteUnavailableLabel={groupApprovalUnavailableLabel}
         />
       ) : null}
     </main>
