@@ -1017,33 +1017,95 @@ samp,
 }
 
 .member-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .members-drawer .member-list {
-  display: grid;
   align-content: start;
 }
 
 .member-chip {
-  max-width: 180px;
-  padding: 4px 8px;
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 7px 9px;
   color: var(--qc-color-text-secondary);
   font-size: var(--qc-text-small);
   line-height: var(--qc-line-small);
-  text-overflow: ellipsis;
-  white-space: nowrap;
   background: var(--qc-color-chip-bg);
   border: 1px solid var(--qc-color-border);
-  border-radius: var(--qc-radius-pill);
+  border-radius: var(--qc-radius-sm);
 }
 
-.members-drawer .member-chip {
-  max-width: none;
+.member-chip--owner {
+  color: var(--qc-color-text);
+  background: var(--qc-color-accent-soft);
+  border-color: var(--qc-color-accent);
+}
+
+.member-chip__avatar {
+  width: 30px;
+  height: 30px;
   border-radius: var(--qc-radius-sm);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
+}
+
+.member-chip__avatar.user-avatar--fallback {
+  font-size: var(--qc-text-small);
+}
+
+.member-chip__text {
+  display: grid;
+  min-width: 0;
+}
+
+.member-chip__name,
+.member-chip__address {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-chip__name {
+  color: var(--qc-color-text);
+  font-weight: 650;
+}
+
+.member-chip__address {
+  color: var(--qc-color-muted);
+  font-family: "Illinois Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--qc-text-tiny);
+}
+
+.member-chip__role {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--qc-color-muted);
+}
+
+.member-chip__role svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.member-chip__role--owner {
+  color: var(--qc-color-warning);
+}
+
+.member-chip__role--admin {
+  color: var(--qc-color-info);
 }
 
 .join-requests {

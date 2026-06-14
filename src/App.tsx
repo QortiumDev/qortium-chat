@@ -58,8 +58,22 @@ import {
 } from './messageLinks';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
-import { getGroupTitle, isGeneralChatGroup, sortGroups, withGeneralChatGroup } from './generalChat';
+import {
+  GENERAL_CHAT_GROUP_ID,
+  getGroupTitle,
+  isGeneralChatGroup,
+  sortGroups,
+  withGeneralChatGroup,
+} from './generalChat';
 import { copyTextToClipboard } from './clipboard';
+import {
+  getActiveMessageGroupMembers,
+  getGroupMemberAddress,
+  getGroupMemberDisplayName,
+  getGroupMemberRegisteredName,
+  getGroupMemberRole,
+  getOrderedGroupMembers,
+} from './groupMembers';
 import {
   getAvatarFallbackCharacter,
   loadAvatarProfile,
@@ -101,6 +115,14 @@ type SelectedChat =
       direct: ActiveDirectChat;
       kind: 'direct';
     };
+
+function getSelectedChatKey(chat: SelectedChat | null) {
+  if (!chat) {
+    return '';
+  }
+
+  return chat.kind === 'group' ? `group:${chat.group.groupId}` : `direct:${chat.direct.address}`;
+}
 
 type TrackedTransaction = {
   action: 'approve' | 'join' | 'leave' | 'rewardshare';
@@ -202,21 +224,29 @@ function getDirectTitle(direct: ActiveDirectChat) {
   return direct.name || getShortAddress(direct.address);
 }
 
-function getMemberAddress(member: GroupMember) {
-  return member.address || member.member || '';
-}
-
-function getMemberLabel(member: GroupMember, t: TranslateFunction) {
-  const address = getMemberAddress(member);
-
-  return member.primaryName || member.name || (address ? getShortAddress(address) : t('member.label'));
-}
-
 function SearchIcon() {
   return (
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
       <path d="m21 21-4.35-4.35" />
       <circle cx="11" cy="11" r="7" />
+    </svg>
+  );
+}
+
+function OwnerIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="M4 18h16" />
+      <path d="m5 8 4 4 3-6 3 6 4-4-1.5 10h-11z" />
+    </svg>
+  );
+}
+
+function AdminIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="M12 3 5.5 6v5.5c0 4.25 2.7 7.25 6.5 9.5 3.8-2.25 6.5-5.25 6.5-9.5V6z" />
+      <path d="m9 12 2 2 4-5" />
     </svg>
   );
 }
@@ -702,12 +732,14 @@ function AccountSummary({
 function GroupList({
   activityByGroupId,
   groups,
+  memberCountsByGroupId,
   onSelect,
   selectedGroupId,
   t,
 }: {
   activityByGroupId: ReadonlyMap<number, number>;
   groups: GroupData[];
+  memberCountsByGroupId?: ReadonlyMap<number, number>;
   onSelect: (group: GroupData) => void;
   selectedGroupId: number | null;
   t: TranslateFunction;
@@ -728,6 +760,8 @@ function GroupList({
     <div className="group-list">
       {groups.map((group) => {
         const lastMessageTimestamp = activityByGroupId.get(group.groupId);
+        const memberCount =
+          memberCountsByGroupId?.get(group.groupId) ?? (isGeneralChatGroup(group) ? undefined : group.memberCount);
 
         return (
           <button
@@ -756,9 +790,9 @@ function GroupList({
                   <LockIcon />
                 </span>
               ) : null}
-              {!isGeneralChatGroup(group) && typeof group.memberCount === 'number' ? (
+              {typeof memberCount === 'number' ? (
                 <span className="group-row__members">
-                  {t('group.meta.memberCount', { count: group.memberCount.toLocaleString() })}
+                  {t('group.meta.memberCount', { count: memberCount.toLocaleString() })}
                 </span>
               ) : null}
             </span>
@@ -1514,19 +1548,68 @@ function MessageList({
   );
 }
 
-function GroupMemberList({ members, t }: { members: GroupMember[]; t: TranslateFunction }) {
-  if (members.length === 0) {
+function GroupMemberList({
+  avatarProfiles,
+  group,
+  members,
+  onOpenAvatar,
+  t,
+}: {
+  avatarProfiles: AvatarProfilesByAddress;
+  group: GroupData | null;
+  members: GroupMember[];
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
+  t: TranslateFunction;
+}) {
+  const orderedMembers = getOrderedGroupMembers(members, group);
+  const ownerAddress = group?.owner;
+
+  if (orderedMembers.length === 0) {
     return <p className="empty">{t('hint.noMembers')}</p>;
   }
 
   return (
     <div className="member-list">
-      {members.slice(0, 24).map((member) => {
-        const address = getMemberAddress(member);
+      {orderedMembers.map((member) => {
+        const address = getGroupMemberAddress(member);
+        const registeredName = getGroupMemberRegisteredName(member);
+        const profile = address ? avatarProfiles[address] : undefined;
+        const { avatarSrc, name } = getAvatarView(profile, registeredName);
+        const label = getGroupMemberDisplayName(member, t('member.label'), getShortAddress, profile?.name);
+        const shortAddress = address ? getShortAddress(address) : '';
+        const role = getGroupMemberRole(member, ownerAddress);
+        const roleLabel =
+          role === 'owner' ? t('label.group.owner') : role === 'admin' ? t('label.group.admin') : '';
 
         return (
-          <span className="member-chip" key={address || getMemberLabel(member, t)} title={address}>
-            {getMemberLabel(member, t)}
+          <span
+            className={`member-chip member-chip--${role}`}
+            key={address || label}
+            title={address}
+          >
+            <UserAvatar
+              className="member-chip__avatar"
+              name={name}
+              onOpen={avatarSrc ? onOpenAvatar : undefined}
+              openLabel={t('action.openAvatarImage')}
+              src={avatarSrc}
+            />
+            <span className="member-chip__text">
+              <span className="member-chip__name">{label}</span>
+              {shortAddress && label !== shortAddress ? (
+                <span className="member-chip__address">{shortAddress}</span>
+              ) : null}
+            </span>
+            {role !== 'member' ? (
+              <span
+                aria-label={roleLabel}
+                className={`member-chip__role member-chip__role--${role}`}
+                role="img"
+                title={roleLabel}
+              >
+                {role === 'owner' ? <OwnerIcon /> : <AdminIcon />}
+              </span>
+            ) : null}
           </span>
         );
       })}
@@ -1547,6 +1630,8 @@ export default function App() {
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
+  const [messagesChatKey, setMessagesChatKey] = useState('');
+  const [cachedGeneralChatMembers, setCachedGeneralChatMembers] = useState<GroupMember[]>(emptyMembers);
   const [loadedGroupActivityById, setLoadedGroupActivityById] =
     useState<ReadonlyMap<number, number | null>>(() => new Map());
   const [loadedDirectActivityByAddress, setLoadedDirectActivityByAddress] =
@@ -1592,6 +1677,7 @@ export default function App() {
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
   const selectedDirectAddress = selectedDirect?.address ?? null;
+  const selectedChatKey = getSelectedChatKey(selectedChat);
   const groupActivityById = useMemo(() => {
     const activity = new Map<number, number>();
 
@@ -1633,7 +1719,42 @@ export default function App() {
   const sortedGroups = useMemo(() => sortGroups(groups.value, t, groupActivityById), [groupActivityById, groups.value, t]);
   const isGroupSearchVisible = isGroupSearchOpen || search.trim().length > 0;
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
-  const showGroupMembers = !!selectedGroup && !isSelectedGeneralChat;
+  const hasSelectedMessages = selectedChatKey !== '' && messagesChatKey === selectedChatKey;
+  const selectedGeneralChatMembers = useMemo(
+    () =>
+      isSelectedGeneralChat && hasSelectedMessages
+        ? getActiveMessageGroupMembers(messages.value, GENERAL_CHAT_GROUP_ID)
+        : emptyMembers,
+    [hasSelectedMessages, isSelectedGeneralChat, messages.value],
+  );
+  const generalChatMembersForUi =
+    isSelectedGeneralChat && hasSelectedMessages && messages.phase === 'ready'
+      ? selectedGeneralChatMembers
+      : cachedGeneralChatMembers;
+  const syntheticMemberCountsByGroupId = useMemo(() => {
+    const counts = new Map<number, number>();
+
+    if (isSelectedGeneralChat || cachedGeneralChatMembers.length > 0) {
+      counts.set(GENERAL_CHAT_GROUP_ID, generalChatMembersForUi.length);
+    }
+
+    return counts;
+  }, [cachedGeneralChatMembers.length, generalChatMembersForUi.length, isSelectedGeneralChat]);
+  const selectedGroupMembers = isSelectedGeneralChat ? generalChatMembersForUi : groupMembers.value;
+  const selectedGroupMembersPhase = isSelectedGeneralChat
+    ? !hasSelectedMessages && messages.phase === 'ready'
+      ? 'loading'
+      : messages.phase
+    : groupMembers.phase;
+  const selectedGroupMembersError =
+    isSelectedGeneralChat
+      ? messages.phase === 'error'
+        ? messages.error
+        : ''
+      : groupMembers.phase === 'error'
+        ? groupMembers.error
+        : '';
+  const showGroupMembers = !!selectedGroup;
   const pendingJoinGroupIds = useMemo(
     () => new Set(accountJoinRequests.value.map((request) => request.groupId)),
     [accountJoinRequests.value],
@@ -1665,11 +1786,6 @@ export default function App() {
   const selectedTransactions = Object.values(trackedTransactions).filter(
     (transaction) => selectedGroupId !== null && transaction.groupId === selectedGroupId,
   );
-  const selectedChatKey = selectedChat
-    ? selectedChat.kind === 'group'
-      ? `group:${selectedChat.group.groupId}`
-      : `direct:${selectedChat.direct.address}`
-    : '';
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
   const knownAvatarNames = useMemo(() => {
@@ -1694,8 +1810,30 @@ export default function App() {
       }
     }
 
+    for (const member of groupMembers.value) {
+      const address = getGroupMemberAddress(member);
+      const memberName = getGroupMemberRegisteredName(member);
+
+      if (address && memberName && !namesByAddress.has(address)) {
+        namesByAddress.set(address, memberName);
+      }
+    }
+
+    if (selectedGroup?.owner && selectedGroup.ownerPrimaryName) {
+      namesByAddress.set(selectedGroup.owner, selectedGroup.ownerPrimaryName);
+    }
+
     return namesByAddress;
-  }, [account?.address, account?.name, accountInfoTarget?.sender, accountInfoTarget?.senderName, messages.value]);
+  }, [
+    account?.address,
+    account?.name,
+    accountInfoTarget?.sender,
+    accountInfoTarget?.senderName,
+    groupMembers.value,
+    messages.value,
+    selectedGroup?.owner,
+    selectedGroup?.ownerPrimaryName,
+  ]);
   const avatarAddresses = useMemo(() => {
     const addresses = new Set<string>();
 
@@ -1711,9 +1849,28 @@ export default function App() {
       addresses.add(message.sender);
     }
 
+    for (const member of groupMembers.value) {
+      const address = getGroupMemberAddress(member);
+
+      if (address) {
+        addresses.add(address);
+      }
+    }
+
+    if (selectedGroup?.owner) {
+      addresses.add(selectedGroup.owner);
+    }
+
     return Array.from(addresses);
-  }, [account?.address, accountInfoTarget?.sender, messages.value]);
+  }, [account?.address, accountInfoTarget?.sender, groupMembers.value, messages.value, selectedGroup?.owner]);
   const avatarProfiles = useAvatarProfiles(avatarAddresses, knownAvatarNames, actions, actionsKey);
+
+  useEffect(() => {
+    if (isSelectedGeneralChat && hasSelectedMessages && messages.phase === 'ready') {
+      setCachedGeneralChatMembers(selectedGeneralChatMembers);
+    }
+  }, [hasSelectedMessages, isSelectedGeneralChat, messages.phase, selectedGeneralChatMembers]);
+
   const canJoinGroup = hasAction(actions, 'JOIN_GROUP');
   const canLeaveGroup = hasAction(actions, 'LEAVE_GROUP');
   const canApproveGroupJoinRequests = hasAction(actions, 'APPROVE_GROUP_JOIN_REQUEST');
@@ -2015,23 +2172,28 @@ export default function App() {
     }
 
     const canReadUnlockedMessages = options.accountUnlocked ?? isAccountUnlocked;
+    const chatKey = getSelectedChatKey(chat);
 
     if (!options.quiet) {
+      setMessagesChatKey('');
       setMessages({ phase: 'loading', value: messages.value });
     }
 
     try {
       if (chat.kind === 'direct' && !canReadUnlockedMessages) {
+        setMessagesChatKey(chatKey);
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
 
       if (chat.kind === 'direct' && !hasAction(actionList, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
+        setMessagesChatKey(chatKey);
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
 
       if (chat.kind === 'group' && chat.group.isOpen === false && !canReadUnlockedMessages) {
+        setMessagesChatKey(chatKey);
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
@@ -2041,6 +2203,7 @@ export default function App() {
         chat.group.isOpen === false &&
         !hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')
       ) {
+        setMessagesChatKey(chatKey);
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
@@ -2056,6 +2219,7 @@ export default function App() {
         setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, chat.direct.address, nextMessages));
       }
 
+      setMessagesChatKey(chatKey);
       setMessages({ phase: 'ready', value: nextMessages });
 
       if (
@@ -2070,6 +2234,9 @@ export default function App() {
         });
       }
     } catch (error) {
+      if (!options.quiet) {
+        setMessagesChatKey('');
+      }
       setMessages({
         error: getBridgeErrorMessage(error, t('status.loadingError.messages'), t),
         phase: 'error',
@@ -2776,6 +2943,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedChat) {
+      setMessagesChatKey('');
       setMessages({ phase: 'ready', value: emptyMessages });
       setGroupMembers({ phase: 'ready', value: emptyMembers });
       return undefined;
@@ -2802,12 +2970,14 @@ export default function App() {
     }
 
     const chat = selectedChat;
+    const chatKey = getSelectedChatKey(chat);
     let socket: WebSocket | null = null;
     let reconnectTimeout = 0;
     let isDisposed = false;
     let receivedInitialMessages = false;
     let usedRestFallback = false;
 
+    setMessagesChatKey('');
     setMessages({ phase: 'loading', value: messages.value });
 
     function connect() {
@@ -2825,16 +2995,19 @@ export default function App() {
 
           if (!receivedInitialMessages) {
             receivedInitialMessages = true;
+            setMessagesChatKey(chatKey);
             setMessages({ phase: 'ready', value: sortMessagesByTimestamp(nextMessages) });
             return;
           }
 
           // Reconnects resend the initial batch; merging dedupes by signature.
+          setMessagesChatKey(chatKey);
           setMessages((current) => ({
             phase: 'ready',
             value: mergeMessages(current.value, nextMessages),
           }));
         } catch (error) {
+          setMessagesChatKey('');
           setMessages({
             error: getBridgeErrorMessage(error, t('status.loadingError.readLiveMessages'), t),
             phase: 'error',
@@ -3023,6 +3196,7 @@ export default function App() {
               <GroupList
                 activityByGroupId={groupActivityById}
                 groups={sortedGroups}
+                memberCountsByGroupId={syntheticMemberCountsByGroupId}
                 onSelect={selectGroup}
                 selectedGroupId={selectedGroupId}
                 t={t}
@@ -3119,7 +3293,7 @@ export default function App() {
               ) : null}
             </div>
             <div className="chat-pane__actions">
-              {selectedChat?.kind === 'group' && !isSelectedGeneralChat ? (
+              {selectedChat?.kind === 'group' ? (
                 <button
                   className="button button--secondary"
                   onClick={() => setMembersOpen((current) => !current)}
@@ -3127,7 +3301,7 @@ export default function App() {
                 >
                   {membersOpen
                     ? t('button.hideMembers')
-                    : `${t('label.common.members')} (${groupMembers.value.length})`}
+                    : `${t('label.common.members')} (${selectedGroupMembers.length})`}
                 </button>
               ) : null}
               {renderJoinGroupButton()}
@@ -3293,13 +3467,19 @@ export default function App() {
                 <h2>{t('label.common.members')}</h2>
                 <p>{getGroupTitle(selectedGroup, t)}</p>
               </div>
-              <span>{groupMembers.value.length}</span>
+              <span>{selectedGroupMembers.length}</span>
             </div>
-            {groupMembers.phase === 'error' ? <p className="error">{groupMembers.error}</p> : null}
-            {groupMembers.phase === 'loading' ? (
+            {selectedGroupMembersPhase === 'error' ? <p className="error">{selectedGroupMembersError}</p> : null}
+            {selectedGroupMembersPhase === 'loading' ? (
               <LoadingRows count={5} label={t('label.loading')} />
             ) : (
-              <GroupMemberList members={groupMembers.value} t={t} />
+              <GroupMemberList
+                avatarProfiles={avatarProfiles}
+                group={isSelectedGeneralChat ? null : selectedGroup}
+                members={selectedGroupMembers}
+                onOpenAvatar={setAvatarLightboxImage}
+                t={t}
+              />
             )}
             {selectedAdminJoinRequests.length > 0 ? (
               <div className="join-requests" aria-label={t('title.joinRequests')}>
