@@ -2185,3 +2185,69 @@ button.message__reply-preview:focus-visible {
     animation: none;
   }
 }
+
+.approval-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.approval-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+}
+
+.approval-item__details {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.approval-item__meta {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.approval-item__meta > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.approval-item__meta dt {
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  font-weight: 700;
+}
+
+.approval-item__meta dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.approval-item__signature {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: "Illinois Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: var(--qc-text-tiny);
+}
+
+.approval-item__signature span {
+  word-break: break-all;
+}
+
+.approval-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

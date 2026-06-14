@@ -4,6 +4,7 @@ import type {
   ActiveChats,
   ChatActionResult,
   ChatMessage,
+  GroupApprovalResult,
   GroupData,
   GroupJoinRequest,
   GroupMember,
@@ -14,6 +15,7 @@ import type {
   NodeApiFetchResult,
   NodeMintingAccount,
   NodeStatus,
+  PendingApprovalTransaction,
   PrivateGroupChatKeyRequest,
   PrivateGroupChatKeyRequestRecoveryResult,
   PrivateGroupChatKeyRequestResult,
@@ -98,6 +100,16 @@ export function buildGroupJoinRequestsPath(groupId: number) {
 
 export function buildTransactionStatusPath(signature: string) {
   return `/transactions/signature/${encodeURIComponent(signature)}`;
+}
+
+export function buildPendingTransactionsPath(txGroupId: number, limit = DEFAULT_LIST_LIMIT) {
+  const query = new URLSearchParams({
+    txGroupId: String(txGroupId),
+    limit: String(limit),
+    reverse: 'false',
+  });
+
+  return `/transactions/pending?${query.toString()}`;
 }
 
 export function buildSelfRewardSharesPath(address: string) {
@@ -259,6 +271,30 @@ export async function getGroupJoinRequests(groupId: number, actions?: QdnAction[
 
 export async function getTransactionStatus(signature: string) {
   return fetchNodeApiData<TransactionStatus>(buildTransactionStatusPath(signature), 'Transaction status');
+}
+
+export async function getPendingGroupApprovals(txGroupId: number) {
+  // Keyless, CORS-open read; works through the bridge and in browser read-only mode.
+  return fetchNodeApiData<PendingApprovalTransaction[]>(
+    buildPendingTransactionsPath(txGroupId),
+    'Pending approvals',
+  );
+}
+
+export async function submitGroupApproval(pendingSignature: string, approval: boolean, groupId?: number) {
+  // Privileged write: Qortium Home builds POST /groups/approval, signs with the
+  // user's wallet, and submits. approval=false records an opposition vote.
+  // groupId is display-only context for Home's consent dialog (the vote always
+  // rides in the root group); omit it when unknown.
+  const request = {
+    action: 'GROUP_APPROVAL',
+    approval,
+    pendingSignature,
+  };
+
+  return qdnRequest<GroupApprovalResult>(
+    typeof groupId === 'number' ? { ...request, groupId } : request,
+  );
 }
 
 export async function getMintingStatus(address: string, actions?: QdnAction[]): Promise<MintingStatus> {

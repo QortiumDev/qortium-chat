@@ -219,3 +219,25 @@ export type TransactionStatus = {
   timestamp?: number;
   type?: string;
 };
+
+export type PendingApprovalTransaction = {
+  approvalStatus?: string;
+  blockHeight?: number | null;
+  creatorAddress?: string;
+  fee?: string;
+  service?: number;
+  signature: string;
+  size?: number;
+  timestamp?: number;
+  txGroupId?: number;
+  type?: string;
+};
+
+export type GroupApprovalResult = {
+  accepted?: boolean;
+  action?: string;
+  approval?: boolean;
+  pendingSignature?: string;
+  result?: unknown;
+  transactionSignature?: string;
+};
