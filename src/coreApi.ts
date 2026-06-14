@@ -14,6 +14,9 @@ import type {
   NodeApiFetchResult,
   NodeMintingAccount,
   NodeStatus,
+  PrivateGroupChatKeyRequest,
+  PrivateGroupChatKeyRequestRecoveryResult,
+  PrivateGroupChatKeyRequestResult,
   QdnAction,
   RewardShare,
   StartMintingResult,
@@ -362,6 +365,70 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
   const messages = await fetchNodeApiData<ChatMessage[]>(buildGroupMessagesPath(groupId), 'Group messages');
 
   return sortMessagesByTimestamp(messages);
+}
+
+function getOptionalKeyId(value: unknown) {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+export function getMissingPrivateGroupKeyRequests(messages: ChatMessage[], groupId?: number) {
+  const requests = new Map<string, PrivateGroupChatKeyRequest>();
+
+  for (const message of messages) {
+    if (message.status !== 'MISSING_KEY') {
+      continue;
+    }
+
+    if (typeof groupId === 'number' && message.txGroupId !== groupId) {
+      continue;
+    }
+
+    const epochId = getOptionalKeyId(message.epochId);
+    const keyId = getOptionalKeyId(message.keyId);
+    const key = `${message.txGroupId}:${epochId ?? ''}:${keyId ?? ''}`;
+
+    if (!requests.has(key)) {
+      requests.set(key, {
+        ...(epochId ? { epochId } : {}),
+        groupId: message.txGroupId,
+        ...(keyId ? { keyId } : {}),
+      });
+    }
+  }
+
+  return Array.from(requests.values());
+}
+
+export async function requestPrivateGroupChatKey(
+  request: PrivateGroupChatKeyRequest,
+  actions?: QdnAction[],
+) {
+  if (!hasBridgeAction(actions, 'REQUEST_PRIVATE_GROUP_CHAT_KEY')) {
+    throw new Error('Private group chat key requests require Qortium Home key recovery support.');
+  }
+
+  return qdnRequest<PrivateGroupChatKeyRequestResult>({
+    action: 'REQUEST_PRIVATE_GROUP_CHAT_KEY',
+    ...(request.epochId ? { epochId: request.epochId } : {}),
+    groupId: request.groupId,
+    ...(request.keyId ? { keyId: request.keyId } : {}),
+  });
+}
+
+export async function resolvePrivateGroupChatKeyRequests(
+  groupId: number,
+  actions?: QdnAction[],
+  limit = 20,
+) {
+  if (!hasBridgeAction(actions, 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS')) {
+    throw new Error('Private group chat key request resolution requires Qortium Home key recovery support.');
+  }
+
+  return qdnRequest<PrivateGroupChatKeyRequestRecoveryResult>({
+    action: 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS',
+    groupId,
+    limit,
+  });
 }
 
 export async function getDirectMessages(otherAddress: string, actions?: QdnAction[]) {

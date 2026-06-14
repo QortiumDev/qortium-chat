@@ -151,8 +151,10 @@ export type ChatMessage = {
   data?: string | null;
   decryptionStatus?: string;
   encoding?: 'BASE58' | 'BASE64';
+  epochId?: string | null;
   isEncrypted?: boolean;
   isText?: boolean;
+  keyId?: string | null;
   recipient?: string | null;
   recipientName?: string | null;
   sender: string;
@@ -174,6 +176,39 @@ export type ChatActionResult = {
   recipientAddress?: string;
   result: unknown;
   transactionSignature?: string;
+};
+
+export type PrivateGroupChatKeyRequest = {
+  epochId?: string;
+  groupId: number;
+  keyId?: string;
+};
+
+export type PrivateGroupChatKeyRequestResult = {
+  accepted: boolean;
+  action: 'REQUEST_PRIVATE_GROUP_CHAT_KEY';
+  groupId: number;
+  result: {
+    epochId?: string | null;
+    keyId?: string | null;
+    requestSignature?: string;
+    [key: string]: unknown;
+  };
+};
+
+export type PrivateGroupChatKeyRequestRecoveryResult = {
+  accepted: boolean;
+  action: 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS';
+  groupId: number;
+  result: Array<{
+    announcementSignature?: string | null;
+    epochId?: string | null;
+    relayedKeyId?: string | null;
+    requestSignature?: string | null;
+    requestedKeyId?: string | null;
+    status?: string;
+    [key: string]: unknown;
+  }>;
 };
 
 export type TransactionStatus = {

@@ -11,11 +11,14 @@ import {
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
+  getMissingPrivateGroupKeyRequests,
   getMintingStatus,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   leaveGroup,
   joinGroup,
+  requestPrivateGroupChatKey,
+  resolvePrivateGroupChatKeyRequests,
   searchGroups,
   sendChatMessage,
   sendDirectChatMessage,
@@ -110,8 +113,18 @@ type TrackedTransaction = {
   signature?: string;
 };
 
+type PrivateGroupKeyRecoveryRequest = {
+  epochId?: string;
+  groupId: number;
+  keyId?: string;
+};
+
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function getPrivateGroupKeyRecoveryKey(accountAddress: string, request: PrivateGroupKeyRecoveryRequest) {
+  return `${accountAddress}:${request.groupId}:${request.epochId ?? ''}:${request.keyId ?? ''}`;
 }
 
 function getBridgeErrorMessage(error: unknown, fallback: string, t: TranslateFunction) {
@@ -1551,6 +1564,8 @@ export default function App() {
   const groupSearchInputRef = useRef<HTMLInputElement>(null);
   const loadedGroupActivityRef = useRef<ReadonlyMap<number, number | null>>(new Map());
   const loadedDirectActivityRef = useRef<ReadonlyMap<string, number | null>>(new Map());
+  const requestedPrivateGroupKeysRef = useRef(new Set<string>());
+  const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const [directAddress, setDirectAddress] = useState('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
@@ -1560,6 +1575,8 @@ export default function App() {
   const [sendPending, setSendPending] = useState(false);
   const [reactionPendingKey, setReactionPendingKey] = useState('');
   const [writeError, setWriteError] = useState('');
+  const [privateGroupKeyStatus, setPrivateGroupKeyStatus] = useState('');
+  const [privateGroupKeyError, setPrivateGroupKeyError] = useState('');
   const [membersOpen, setMembersOpen] = useState(true);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
@@ -1991,7 +2008,7 @@ export default function App() {
   async function loadMessages(
     chat: SelectedChat | null,
     actionList = actions,
-    options: { accountUnlocked?: boolean; quiet?: boolean } = {},
+    options: { accountUnlocked?: boolean; quiet?: boolean; skipKeyRecovery?: boolean } = {},
   ) {
     if (!chat) {
       return;
@@ -2040,12 +2057,98 @@ export default function App() {
       }
 
       setMessages({ phase: 'ready', value: nextMessages });
+
+      if (
+        chat.kind === 'group' &&
+        chat.group.isOpen === false &&
+        !options.skipKeyRecovery &&
+        account?.isUnlocked === true &&
+        canReadUnlockedMessages
+      ) {
+        void recoverMissingPrivateGroupKeys(chat.group, nextMessages, account, actionList, {
+          quiet: options.quiet,
+        });
+      }
     } catch (error) {
       setMessages({
         error: getBridgeErrorMessage(error, t('status.loadingError.messages'), t),
         phase: 'error',
         value: messages.value,
       });
+    }
+  }
+
+  async function recoverMissingPrivateGroupKeys(
+    group: GroupData,
+    nextMessages: ChatMessage[],
+    selectedAccount: QdnSelectedAccount,
+    actionList: QdnAction[],
+    options: { quiet?: boolean } = {},
+  ) {
+    const missingKeyRequests = getMissingPrivateGroupKeyRequests(nextMessages, group.groupId);
+
+    if (missingKeyRequests.length === 0) {
+      setPrivateGroupKeyStatus('');
+      setPrivateGroupKeyError('');
+      return;
+    }
+
+    const canRequestPrivateGroupChatKey = hasAction(actionList, 'REQUEST_PRIVATE_GROUP_CHAT_KEY');
+    const canResolvePrivateGroupChatKeyRequests = hasAction(actionList, 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS');
+    const newKeyRequests = canRequestPrivateGroupChatKey
+      ? missingKeyRequests.filter((request) => {
+          const key = getPrivateGroupKeyRecoveryKey(selectedAccount.address, request);
+
+          return !requestedPrivateGroupKeysRef.current.has(key);
+        })
+      : [];
+    const resolveKey = `${selectedAccount.address}:${group.groupId}`;
+    const shouldResolveKeyRequests =
+      canResolvePrivateGroupChatKeyRequests &&
+      (newKeyRequests.length > 0 || !resolvedPrivateGroupKeyRequestsRef.current.has(resolveKey));
+
+    if (newKeyRequests.length === 0 && !shouldResolveKeyRequests) {
+      return;
+    }
+
+    for (const request of newKeyRequests) {
+      requestedPrivateGroupKeysRef.current.add(getPrivateGroupKeyRecoveryKey(selectedAccount.address, request));
+    }
+
+    if (shouldResolveKeyRequests) {
+      resolvedPrivateGroupKeyRequestsRef.current.add(resolveKey);
+    }
+
+    if (!options.quiet) {
+      setPrivateGroupKeyStatus(t('status.privateGroupKey.requesting'));
+    }
+
+    setPrivateGroupKeyError('');
+
+    try {
+      for (const request of newKeyRequests) {
+        await requestPrivateGroupChatKey(request, actionList);
+      }
+
+      if (shouldResolveKeyRequests) {
+        await resolvePrivateGroupChatKeyRequests(group.groupId, actionList);
+      }
+
+      if (newKeyRequests.length > 0) {
+        setPrivateGroupKeyStatus(t('status.privateGroupKey.requested'));
+      } else if (shouldResolveKeyRequests) {
+        setPrivateGroupKeyStatus(t('status.privateGroupKey.recoveryChecked'));
+      }
+
+      await loadMessages({ group, kind: 'group' }, actionList, {
+        accountUnlocked: selectedAccount.isUnlocked,
+        quiet: true,
+        skipKeyRecovery: true,
+      });
+    } catch (error) {
+      setPrivateGroupKeyError(
+        getBridgeErrorMessage(error, t('status.loadingError.privateGroupKeyRecovery'), t),
+      );
     }
   }
 
@@ -2366,12 +2469,16 @@ export default function App() {
 
   function selectGroup(group: GroupData) {
     setWriteError('');
+    setPrivateGroupKeyStatus('');
+    setPrivateGroupKeyError('');
     setComposeContext(null);
     setSelectedChat({ group, kind: 'group' });
   }
 
   function selectDirect(direct: ActiveDirectChat) {
     setWriteError('');
+    setPrivateGroupKeyStatus('');
+    setPrivateGroupKeyError('');
     setComposeContext(null);
     setSelectedChat({ direct, kind: 'direct' });
   }
@@ -2489,6 +2596,10 @@ export default function App() {
 
   useEffect(() => {
     setLoadedDirectActivityByAddress(new Map());
+    requestedPrivateGroupKeysRef.current.clear();
+    resolvedPrivateGroupKeyRequestsRef.current.clear();
+    setPrivateGroupKeyStatus('');
+    setPrivateGroupKeyError('');
   }, [account?.address]);
 
   useEffect(() => {
@@ -3061,6 +3172,8 @@ export default function App() {
 
           {messages.phase === 'error' ? <p className="error">{messages.error}</p> : null}
           {writeError ? <p className="error">{writeError}</p> : null}
+          {privateGroupKeyError ? <p className="error">{privateGroupKeyError}</p> : null}
+          {privateGroupKeyStatus ? <p className="muted">{privateGroupKeyStatus}</p> : null}
           {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
           {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
           {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}

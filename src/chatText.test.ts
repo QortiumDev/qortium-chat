@@ -186,7 +186,7 @@ describe('chat text helpers', () => {
         status: 'MISSING_KEY',
       }),
     ).toMatchObject({
-      body: 'Encrypted message',
+      body: 'Private group key missing',
       kind: 'encrypted',
     });
   });
