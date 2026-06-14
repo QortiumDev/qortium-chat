@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMessageThreads,
+  getLatestNonReactionMessageTimestamp,
   isThreadContinuation,
   THREAD_CONTINUATION_WINDOW_MS,
   type MessageThread,
@@ -99,6 +100,22 @@ describe('buildMessageThreads', () => {
     const orphanReaction = reaction({ chatReference: 'sig-missing', sender: 'Qa', timestamp: 20 });
 
     expect(buildMessageThreads([orphanReaction])).toEqual([]);
+  });
+});
+
+describe('getLatestNonReactionMessageTimestamp', () => {
+  it('returns the latest message timestamp while ignoring newer reactions', () => {
+    const first = message({ sender: 'Qa', signature: 'sig-a', timestamp: 10 });
+    const latestMessage = message({ sender: 'Qb', signature: 'sig-b', timestamp: 30 });
+    const newerReaction = reaction({ chatReference: 'sig-a', sender: 'Qc', timestamp: 50 });
+
+    expect(getLatestNonReactionMessageTimestamp([newerReaction, first, latestMessage])).toBe(30);
+  });
+
+  it('returns null when only reactions are loaded', () => {
+    expect(getLatestNonReactionMessageTimestamp([
+      reaction({ chatReference: 'sig-a', sender: 'Qa', timestamp: 20 }),
+    ])).toBeNull();
   });
 });
 

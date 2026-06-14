@@ -64,8 +64,36 @@ export function withGeneralChatGroup(groups: GroupData[], search: string, t: Tra
   return [generalChat, ...regularGroups];
 }
 
-export function sortGroups(groups: GroupData[], t: TranslateFunction) {
+function getGroupActivityTimestamp(
+  activityByGroupId: ReadonlyMap<number, number> | undefined,
+  group: Pick<GroupData, 'groupId'>,
+) {
+  const timestamp = activityByGroupId?.get(group.groupId);
+
+  return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : null;
+}
+
+export function sortGroups(
+  groups: GroupData[],
+  t: TranslateFunction,
+  activityByGroupId?: ReadonlyMap<number, number>,
+) {
   return [...groups].sort((first, second) => {
+    const firstActivity = getGroupActivityTimestamp(activityByGroupId, first);
+    const secondActivity = getGroupActivityTimestamp(activityByGroupId, second);
+
+    if (firstActivity !== null && secondActivity !== null && firstActivity !== secondActivity) {
+      return secondActivity - firstActivity;
+    }
+
+    if (firstActivity !== null && secondActivity === null) {
+      return -1;
+    }
+
+    if (firstActivity === null && secondActivity !== null) {
+      return 1;
+    }
+
     if (isGeneralChatGroup(first) && !isGeneralChatGroup(second)) {
       return -1;
     }

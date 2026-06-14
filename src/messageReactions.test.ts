@@ -61,16 +61,18 @@ describe('message reaction helpers', () => {
       {
         content: '👍',
         count: 2,
+        earliestTimestamp: 20,
         latestTimestamp: 30,
         reactedBySelf: true,
         reactors: [
-          { sender: 'Qb', timestamp: 30 },
           { sender: 'Qa', timestamp: 20 },
+          { sender: 'Qb', timestamp: 30 },
         ],
       },
       {
         content: '❤️',
         count: 1,
+        earliestTimestamp: 40,
         latestTimestamp: 40,
         reactedBySelf: false,
         reactors: [{ sender: 'Qc', timestamp: 40 }],
@@ -94,10 +96,23 @@ describe('message reaction helpers', () => {
       {
         content: '👍',
         count: 1,
+        earliestTimestamp: 40,
         latestTimestamp: 40,
         reactedBySelf: true,
         reactors: [{ sender: 'Qa', timestamp: 40 }],
       },
     ]);
+  });
+
+  it('orders reaction chips by oldest active reaction instead of default emoji order', () => {
+    const index = buildMessageReactionIndex(
+      [
+        reaction({ content: '❤️', sender: 'Qa', timestamp: 20 }),
+        reaction({ content: '👍', sender: 'Qb', timestamp: 30 }),
+      ],
+      null,
+    );
+
+    expect(index.get('sig-a')?.map((summary) => summary.content)).toEqual(['❤️', '👍']);
   });
 });

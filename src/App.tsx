@@ -30,7 +30,13 @@ import {
   formatTimestamp,
   getSenderLabel,
 } from './chatText';
-import { buildMessageThreads, isThreadContinuation, sortMessagesByTimestamp, type MessageThread } from './messageThreads';
+import {
+  buildMessageThreads,
+  getLatestNonReactionMessageTimestamp,
+  isThreadContinuation,
+  sortMessagesByTimestamp,
+  type MessageThread,
+} from './messageThreads';
 import {
   buildMessageReactionIndex,
   getReactionPendingKey,
@@ -192,16 +198,22 @@ function getMemberLabel(member: GroupMember, t: TranslateFunction) {
   return member.primaryName || member.name || (address ? getShortAddress(address) : t('member.label'));
 }
 
-function getGroupListMeta(group: GroupData, joinedIds: Set<number>, t: TranslateFunction) {
-  if (isGeneralChatGroup(group)) {
-    return t('label.group.global');
-  }
+function SearchIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="m21 21-4.35-4.35" />
+      <circle cx="11" cy="11" r="7" />
+    </svg>
+  );
+}
 
-  return joinedIds.has(group.groupId)
-    ? t('label.group.joined')
-    : group.isOpen === false
-      ? t('label.group.closed')
-      : t('label.group.open');
+function LockIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <rect height="11" rx="2" width="14" x="5" y="10" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
 }
 
 function getMessageKey(message: ChatMessage, index = 0) {
@@ -220,6 +232,37 @@ function mergeMessages(currentMessages: ChatMessage[], nextMessages: ChatMessage
   }
 
   return sortMessagesByTimestamp([...messages.values()]).slice(-100);
+}
+
+function mergeActivityTimestamp<Key>(
+  current: ReadonlyMap<Key, number | null>,
+  key: Key,
+  messages: ChatMessage[],
+) {
+  const latestTimestamp = getLatestNonReactionMessageTimestamp(messages);
+  const currentTimestamp = current.get(key);
+
+  if (latestTimestamp === null) {
+    if (currentTimestamp === null) {
+      return current;
+    }
+
+    const next = new Map(current);
+
+    next.set(key, null);
+
+    return next;
+  }
+
+  if (currentTimestamp !== undefined && currentTimestamp !== null && currentTimestamp >= latestTimestamp) {
+    return current;
+  }
+
+  const next = new Map(current);
+
+  next.set(key, latestTimestamp);
+
+  return next;
 }
 
 function parseChatMessages(value: unknown) {
@@ -647,58 +690,117 @@ function AccountSummary({
 }
 
 function GroupList({
+  activityByGroupId,
   groups,
-  joinedIds,
   onSelect,
   selectedGroupId,
   t,
 }: {
+  activityByGroupId: ReadonlyMap<number, number>;
   groups: GroupData[];
-  joinedIds: Set<number>;
   onSelect: (group: GroupData) => void;
   selectedGroupId: number | null;
   t: TranslateFunction;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
   if (groups.length === 0) {
     return <p className="empty">{t('hint.noGroups')}</p>;
   }
 
   return (
     <div className="group-list">
-      {groups.map((group) => (
-        <button
-          className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}`}
-          key={group.groupId}
-          onClick={() => onSelect(group)}
-          type="button"
-        >
-          <span className="group-row__name">{getGroupTitle(group, t)}</span>
-          <span className="group-row__meta">
-            {getGroupListMeta(group, joinedIds, t)}
-            {!isGeneralChatGroup(group) && typeof group.memberCount === 'number'
-              ? ` / ${group.memberCount.toLocaleString()}`
-              : ''}
-          </span>
-        </button>
-      ))}
+      {groups.map((group) => {
+        const lastMessageTimestamp = activityByGroupId.get(group.groupId);
+
+        return (
+          <button
+            className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}`}
+            key={group.groupId}
+            onClick={() => onSelect(group)}
+            type="button"
+          >
+            <span className="group-row__top">
+              <span className="group-row__name">{getGroupTitle(group, t)}</span>
+              {lastMessageTimestamp ? (
+                <span className="group-row__time" title={formatTimestamp(lastMessageTimestamp)}>
+                  {formatTimeAgo(lastMessageTimestamp, now)}
+                </span>
+              ) : null}
+            </span>
+            <span className="group-row__footer">
+              <span className="group-row__id">{`id:${group.groupId}`}</span>
+              {!isGeneralChatGroup(group) && group.isOpen === false ? (
+                <span
+                  aria-label={t('label.group.closed')}
+                  className="group-row__lock"
+                  role="img"
+                  title={t('label.group.closed')}
+                >
+                  <LockIcon />
+                </span>
+              ) : null}
+              {!isGeneralChatGroup(group) && typeof group.memberCount === 'number' ? (
+                <span className="group-row__members">
+                  {t('group.meta.memberCount', { count: group.memberCount.toLocaleString() })}
+                </span>
+              ) : null}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
 
 function DirectList({
   activeChats,
+  activityByAddress,
   canOpen,
   onSelect,
   selectedAddress,
   t,
 }: {
   activeChats: ActiveChats;
+  activityByAddress: ReadonlyMap<string, number>;
   canOpen: boolean;
   onSelect: (direct: ActiveDirectChat) => void;
   selectedAddress: string | null;
   t: TranslateFunction;
 }) {
-  const directs = activeChats.direct ?? [];
+  const [now, setNow] = useState(() => Date.now());
+  const directs = useMemo(() => {
+    return [...(activeChats.direct ?? [])].sort((first, second) => {
+      const firstActivity = activityByAddress.get(first.address);
+      const secondActivity = activityByAddress.get(second.address);
+
+      if (firstActivity !== undefined && secondActivity !== undefined && firstActivity !== secondActivity) {
+        return secondActivity - firstActivity;
+      }
+
+      if (firstActivity !== undefined && secondActivity === undefined) {
+        return -1;
+      }
+
+      if (firstActivity === undefined && secondActivity !== undefined) {
+        return 1;
+      }
+
+      return getDirectTitle(first).localeCompare(getDirectTitle(second));
+    });
+  }, [activeChats.direct, activityByAddress]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   if (directs.length === 0) {
     return <p className="empty">{t('hint.noDirectChats')}</p>;
@@ -706,19 +808,27 @@ function DirectList({
 
   return (
     <div className="direct-list">
-      {directs.map((direct) => (
-        <button
-          className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}`}
-          disabled={!canOpen}
-          key={direct.address}
-          onClick={() => onSelect(direct)}
-          title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
-          type="button"
-        >
-          <span>{getDirectTitle(direct)}</span>
-          <small>{formatTimestamp(direct.timestamp)}</small>
-        </button>
-      ))}
+      {directs.map((direct) => {
+        const lastMessageTimestamp = activityByAddress.get(direct.address);
+
+        return (
+          <button
+            className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}`}
+            disabled={!canOpen}
+            key={direct.address}
+            onClick={() => onSelect(direct)}
+            title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
+            type="button"
+          >
+            <span>{getDirectTitle(direct)}</span>
+            {lastMessageTimestamp ? (
+              <small title={formatTimestamp(lastMessageTimestamp)}>
+                {formatTimeAgo(lastMessageTimestamp, now)}
+              </small>
+            ) : null}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1427,8 +1537,13 @@ export default function App() {
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
+  const [loadedGroupActivityById, setLoadedGroupActivityById] =
+    useState<ReadonlyMap<number, number | null>>(() => new Map());
+  const [loadedDirectActivityByAddress, setLoadedDirectActivityByAddress] =
+    useState<ReadonlyMap<string, number | null>>(() => new Map());
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [search, setSearch] = useState('');
+  const [isGroupSearchOpen, setGroupSearchOpen] = useState(false);
   const [draft, setDraft] = useState('');
   const [composeContext, setComposeContext] = useState<
     | { kind: 'edit'; thread: MessageThread }
@@ -1436,6 +1551,9 @@ export default function App() {
     | null
   >(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const groupSearchInputRef = useRef<HTMLInputElement>(null);
+  const loadedGroupActivityRef = useRef<ReadonlyMap<number, number | null>>(new Map());
+  const loadedDirectActivityRef = useRef<ReadonlyMap<string, number | null>>(new Map());
   const [directAddress, setDirectAddress] = useState('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
@@ -1456,11 +1574,50 @@ export default function App() {
     () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
     [memberGroups.value],
   );
-  const sortedGroups = useMemo(() => sortGroups(groups.value, t), [groups.value, t]);
   const selectedGroup = selectedChat?.kind === 'group' ? selectedChat.group : null;
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
   const selectedDirectAddress = selectedDirect?.address ?? null;
+  const groupActivityById = useMemo(() => {
+    const activity = new Map<number, number>();
+
+    for (const activeGroup of activeChats.value.groups ?? []) {
+      if (typeof activeGroup.timestamp === 'number') {
+        activity.set(activeGroup.groupId, activeGroup.timestamp);
+      }
+    }
+
+    for (const [groupId, timestamp] of loadedGroupActivityById) {
+      if (timestamp === null) {
+        activity.delete(groupId);
+      } else {
+        activity.set(groupId, timestamp);
+      }
+    }
+
+    return activity;
+  }, [activeChats.value.groups, loadedGroupActivityById]);
+  const directActivityByAddress = useMemo(() => {
+    const activity = new Map<string, number>();
+
+    for (const direct of activeChats.value.direct ?? []) {
+      if (typeof direct.timestamp === 'number') {
+        activity.set(direct.address, direct.timestamp);
+      }
+    }
+
+    for (const [address, timestamp] of loadedDirectActivityByAddress) {
+      if (timestamp === null) {
+        activity.delete(address);
+      } else {
+        activity.set(address, timestamp);
+      }
+    }
+
+    return activity;
+  }, [activeChats.value.direct, loadedDirectActivityByAddress]);
+  const sortedGroups = useMemo(() => sortGroups(groups.value, t, groupActivityById), [groupActivityById, groups.value, t]);
+  const isGroupSearchVisible = isGroupSearchOpen || search.trim().length > 0;
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
   const showGroupMembers = !!selectedGroup && !isSelectedGeneralChat;
   const pendingJoinGroupIds = useMemo(
@@ -1551,9 +1708,11 @@ export default function App() {
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canOpenMediaPlayer = hasAction(actions, 'OPEN_QDN_MEDIA_PLAYER');
+  const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
   const canSendDirectChat = canSendGroupChat;
   const isAccountUnlocked = account?.isUnlocked === true;
-  const canOpenDirectChat = !!account && isAccountUnlocked && (canReadPrivateDirectChat || canSendDirectChat);
+  const canUseSelectedAccount = !!account && (isAccountUnlocked || canRequestUnlock);
+  const canOpenDirectChat = canUseSelectedAccount && (canReadPrivateDirectChat || canSendDirectChat);
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
   const isRegularSelectedGroup = selectedChat?.kind === 'group' && !isSelectedGeneralChat;
   const isSelectedGroupMembershipConfirmed = !isRegularSelectedGroup || memberGroups.phase === 'ready';
@@ -1571,10 +1730,9 @@ export default function App() {
     !isConfirmedJoinedGroup &&
     !hasPendingJoinRequest &&
     !hasPendingJoinTransaction;
-  const canSubmitJoin = !!account && isAccountUnlocked && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
+  const canSubmitJoin = canUseSelectedAccount && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
   const canSubmitLeave =
-    !!account &&
-    isAccountUnlocked &&
+    canUseSelectedAccount &&
     !!selectedGroup &&
     selectedGroupId !== null &&
     selectedGroupId > 0 &&
@@ -1591,21 +1749,19 @@ export default function App() {
   );
   const canSubmitStartMinting =
     showMintingControls &&
-    isAccountUnlocked &&
+    canUseSelectedAccount &&
     canStartMinting &&
     accountMintingStatus?.keyOnNode === false &&
     !hasPendingRewardShareTransaction &&
     !startMintingPending;
   const canComposeMessage =
-    !!account &&
-    isAccountUnlocked &&
+    canUseSelectedAccount &&
     !!selectedChat &&
     (selectedChat.kind === 'group' ? canSendGroupChat && canPostInSelectedGroup : canSendDirectChat);
   const canSubmitMessage =
     canComposeMessage && draft.trim().length > 0 && !sendPending;
   const showGroupComposerNotice =
-    !!account &&
-    isAccountUnlocked &&
+    canUseSelectedAccount &&
     canSendGroupChat &&
     isRegularSelectedGroup &&
     !canPostInSelectedGroup;
@@ -1835,17 +1991,23 @@ export default function App() {
     void loadMintingStatus(selectedAccount, actionList);
   }
 
-  async function loadMessages(chat: SelectedChat | null, actionList = actions, options: { quiet?: boolean } = {}) {
+  async function loadMessages(
+    chat: SelectedChat | null,
+    actionList = actions,
+    options: { accountUnlocked?: boolean; quiet?: boolean } = {},
+  ) {
     if (!chat) {
       return;
     }
+
+    const canReadUnlockedMessages = options.accountUnlocked ?? isAccountUnlocked;
 
     if (!options.quiet) {
       setMessages({ phase: 'loading', value: messages.value });
     }
 
     try {
-      if (chat.kind === 'direct' && !isAccountUnlocked) {
+      if (chat.kind === 'direct' && !canReadUnlockedMessages) {
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
@@ -1855,7 +2017,7 @@ export default function App() {
         return;
       }
 
-      if (chat.kind === 'group' && chat.group.isOpen === false && !isAccountUnlocked) {
+      if (chat.kind === 'group' && chat.group.isOpen === false && !canReadUnlockedMessages) {
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
@@ -1874,6 +2036,12 @@ export default function App() {
           ? await getGroupMessages(chat.group, actionList)
           : await getDirectMessages(chat.direct.address, actionList);
 
+      if (chat.kind === 'group') {
+        setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+      } else {
+        setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, chat.direct.address, nextMessages));
+      }
+
       setMessages({ phase: 'ready', value: nextMessages });
     } catch (error) {
       setMessages({
@@ -1881,6 +2049,38 @@ export default function App() {
         phase: 'error',
         value: messages.value,
       });
+    }
+  }
+
+  async function ensureSelectedAccountUnlocked() {
+    if (!account) {
+      setWriteError(accountRequiredLabel);
+      return null;
+    }
+
+    if (account.isUnlocked) {
+      return account;
+    }
+
+    if (!canRequestUnlock) {
+      setWriteError(accountLockedLabel);
+      return null;
+    }
+
+    setWriteError('');
+
+    try {
+      const selectedAccount = normalizeSelectedAccount(
+        await qdnRequest<QdnSelectedAccount>({ action: 'UNLOCK_SELECTED_ACCOUNT' }),
+      );
+
+      setAccount(selectedAccount);
+      setAccountError('');
+
+      return selectedAccount.isUnlocked ? selectedAccount : null;
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
+      return null;
     }
   }
 
@@ -1893,6 +2093,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await joinGroup(selectedGroup.groupId);
 
       trackTransaction({
@@ -1902,9 +2108,7 @@ export default function App() {
         result,
       });
 
-      if (account) {
-        await loadAccountData(account);
-      }
+      await loadAccountData(selectedAccount);
       await loadGroupMembers(selectedGroup);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.join'), t));
@@ -1922,6 +2126,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await leaveGroup(selectedGroup.groupId);
 
       trackTransaction({
@@ -1931,9 +2141,7 @@ export default function App() {
         result,
       });
 
-      if (account) {
-        await loadAccountData(account);
-      }
+      await loadAccountData(selectedAccount);
       await loadGroupMembers(selectedGroup);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.leave'), t));
@@ -1951,6 +2159,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await startMinting();
 
       if (result.rewardSharePending) {
@@ -1962,7 +2176,7 @@ export default function App() {
         });
       }
 
-      await loadMintingStatus(account);
+      await loadMintingStatus(selectedAccount);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.startMinting'), t));
       void loadMintingStatus(account, actions, { quiet: true });
@@ -1972,7 +2186,7 @@ export default function App() {
   }
 
   async function handleApproveJoinRequest(request: GroupJoinRequest) {
-    if (!selectedGroup || !canApproveGroupJoinRequests || !isAccountUnlocked || approvePendingJoiner) {
+    if (!selectedGroup || !canApproveGroupJoinRequests || !canUseSelectedAccount || approvePendingJoiner) {
       return;
     }
 
@@ -1980,6 +2194,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await approveGroupJoinRequest(request.groupId, request.joiner);
 
       trackTransaction({
@@ -1990,9 +2210,7 @@ export default function App() {
         result,
       });
 
-      if (account) {
-        await loadAdminJoinRequests(account);
-      }
+      await loadAdminJoinRequests(selectedAccount);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.approveJoin'), t));
     } finally {
@@ -2085,6 +2303,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       if (chat.kind === 'group') {
         await sendChatMessage(chat.group.groupId, message, chatReference);
       } else {
@@ -2093,11 +2317,11 @@ export default function App() {
 
       setDraft('');
       setComposeContext(null);
-      if (chat.kind === 'direct' && account) {
-        await loadAccountData(account);
+      if (chat.kind === 'direct') {
+        await loadAccountData(selectedAccount);
       }
 
-      await loadMessages(chat, actions, { quiet: true });
+      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
     } finally {
@@ -2117,6 +2341,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const reactionMessage = buildReactionMessageText(reaction, contentState);
 
       if (chat.kind === 'group') {
@@ -2125,11 +2355,11 @@ export default function App() {
         await sendDirectChatMessage(chat.direct.address, reactionMessage, message.signature);
       }
 
-      if (chat.kind === 'direct' && account) {
-        await loadAccountData(account);
+      if (chat.kind === 'direct') {
+        await loadAccountData(selectedAccount);
       }
 
-      await loadMessages(chat, actions, { quiet: true });
+      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendReaction'), t));
     } finally {
@@ -2149,8 +2379,16 @@ export default function App() {
     setSelectedChat({ direct, kind: 'direct' });
   }
 
-  function openDirectFromAccount(address: string, name: string | null) {
+  function toggleGroupSearch() {
+    setGroupSearchOpen((current) => !current || search.trim().length > 0);
+  }
+
+  async function openDirectFromAccount(address: string, name: string | null) {
     if (!canOpenDirectChat) {
+      return;
+    }
+
+    if (!(await ensureSelectedAccountUnlocked())) {
       return;
     }
 
@@ -2158,12 +2396,16 @@ export default function App() {
     selectDirect({ address, name: name ?? undefined });
   }
 
-  function handleOpenDirectChat(event: SubmitEvent<HTMLFormElement>) {
+  async function handleOpenDirectChat(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const address = directAddress.trim();
 
     if (!address || !canOpenDirectChat) {
+      return;
+    }
+
+    if (!(await ensureSelectedAccountUnlocked())) {
       return;
     }
 
@@ -2233,6 +2475,97 @@ export default function App() {
   useEffect(() => {
     void initializeSession();
   }, []);
+
+  useEffect(() => {
+    if (isGroupSearchVisible) {
+      groupSearchInputRef.current?.focus();
+    }
+  }, [isGroupSearchVisible]);
+
+  useEffect(() => {
+    loadedGroupActivityRef.current = loadedGroupActivityById;
+  }, [loadedGroupActivityById]);
+
+  useEffect(() => {
+    loadedDirectActivityRef.current = loadedDirectActivityByAddress;
+  }, [loadedDirectActivityByAddress]);
+
+  useEffect(() => {
+    setLoadedDirectActivityByAddress(new Map());
+  }, [account?.address]);
+
+  useEffect(() => {
+    if (groups.value.length === 0) {
+      return undefined;
+    }
+
+    let isDisposed = false;
+    const readableGroups = groups.value.filter((group) => {
+      return group.isOpen !== false || (isAccountUnlocked && canReadPrivateGroupChat);
+    });
+
+    async function hydrateGroupActivity() {
+      for (const group of readableGroups) {
+        if (isDisposed || loadedGroupActivityRef.current.has(group.groupId)) {
+          continue;
+        }
+
+        try {
+          const nextMessages = await getGroupMessages(group, actions);
+
+          if (isDisposed) {
+            return;
+          }
+
+          setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, group.groupId, nextMessages));
+        } catch {
+          // Some closed groups cannot expose history in the current Home/Core context.
+        }
+      }
+    }
+
+    void hydrateGroupActivity();
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [actionsKey, canReadPrivateGroupChat, groups.value, isAccountUnlocked]);
+
+  useEffect(() => {
+    const directs = activeChats.value.direct ?? [];
+
+    if (!isAccountUnlocked || !canReadPrivateDirectChat || directs.length === 0) {
+      return undefined;
+    }
+
+    let isDisposed = false;
+
+    async function hydrateDirectActivity() {
+      for (const direct of directs) {
+        if (isDisposed || loadedDirectActivityRef.current.has(direct.address)) {
+          continue;
+        }
+
+        try {
+          const nextMessages = await getDirectMessages(direct.address, actions);
+
+          if (isDisposed) {
+            return;
+          }
+
+          setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, direct.address, nextMessages));
+        } catch {
+          // Direct history is optional in older Home/Core bridge contexts.
+        }
+      }
+    }
+
+    void hydrateDirectActivity();
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [actionsKey, activeChats.value.direct, canReadPrivateDirectChat, isAccountUnlocked]);
 
   useEffect(() => {
     applyDisplaySettings(displaySettings);
@@ -2380,6 +2713,8 @@ export default function App() {
         try {
           const nextMessages = parseChatMessages(event.data);
 
+          setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+
           if (!receivedInitialMessages) {
             receivedInitialMessages = true;
             setMessages({ phase: 'ready', value: sortMessagesByTimestamp(nextMessages) });
@@ -2498,7 +2833,7 @@ export default function App() {
             ? t('button.join.transaction.pending')
             : hasPendingJoinRequest
               ? t('button.join.request.pending')
-              : isAccountUnlocked && canJoinGroup
+              : canUseSelectedAccount && canJoinGroup
                 ? t('button.join')
                 : groupJoinUnavailableLabel
         }
@@ -2539,32 +2874,47 @@ export default function App() {
           <section className="panel">
             <div className="panel__header">
               <h2>{t('label.common.groups')}</h2>
-              <span>{groups.value.length}</span>
+              <div className="panel__header-actions">
+                <span className="panel__count">{groups.value.length}</span>
+                <button
+                  aria-expanded={isGroupSearchVisible}
+                  aria-label={t('label.searchGroups')}
+                  className="icon-button"
+                  onClick={toggleGroupSearch}
+                  title={t('label.searchGroups')}
+                  type="button"
+                >
+                  <SearchIcon />
+                </button>
+              </div>
             </div>
-            <form
-              className="search"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void loadGroups(search);
-              }}
-            >
-              <input
-                aria-label={t('label.searchGroups')}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t('placeholder.searchGroups')}
-                value={search}
-              />
-              <button className="button" type="submit">
-                {t('button.search')}
-              </button>
-            </form>
+            {isGroupSearchVisible ? (
+              <form
+                className="search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void loadGroups(search);
+                }}
+              >
+                <input
+                  aria-label={t('label.searchGroups')}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t('placeholder.searchGroups')}
+                  ref={groupSearchInputRef}
+                  value={search}
+                />
+                <button className="button" type="submit">
+                  {t('button.search')}
+                </button>
+              </form>
+            ) : null}
             {groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
             {groups.phase === 'loading' ? (
               <LoadingRows count={5} label={t('label.loading')} />
             ) : (
               <GroupList
+                activityByGroupId={groupActivityById}
                 groups={sortedGroups}
-                joinedIds={joinedIds}
                 onSelect={selectGroup}
                 selectedGroupId={selectedGroupId}
                 t={t}
@@ -2602,6 +2952,7 @@ export default function App() {
             ) : (
               <DirectList
                 activeChats={activeChats.value}
+                activityByAddress={directActivityByAddress}
                 canOpen={canOpenDirectChat}
                 onSelect={selectDirect}
                 selectedAddress={selectedDirectAddress}
@@ -2680,7 +3031,7 @@ export default function App() {
                   title={
                     hasPendingLeaveTransaction
                       ? t('button.leave.transaction.pending')
-                      : isAccountUnlocked && canLeaveGroup
+                      : canUseSelectedAccount && canLeaveGroup
                         ? t('button.leave')
                         : groupLeaveUnavailableLabel
                   }
@@ -2851,10 +3202,12 @@ export default function App() {
                     <span>{getShortAddress(request.joiner)}</span>
                     <button
                       className="button button--secondary"
-                      disabled={!isAccountUnlocked || !canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
+                      disabled={!canUseSelectedAccount || !canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
                       onClick={() => void handleApproveJoinRequest(request)}
                       title={
-                        !isAccountUnlocked
+                        !account
+                          ? accountRequiredLabel
+                          : !canUseSelectedAccount
                           ? accountLockedLabel
                           : canApproveGroupJoinRequests
                             ? t('action.approveJoinRequest')

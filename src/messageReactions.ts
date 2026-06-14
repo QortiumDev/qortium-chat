@@ -1,10 +1,11 @@
-import { DEFAULT_REACTION_OPTIONS, decodeChatMessage } from './chatText';
+import { decodeChatMessage } from './chatText';
 import { sortMessagesByTimestamp } from './messageThreads';
 import type { ChatMessage } from './types';
 
 export type MessageReactionSummary = {
   content: string;
   count: number;
+  earliestTimestamp: number;
   latestTimestamp: number;
   reactedBySelf: boolean;
   reactors: MessageReactionParticipant[];
@@ -14,10 +15,6 @@ export type MessageReactionParticipant = {
   sender: string;
   timestamp: number;
 };
-
-const DEFAULT_REACTION_ORDER = new Map<string, number>(
-  DEFAULT_REACTION_OPTIONS.map((reaction, index) => [reaction, index]),
-);
 
 export function getReactionPendingKey(messageSignature: string, reaction: string) {
   return `${messageSignature}\n${reaction}`;
@@ -67,7 +64,7 @@ export function buildMessageReactionIndex(messages: ChatMessage[], selfAddress: 
 
     for (const [content, senderMap] of reactionMap) {
       const senderReactions = Array.from(senderMap.values()).sort((first, second) => {
-        return second.timestamp - first.timestamp || first.sender.localeCompare(second.sender);
+        return first.timestamp - second.timestamp || first.sender.localeCompare(second.sender);
       });
 
       if (senderReactions.length === 0) {
@@ -77,6 +74,7 @@ export function buildMessageReactionIndex(messages: ChatMessage[], selfAddress: 
       reactions.push({
         content,
         count: senderReactions.length,
+        earliestTimestamp: Math.min(...senderReactions.map((reaction) => reaction.timestamp)),
         latestTimestamp: Math.max(...senderReactions.map((reaction) => reaction.timestamp)),
         reactedBySelf: selfAddress !== null && senderMap.has(selfAddress),
         reactors: senderReactions,
@@ -84,12 +82,8 @@ export function buildMessageReactionIndex(messages: ChatMessage[], selfAddress: 
     }
 
     reactions.sort((first, second) => {
-      const firstOrder = DEFAULT_REACTION_ORDER.get(first.content) ?? Number.MAX_SAFE_INTEGER;
-      const secondOrder = DEFAULT_REACTION_ORDER.get(second.content) ?? Number.MAX_SAFE_INTEGER;
-
       return (
-        firstOrder - secondOrder ||
-        second.latestTimestamp - first.latestTimestamp ||
+        first.earliestTimestamp - second.earliestTimestamp ||
         first.content.localeCompare(second.content)
       );
     });

@@ -34,6 +34,16 @@ export function sortMessagesByTimestamp(messages: ChatMessage[]) {
   return [...messages].sort((first, second) => first.timestamp - second.timestamp);
 }
 
+export function getLatestNonReactionMessageTimestamp(messages: ChatMessage[]) {
+  return messages.reduce<number | null>((latestTimestamp, message) => {
+    if (isReactionChatMessage(message)) {
+      return latestTimestamp;
+    }
+
+    return latestTimestamp === null ? message.timestamp : Math.max(latestTimestamp, message.timestamp);
+  }, null);
+}
+
 export function buildMessageThreads(messages: ChatMessage[]): MessageThread[] {
   const originalsBySignature = new Map<string, ChatMessage>();
   const revisionsByReference = new Map<string, ChatMessage[]>();

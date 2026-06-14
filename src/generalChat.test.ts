@@ -54,4 +54,18 @@ describe('General Chat group helpers', () => {
 
     expect(sorted.map((item) => item.groupId)).toEqual([GENERAL_CHAT_GROUP_ID, 9, 3]);
   });
+
+  it('sorts active groups by latest message time before falling back to names', () => {
+    const sorted = sortGroups(
+      [group(9, 'Alpha'), group(0, 'General Chat'), group(3, 'Beta'), group(4, 'Delta')],
+      t,
+      new Map([
+        [9, 100],
+        [3, 300],
+        [0, 200],
+      ]),
+    );
+
+    expect(sorted.map((item) => item.groupId)).toEqual([3, GENERAL_CHAT_GROUP_ID, 9, 4]);
+  });
 });
