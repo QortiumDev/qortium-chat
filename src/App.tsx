@@ -120,6 +120,12 @@ const DEV_GROUP_IDS = new Set(
     .filter((value) => Number.isInteger(value) && value > 0),
 );
 
+// The null account (the all-zero public key burn address). A group whose only
+// admin is this account has no real admins, so the Core treats every member as
+// an approver for group-approval transactions (e.g. Previewnet's "development"
+// group, which self-governs Core auto-updates).
+const NULL_ACCOUNT_ADDRESS = 'QdSnUy6sUiEnaN87dWmE92g1uQjrvPgrWG';
+
 type SelectedChat =
   | {
       group: GroupData;
@@ -2203,7 +2209,19 @@ export default function App() {
   const isAdminOfSelectedGroup =
     selectedGroupId !== null &&
     memberGroups.value.some((group) => group.groupId === selectedGroupId && group.isAdmin === true);
-  const showApprovalControls = isSelectedDevGroup && isAdminOfSelectedGroup && !!account;
+  const isMemberOfSelectedGroup =
+    selectedGroupId !== null && memberGroups.value.some((group) => group.groupId === selectedGroupId);
+  // When the selected group's only admin is the null account it has no real
+  // admins, so every member may approve. Detect that from the loaded member list
+  // and treat members as approvers, mirroring the Core's group-approval rules.
+  const selectedGroupMembersLoaded = groupMembers.phase === 'ready';
+  const selectedGroupHasRealAdmin = groupMembers.value.some(
+    (member) => member.isAdmin === true && (member.member ?? member.address) !== NULL_ACCOUNT_ADDRESS,
+  );
+  const isApproverOfSelectedGroup =
+    isAdminOfSelectedGroup ||
+    (selectedGroupMembersLoaded && !selectedGroupHasRealAdmin && isMemberOfSelectedGroup);
+  const showApprovalControls = isSelectedDevGroup && isApproverOfSelectedGroup && !!account;
   const pendingApprovalCount = pendingApprovals.value.length;
   const canSubmitGroupApproval =
     showApprovalControls && canUseSelectedAccount && canGroupApproval && approvalActionSignature === null;
@@ -3014,7 +3032,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!account || selectedGroupId === null || !isSelectedDevGroup || !isAdminOfSelectedGroup) {
+    if (!account || selectedGroupId === null || !isSelectedDevGroup || !isApproverOfSelectedGroup) {
       pendingApprovalsRequestRef.current += 1;
       setPendingApprovals(createState(emptyPendingApprovals));
       setApprovalModalOpen(false);
@@ -3022,7 +3040,7 @@ export default function App() {
     }
 
     void loadPendingApprovals(selectedGroupId);
-  }, [account?.address, selectedGroupId, isSelectedDevGroup, isAdminOfSelectedGroup]);
+  }, [account?.address, selectedGroupId, isSelectedDevGroup, isApproverOfSelectedGroup]);
 
   useEffect(() => {
     if (isGroupSearchVisible) {
@@ -3372,7 +3390,7 @@ export default function App() {
   }, [selectedGroupId, actionsKey]);
 
   useEffect(() => {
-    if (!account || selectedGroupId === null || !isSelectedDevGroup || !isAdminOfSelectedGroup) {
+    if (!account || selectedGroupId === null || !isSelectedDevGroup || !isApproverOfSelectedGroup) {
       return undefined;
     }
 
@@ -3381,7 +3399,7 @@ export default function App() {
     }, 30000);
 
     return () => window.clearInterval(interval);
-  }, [account?.address, selectedGroupId, isSelectedDevGroup, isAdminOfSelectedGroup]);
+  }, [account?.address, selectedGroupId, isSelectedDevGroup, isApproverOfSelectedGroup]);
 
   function renderJoinGroupButton() {
     if (!(
