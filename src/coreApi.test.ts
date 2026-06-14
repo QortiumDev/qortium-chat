@@ -23,11 +23,14 @@ import {
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
+  getMissingPrivateGroupKeyRequests,
   getMintingStatus,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
   leaveGroup,
+  requestPrivateGroupChatKey,
+  resolvePrivateGroupChatKeyRequests,
   searchGroups,
   sendChatMessage,
   sendDirectChatMessage,
@@ -296,6 +299,74 @@ describe('Core API path builders', () => {
   it('rejects direct private reads when direct bridge support is absent', async () => {
     await expect(getDirectMessages('Qpeer', ['FETCH_NODE_API'])).rejects.toThrow(
       'Direct private chat reads require Qortium Home direct chat support.',
+    );
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('collects unique missing private group key requests from messages', () => {
+    expect(
+      getMissingPrivateGroupKeyRequests(
+        [
+          { epochId: 'epoch-a', keyId: 'key-a', sender: 'Qa', status: 'MISSING_KEY', timestamp: 10, txGroupId: 8 },
+          { epochId: 'epoch-a', keyId: 'key-a', sender: 'Qb', status: 'MISSING_KEY', timestamp: 20, txGroupId: 8 },
+          { epochId: 'epoch-b', keyId: 'key-b', sender: 'Qc', status: 'MISSING_KEY', timestamp: 30, txGroupId: 9 },
+          { epochId: 'epoch-c', keyId: 'key-c', sender: 'Qd', status: 'DECRYPTED', timestamp: 40, txGroupId: 8 },
+        ],
+        8,
+      ),
+    ).toEqual([{ epochId: 'epoch-a', groupId: 8, keyId: 'key-a' }]);
+  });
+
+  it('routes private group key recovery through Home bridge actions', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({
+        accepted: true,
+        action: 'REQUEST_PRIVATE_GROUP_CHAT_KEY',
+        groupId: 8,
+        result: { requestSignature: 'request-sig' },
+      })
+      .mockResolvedValueOnce({
+        accepted: true,
+        action: 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS',
+        groupId: 8,
+        result: [{ status: 'RELAYED' }],
+      });
+
+    await expect(
+      requestPrivateGroupChatKey(
+        { epochId: 'epoch-a', groupId: 8, keyId: 'key-a' },
+        ['REQUEST_PRIVATE_GROUP_CHAT_KEY'],
+      ),
+    ).resolves.toMatchObject({
+      accepted: true,
+      action: 'REQUEST_PRIVATE_GROUP_CHAT_KEY',
+      groupId: 8,
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'REQUEST_PRIVATE_GROUP_CHAT_KEY',
+      epochId: 'epoch-a',
+      groupId: 8,
+      keyId: 'key-a',
+    });
+
+    await expect(resolvePrivateGroupChatKeyRequests(8, ['RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS'])).resolves.toMatchObject({
+      accepted: true,
+      action: 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS',
+      groupId: 8,
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS',
+      groupId: 8,
+      limit: 20,
+    });
+  });
+
+  it('fails closed when private group key recovery bridge actions are unavailable', async () => {
+    await expect(requestPrivateGroupChatKey({ groupId: 8 }, [])).rejects.toThrow(
+      'Private group chat key requests require Qortium Home key recovery support.',
+    );
+    await expect(resolvePrivateGroupChatKeyRequests(8, [])).rejects.toThrow(
+      'Private group chat key request resolution requires Qortium Home key recovery support.',
     );
     expect(qdnRequestMock).not.toHaveBeenCalled();
   });

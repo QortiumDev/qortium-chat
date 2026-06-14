@@ -136,6 +136,10 @@ function hasReadableEncryptedPayload(message: DecodableChatMessage) {
   return message.decryptionStatus === 'DECRYPTED' || message.status === 'DECRYPTED';
 }
 
+function hasMissingPrivateGroupKey(message: DecodableChatMessage) {
+  return message.status === 'MISSING_KEY';
+}
+
 export function isReactionChatMessage(message: DecodableChatMessage) {
   return decodeChatMessage(message).kind === 'reaction';
 }
@@ -144,6 +148,14 @@ export function decodeChatMessage(
   message: DecodableChatMessage,
   t?: TranslateFunction,
 ): DisplayChatMessage {
+  if (message.isEncrypted && hasMissingPrivateGroupKey(message)) {
+    return {
+      body: localizeMessage(t, 'message.privateGroupKeyMissing', 'Private group key missing'),
+      kind: 'encrypted',
+      repliedTo: null,
+    };
+  }
+
   if (message.isEncrypted && (!hasReadableEncryptedPayload(message) || !message.data)) {
     return {
       body: localizeMessage(t, 'message.encrypted', 'Encrypted message'),
