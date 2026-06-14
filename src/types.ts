@@ -94,6 +94,7 @@ export type GroupMember = {
   joined?: number;
   member?: string;
   name?: string | null;
+  names?: unknown;
   online?: boolean;
   primaryName?: string | null;
 };
