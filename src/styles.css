@@ -41,6 +41,8 @@
   --qc-line-tight: 1.2;
   --qc-line-ui: 1.45;
   --qc-line-small: 1.35;
+  --qc-scrollbar-size: clamp(10px, calc(10px * var(--qc-text-scale)), 22px);
+  --qc-scrollbar-thumb-inset: clamp(3px, calc(3px * var(--qc-text-scale)), 6px);
   --qc-radius-sm: 6px;
   --qc-radius-md: 8px;
   --qc-radius-pill: 999px;
@@ -405,6 +407,8 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--qc-color-scrollbar-thumb) transparent;
+  scrollbar-width: auto;
 }
 
 html {
@@ -446,8 +450,8 @@ samp,
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: var(--qc-scrollbar-size);
+  height: var(--qc-scrollbar-size);
 }
 
 ::-webkit-scrollbar-track,
@@ -458,7 +462,7 @@ samp,
 ::-webkit-scrollbar-thumb {
   background-color: var(--qc-color-scrollbar-thumb);
   background-clip: content-box;
-  border: 3px solid transparent;
+  border: var(--qc-scrollbar-thumb-inset) solid transparent;
   border-radius: var(--qc-radius-pill);
 }
 
