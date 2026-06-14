@@ -49,7 +49,7 @@ import {
 } from './messageReactions';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import {
-  fetchQdnImagePreview,
+  fetchQdnImagePreviews,
   getImageQdnResources,
   getMediaQdnResources,
   openQdnMediaPlayer,
@@ -1060,7 +1060,7 @@ type ImagePreviewState =
     }
   | {
       phase: 'ready';
-      preview: QdnImagePreview;
+      previews: QdnImagePreview[];
     }
   | {
       message: string;
@@ -1075,10 +1075,10 @@ function MessageImagePreview({ resource, t }: { resource: QdnImageResource; t: T
 
     setState({ phase: 'loading' });
 
-    void fetchQdnImagePreview(resource)
-      .then((preview) => {
+    void fetchQdnImagePreviews(resource)
+      .then((previews) => {
         if (!isDisposed) {
-          setState({ phase: 'ready', preview });
+          setState({ phase: 'ready', previews });
         }
       })
       .catch((error) => {
@@ -1112,10 +1112,14 @@ function MessageImagePreview({ resource, t }: { resource: QdnImageResource; t: T
   }
 
   return (
-    <figure className="message__image-preview">
-      <img alt={state.preview.alt} src={state.preview.src} />
-      <figcaption>{state.preview.alt}</figcaption>
-    </figure>
+    <>
+      {state.previews.map((preview) => (
+        <figure className="message__image-preview" key={preview.qdnUrl}>
+          <img alt={preview.alt} src={preview.src} />
+          <figcaption>{preview.alt}</figcaption>
+        </figure>
+      ))}
+    </>
   );
 }
 

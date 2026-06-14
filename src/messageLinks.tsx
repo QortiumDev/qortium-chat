@@ -9,7 +9,7 @@ const CLOSING_PAIRS: Record<string, string> = {
   ']': '[',
   '}': '{',
 };
-const IMAGE_QDN_SERVICES = new Set<QdnImageService>(['IMAGE', 'THUMBNAIL', 'QCHAT_IMAGE']);
+const IMAGE_QDN_SERVICES = new Set<QdnImageService>(['GIF_REPOSITORY', 'IMAGE', 'THUMBNAIL', 'QCHAT_IMAGE']);
 const MEDIA_QDN_SERVICES = new Set<QdnMediaService>(['AUDIO', 'PODCAST', 'VIDEO', 'VOICE']);
 
 export type MessageTextPart =
@@ -23,7 +23,7 @@ export type MessageTextPart =
       text: string;
     };
 
-type QdnImageService = 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
+type QdnImageService = 'GIF_REPOSITORY' | 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
 type QdnMediaService = 'AUDIO' | 'PODCAST' | 'VIDEO' | 'VOICE';
 
 type QdnResourceBase<Service extends string> = {
@@ -41,6 +41,10 @@ type QdnResourceProperties = {
   filename?: string;
   mimeType?: string;
   size?: number;
+};
+
+type QdnResourceMetadata = {
+  files?: string[];
 };
 
 export type QdnImagePreview = {
@@ -283,6 +287,85 @@ function normalizeProperties(value: unknown): QdnResourceProperties {
   };
 }
 
+function normalizeMetadata(value: unknown): QdnResourceMetadata {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const files = value.files;
+
+  return {
+    files: Array.isArray(files) ? files.filter((file): file is string => typeof file === 'string') : undefined,
+  };
+}
+
+function isGifFilename(value: string) {
+  return /\.gif$/i.test(value.split('?')[0] ?? '');
+}
+
+function isGifRepositoryFile(value: string) {
+  const normalized = value.trim();
+
+  return (
+    !!normalized &&
+    !normalized.includes('\\') &&
+    !normalized.split('/').some((segment) => !segment) &&
+    isGifFilename(normalized)
+  );
+}
+
+function getSortedGifRepositoryFiles(metadata: QdnResourceMetadata) {
+  return (metadata.files ?? [])
+    .filter(isGifRepositoryFile)
+    .slice()
+    .sort((first, second) => first.localeCompare(second, undefined, { sensitivity: 'base' }));
+}
+
+function buildQdnImageResourceUrl(resource: QdnImageResource) {
+  return `qdn://${resource.service}/${encodeURIComponent(resource.name)}/${encodeURIComponent(
+    resource.identifier ?? 'default',
+  )}${resource.path ? `/${resource.path}` : ''}`;
+}
+
+function getQdnImageResourceWithPath(resource: QdnImageResource, path: string): QdnImageResource {
+  const nextResource = {
+    ...resource,
+    path,
+  };
+
+  return {
+    ...nextResource,
+    qdnUrl: buildQdnImageResourceUrl(nextResource),
+  };
+}
+
+async function fetchQdnResourceMetadata(resource: QdnImageResource) {
+  return normalizeMetadata(
+    await qdnRequest<unknown>({
+      action: 'GET_QDN_RESOURCE_METADATA',
+      ...getResourceRequest(resource),
+    }),
+  );
+}
+
+async function getGifRepositoryPreviewResources(resource: QdnImageResource) {
+  if (resource.service !== 'GIF_REPOSITORY' || resource.path) {
+    return [resource];
+  }
+
+  let metadata: QdnResourceMetadata;
+
+  try {
+    metadata = await fetchQdnResourceMetadata(resource);
+  } catch {
+    return [resource];
+  }
+
+  const files = getSortedGifRepositoryFiles(metadata);
+
+  return files.length > 0 ? files.map((file) => getQdnImageResourceWithPath(resource, file)) : [resource];
+}
+
 function getImageMimeType(properties: QdnResourceProperties, base64: string) {
   if (properties.mimeType?.toLowerCase().startsWith('image/')) {
     return properties.mimeType;
@@ -350,6 +433,12 @@ export async function fetchQdnImagePreview(resource: QdnImageResource): Promise<
     qdnUrl: resource.qdnUrl,
     src: `data:${mimeType};base64,${base64}`,
   };
+}
+
+export async function fetchQdnImagePreviews(resource: QdnImageResource): Promise<QdnImagePreview[]> {
+  const previewResources = await getGifRepositoryPreviewResources(resource);
+
+  return Promise.all(previewResources.map(fetchQdnImagePreview));
 }
 
 export function renderMessageTextWithAppLinks(text: string): ReactNode {
