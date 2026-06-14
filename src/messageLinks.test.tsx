@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchQdnImagePreview,
+  fetchQdnImagePreviews,
   getImageQdnResources,
   getMediaQdnResources,
   getMessageTextParts,
@@ -98,6 +99,36 @@ describe('message link helpers', () => {
     ]);
   });
 
+  it('extracts gif repository qdn resources from single-file, repository, and file links', () => {
+    expect(
+      getImageQdnResources(
+        'Open qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif, qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo, and qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif.',
+      ),
+    ).toEqual([
+      {
+        identifier: 'Qortium-gif',
+        name: '7R15M3G157U5',
+        path: '',
+        qdnUrl: 'qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif',
+        service: 'GIF_REPOSITORY',
+      },
+      {
+        identifier: 'home-gif-demo',
+        name: 'QortiumHomeTest',
+        path: '',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo',
+        service: 'GIF_REPOSITORY',
+      },
+      {
+        identifier: 'home-gif-demo',
+        name: 'QortiumHomeTest',
+        path: 'orbit-demo.gif',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif',
+        service: 'GIF_REPOSITORY',
+      },
+    ]);
+  });
+
   it('extracts playable media qdn resources from message text', () => {
     expect(
       getMediaQdnResources(
@@ -178,6 +209,130 @@ describe('message link helpers', () => {
       rebuild: true,
       maxBytes: 5 * 1024 * 1024,
     });
+  });
+
+  it('fetches each gif file from a pathless gif repository resource', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({
+        files: [
+          'signal-bars-demo.gif',
+          'notes.txt',
+          'nested/orbit-demo.gif',
+          'bad//path.gif',
+          'other.GIF',
+        ],
+      })
+      .mockResolvedValueOnce({ filename: 'nested/orbit-demo.gif', mimeType: 'image/gif', size: 128 })
+      .mockResolvedValueOnce({ filename: 'other.GIF', mimeType: 'image/gif', size: 256 })
+      .mockResolvedValueOnce({ filename: 'signal-bars-demo.gif', mimeType: 'image/gif', size: 512 })
+      .mockResolvedValueOnce('R0lGODlhAA==')
+      .mockResolvedValueOnce('R0lGODlhBB==')
+      .mockResolvedValueOnce('R0lGODlhCC==');
+
+    await expect(
+      fetchQdnImagePreviews({
+        identifier: 'home-gif-demo',
+        name: 'QortiumHomeTest',
+        path: '',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo',
+        service: 'GIF_REPOSITORY',
+      }),
+    ).resolves.toEqual([
+      {
+        alt: 'nested/orbit-demo.gif',
+        mimeType: 'image/gif',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/nested/orbit-demo.gif',
+        src: 'data:image/gif;base64,R0lGODlhAA==',
+      },
+      {
+        alt: 'other.GIF',
+        mimeType: 'image/gif',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/other.GIF',
+        src: 'data:image/gif;base64,R0lGODlhBB==',
+      },
+      {
+        alt: 'signal-bars-demo.gif',
+        mimeType: 'image/gif',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/signal-bars-demo.gif',
+        src: 'data:image/gif;base64,R0lGODlhCC==',
+      },
+    ]);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'GET_QDN_RESOURCE_METADATA',
+      service: 'GIF_REPOSITORY',
+      name: 'QortiumHomeTest',
+      identifier: 'home-gif-demo',
+      path: '',
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'GET_QDN_RESOURCE_PROPERTIES',
+      service: 'GIF_REPOSITORY',
+      name: 'QortiumHomeTest',
+      identifier: 'home-gif-demo',
+      path: 'nested/orbit-demo.gif',
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(5, {
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'GIF_REPOSITORY',
+      name: 'QortiumHomeTest',
+      identifier: 'home-gif-demo',
+      path: 'nested/orbit-demo.gif',
+      encoding: 'base64',
+      rebuild: true,
+      maxBytes: 5 * 1024 * 1024,
+    });
+  });
+
+  it('fetches a pathless gif repository as one preview when metadata has no gif files', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ files: ['notes.txt'] })
+      .mockResolvedValueOnce({ filename: 'Qortium-gif.gif', size: 128 })
+      .mockResolvedValueOnce('R0lGODlhAA==');
+
+    await expect(
+      fetchQdnImagePreviews({
+        identifier: 'Qortium-gif',
+        name: '7R15M3G157U5',
+        path: '',
+        qdnUrl: 'qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif',
+        service: 'GIF_REPOSITORY',
+      }),
+    ).resolves.toEqual([
+      {
+        alt: 'Qortium-gif.gif',
+        mimeType: 'image/gif',
+        qdnUrl: 'qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif',
+        src: 'data:image/gif;base64,R0lGODlhAA==',
+      },
+    ]);
+  });
+
+  it('fetches linked gif repository file resources without metadata expansion', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ filename: 'orbit-demo.gif', mimeType: 'image/gif', size: 128 })
+      .mockResolvedValueOnce('R0lGODlhAA==');
+
+    await expect(
+      fetchQdnImagePreviews({
+        identifier: 'home-gif-demo',
+        name: 'QortiumHomeTest',
+        path: 'orbit-demo.gif',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif',
+        service: 'GIF_REPOSITORY',
+      }),
+    ).resolves.toEqual([
+      {
+        alt: 'orbit-demo.gif',
+        mimeType: 'image/gif',
+        qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif',
+        src: 'data:image/gif;base64,R0lGODlhAA==',
+      },
+    ]);
+    expect(qdnRequestMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'GET_QDN_RESOURCE_METADATA',
+      }),
+    );
   });
 
   it('rejects image previews over the bridge preview limit before fetching bytes', async () => {
