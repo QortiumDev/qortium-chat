@@ -56,6 +56,7 @@ import {
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
 import { getGroupTitle, isGeneralChatGroup, sortGroups, withGeneralChatGroup } from './generalChat';
+import { copyTextToClipboard } from './clipboard';
 import {
   getAvatarFallbackCharacter,
   loadAvatarProfile,
@@ -452,16 +453,12 @@ function AccountInfoDialog({
   }, [onClose]);
 
   async function copyAddress() {
-    try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error('Clipboard unavailable.');
-      }
-
-      await navigator.clipboard.writeText(target.sender);
+    if (await copyTextToClipboard(target.sender)) {
       setCopyStatus('copied');
-    } catch {
-      setCopyStatus('error');
+      return;
     }
+
+    setCopyStatus('error');
   }
 
   return (
