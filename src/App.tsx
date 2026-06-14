@@ -1,4 +1,5 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type SubmitEvent, useEffect, useMemo, useRef, useState } from 'react';
+import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
@@ -20,10 +21,47 @@ import {
   sendDirectChatMessage,
   startMinting,
 } from './coreApi';
-import { decodeChatMessage, formatTimestamp, getSenderLabel } from './chatText';
+import {
+  DEFAULT_REACTION_OPTIONS,
+  buildChatMessageText,
+  buildReactionMessageText,
+  decodeChatMessage,
+  formatTimeAgo,
+  formatTimestamp,
+  getSenderLabel,
+} from './chatText';
+import {
+  buildMessageThreads,
+  getLatestNonReactionMessageTimestamp,
+  isThreadContinuation,
+  sortMessagesByTimestamp,
+  type MessageThread,
+} from './messageThreads';
+import {
+  buildMessageReactionIndex,
+  getReactionPendingKey,
+  type MessageReactionSummary,
+} from './messageReactions';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
+import {
+  fetchQdnImagePreview,
+  getImageQdnResources,
+  getMediaQdnResources,
+  openQdnMediaPlayer,
+  renderMessageTextWithAppLinks,
+  type QdnImagePreview,
+  type QdnImageResource,
+  type QdnMediaResource,
+} from './messageLinks';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
+import { getGroupTitle, isGeneralChatGroup, sortGroups, withGeneralChatGroup } from './generalChat';
+import {
+  getAvatarFallbackCharacter,
+  loadAvatarProfile,
+  normalizeRegisteredName,
+  type AvatarProfile,
+} from './avatarProfiles';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -34,6 +72,7 @@ import type {
   GroupWithJoinRequests,
   GroupMember,
   MintingStatus,
+  QdnAction,
   QdnSelectedAccount,
 } from './types';
 
@@ -141,10 +180,6 @@ function LoadingRows({ count = 3, label }: { count?: number; label: string }) {
   );
 }
 
-function getGroupTitle(group: GroupData, t: TranslateFunction) {
-  return group.groupName || t('title.groupTitle', { groupId: group.groupId });
-}
-
 function getShortAddress(address: string) {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }
@@ -163,17 +198,22 @@ function getMemberLabel(member: GroupMember, t: TranslateFunction) {
   return member.primaryName || member.name || (address ? getShortAddress(address) : t('member.label'));
 }
 
-function sortGroups(groups: GroupData[], t: TranslateFunction) {
-  return [...groups].sort((first, second) => {
-    const firstName = getGroupTitle(first, t).toLocaleLowerCase();
-    const secondName = getGroupTitle(second, t).toLocaleLowerCase();
-
-    return firstName.localeCompare(secondName);
-  });
+function SearchIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="m21 21-4.35-4.35" />
+      <circle cx="11" cy="11" r="7" />
+    </svg>
+  );
 }
 
-function sortMessages(messages: ChatMessage[]) {
-  return [...messages].sort((first, second) => first.timestamp - second.timestamp);
+function LockIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <rect height="11" rx="2" width="14" x="5" y="10" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
 }
 
 function getMessageKey(message: ChatMessage, index = 0) {
@@ -191,7 +231,38 @@ function mergeMessages(currentMessages: ChatMessage[], nextMessages: ChatMessage
     messages.set(getMessageKey(message, index), message);
   }
 
-  return sortMessages([...messages.values()]).slice(-100);
+  return sortMessagesByTimestamp([...messages.values()]).slice(-100);
+}
+
+function mergeActivityTimestamp<Key>(
+  current: ReadonlyMap<Key, number | null>,
+  key: Key,
+  messages: ChatMessage[],
+) {
+  const latestTimestamp = getLatestNonReactionMessageTimestamp(messages);
+  const currentTimestamp = current.get(key);
+
+  if (latestTimestamp === null) {
+    if (currentTimestamp === null) {
+      return current;
+    }
+
+    const next = new Map(current);
+
+    next.set(key, null);
+
+    return next;
+  }
+
+  if (currentTimestamp !== undefined && currentTimestamp !== null && currentTimestamp >= latestTimestamp) {
+    return current;
+  }
+
+  const next = new Map(current);
+
+  next.set(key, latestTimestamp);
+
+  return next;
 }
 
 function parseChatMessages(value: unknown) {
@@ -224,39 +295,383 @@ function normalizeSelectedAccount(account: QdnSelectedAccount): QdnSelectedAccou
   };
 }
 
+type CachedAvatarProfile = AvatarProfile & {
+  requestKey: string;
+};
+
+type AvatarProfilesByAddress = Record<string, CachedAvatarProfile | undefined>;
+
+type AvatarLightboxImage = {
+  name: string | null;
+  src: string;
+};
+
+type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
+
+function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
+  const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
+  const avatarSrc = profile?.name === name ? profile.avatarSrc : null;
+
+  return { avatarSrc, name };
+}
+
+function getMessageSenderName(message: Pick<ChatMessage, 'senderName'>, profile: AvatarProfile | undefined) {
+  return normalizeRegisteredName(message.senderName) ?? profile?.name ?? null;
+}
+
+function getMessageSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName'>, profile: AvatarProfile | undefined) {
+  return getMessageSenderName(message, profile) ?? getSenderLabel(message);
+}
+
+function getReactionDetailsDomId(messageSignature: string, reaction: string) {
+  const signaturePart = messageSignature.replace(/[^A-Za-z0-9_-]/g, '-');
+  const reactionPart = Array.from(reaction)
+    .map((character) => character.codePointAt(0)?.toString(16) ?? '0')
+    .join('-') || 'reaction';
+
+  return `reaction-details-${signaturePart}-${reactionPart}`;
+}
+
+function UserAvatar({
+  className,
+  name,
+  onOpen,
+  openLabel,
+  src,
+}: {
+  className: string;
+  name: string | null;
+  onOpen?: (image: AvatarLightboxImage) => void;
+  openLabel?: string;
+  src: string | null;
+}) {
+  const avatarClassName = `${className} user-avatar`;
+
+  if (src) {
+    if (onOpen) {
+      return (
+        <button
+          aria-label={openLabel}
+          className={`${avatarClassName} user-avatar--button`}
+          onClick={() => onOpen({ name, src })}
+          title={openLabel}
+          type="button"
+        >
+          <img alt="" className="user-avatar__image" src={src} />
+        </button>
+      );
+    }
+
+    return <img alt="" className={avatarClassName} src={src} />;
+  }
+
+  return (
+    <span aria-hidden="true" className={`${avatarClassName} user-avatar--fallback`}>
+      {getAvatarFallbackCharacter(name)}
+    </span>
+  );
+}
+
+function MessageIdentity({
+  message,
+  onOpenAccount,
+  onOpenAvatar,
+  openAvatarLabel,
+  profile,
+  t,
+}: {
+  message: ChatMessage;
+  onOpenAccount: (target: AccountInfoTarget) => void;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
+  openAvatarLabel: string;
+  profile: AvatarProfile | undefined;
+  t: TranslateFunction;
+}) {
+  const { avatarSrc, name } = getAvatarView(profile, message.senderName);
+  const label = getMessageSenderLabel(message, profile);
+
+  return (
+    <span className="message__identity" title={message.sender}>
+      <UserAvatar
+        className="message__avatar"
+        name={name}
+        onOpen={onOpenAvatar}
+        openLabel={openAvatarLabel}
+        src={avatarSrc}
+      />
+      <button
+        aria-label={t('action.openAccountInfo', { account: label })}
+        className="message__sender-button"
+        onClick={() => onOpenAccount({ sender: message.sender, senderName: message.senderName ?? null })}
+        title={message.sender}
+        type="button"
+      >
+        <strong>{label}</strong>
+      </button>
+    </span>
+  );
+}
+
+function AccountInfoDialog({
+  canOpenDirect,
+  directUnavailableLabel,
+  onClose,
+  onOpenAvatar,
+  onOpenDirect,
+  profile,
+  target,
+  t,
+}: {
+  canOpenDirect: boolean;
+  directUnavailableLabel: string;
+  onClose: () => void;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
+  onOpenDirect: (address: string, name: string | null) => void;
+  profile: AvatarProfile | undefined;
+  target: AccountInfoTarget;
+  t: TranslateFunction;
+}) {
+  const [copyStatus, setCopyStatus] = useState<'copied' | 'error' | 'idle'>('idle');
+  const { avatarSrc, name } = getAvatarView(profile, target.senderName);
+  const label = getMessageSenderLabel(target, profile);
+
+  useEffect(() => {
+    setCopyStatus('idle');
+  }, [target.sender]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  async function copyAddress() {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard unavailable.');
+      }
+
+      await navigator.clipboard.writeText(target.sender);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('error');
+    }
+  }
+
+  return (
+    <div
+      aria-label={t('aria.accountInfo')}
+      aria-modal="true"
+      className="account-dialog"
+      onClick={onClose}
+      role="dialog"
+    >
+      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()}>
+        <header className="account-dialog__header">
+          <UserAvatar
+            className="account-dialog__avatar"
+            name={name}
+            src={avatarSrc}
+          />
+          <div className="account-dialog__heading">
+            <span>{t('title.accountInfo')}</span>
+            <h2>{label}</h2>
+          </div>
+          <button
+            aria-label={t('button.close')}
+            className="account-dialog__close"
+            onClick={onClose}
+            title={t('button.close')}
+            type="button"
+          >
+            X
+          </button>
+        </header>
+
+        <dl className="account-dialog__details">
+          <div>
+            <dt>{t('label.account.registeredName')}</dt>
+            <dd>{name ?? t('label.account.noRegisteredName')}</dd>
+          </div>
+          <div>
+            <dt>{t('label.account.address')}</dt>
+            <dd className="account-dialog__address">{target.sender}</dd>
+          </div>
+        </dl>
+
+        <div className="account-dialog__actions">
+          <button className="button button--secondary" onClick={() => void copyAddress()} type="button">
+            {copyStatus === 'copied' ? t('button.copied') : t('button.copyAddress')}
+          </button>
+          <button
+            className="button"
+            disabled={!canOpenDirect}
+            onClick={() => onOpenDirect(target.sender, name)}
+            title={canOpenDirect ? t('action.directTooltip') : directUnavailableLabel}
+            type="button"
+          >
+            {t('button.openDirectChat')}
+          </button>
+          {avatarSrc ? (
+            <button
+              className="button button--secondary"
+              onClick={() => onOpenAvatar({ name, src: avatarSrc })}
+              type="button"
+            >
+              {t('button.viewAvatar')}
+            </button>
+          ) : null}
+        </div>
+        {copyStatus === 'error' ? <p className="error">{t('status.copyAddress.failed')}</p> : null}
+      </section>
+    </div>
+  );
+}
+
+function AvatarLightbox({
+  image,
+  onClose,
+  t,
+}: {
+  image: AvatarLightboxImage;
+  onClose: () => void;
+  t: TranslateFunction;
+}) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      aria-label={t('aria.avatarLightbox')}
+      aria-modal="true"
+      className="avatar-lightbox"
+      onClick={onClose}
+      role="dialog"
+    >
+      <button
+        aria-label={t('button.close')}
+        className="avatar-lightbox__close"
+        onClick={onClose}
+        title={t('button.close')}
+        type="button"
+      >
+        X
+      </button>
+      <figure className="avatar-lightbox__stage" onClick={(event) => event.stopPropagation()}>
+        <img alt={image.name ? t('label.avatarImageForName', { name: image.name }) : t('label.avatarImage')} src={image.src} />
+        {image.name ? <figcaption>{image.name}</figcaption> : null}
+      </figure>
+    </div>
+  );
+}
+
+function getAvatarRequestKey(address: string, preferredName: string | null | undefined, actionsKey: string) {
+  return JSON.stringify([address, normalizeRegisteredName(preferredName) ?? '', actionsKey]);
+}
+
+function useAvatarProfiles(
+  addresses: string[],
+  knownNamesByAddress: ReadonlyMap<string, string>,
+  actions: QdnAction[],
+  actionsKey: string,
+) {
+  const [profiles, setProfiles] = useState<AvatarProfilesByAddress>({});
+  const latestRequestKeysRef = useRef(new Map<string, string>());
+  const addressKey = JSON.stringify(addresses);
+  const knownNamesKey = JSON.stringify(Array.from(knownNamesByAddress.entries()));
+
+  useEffect(() => {
+    let isDisposed = false;
+
+    for (const address of addresses) {
+      const preferredName = knownNamesByAddress.get(address) ?? null;
+      const requestKey = getAvatarRequestKey(address, preferredName, actionsKey);
+
+      latestRequestKeysRef.current.set(address, requestKey);
+
+      if (profiles[address]?.requestKey === requestKey) {
+        continue;
+      }
+
+      void loadAvatarProfile({ actions, address, preferredName })
+        .then((profile) => {
+          if (isDisposed || latestRequestKeysRef.current.get(address) !== requestKey) {
+            return;
+          }
+
+          setProfiles((current) => ({
+            ...current,
+            [address]: {
+              ...profile,
+              requestKey,
+            },
+          }));
+        });
+    }
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [actionsKey, addressKey, knownNamesKey]);
+
+  return profiles;
+}
+
 function AccountSummary({
   account,
   error,
   isHomeBridge,
   onConnect,
+  onOpenAvatar,
+  profile,
   t,
 }: {
   account: QdnSelectedAccount | null;
   error: string;
   isHomeBridge: boolean;
   onConnect: () => void;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
+  profile?: AvatarProfile;
   t: TranslateFunction;
 }) {
   if (account) {
-    const label = account.name || getShortAddress(account.address);
+    const { avatarSrc, name } = getAvatarView(profile, account.name);
+    const label = name || getShortAddress(account.address);
 
     return (
       <div className="account-summary">
-        {account.avatarUrl ? (
-          <img alt="" className="account-summary__avatar" src={account.avatarUrl} />
-        ) : (
-          <span className="account-summary__avatar account-summary__avatar--fallback">
-            {(account.name || account.address).slice(0, 1).toUpperCase()}
-          </span>
-        )}
+        <UserAvatar
+          className="account-summary__avatar"
+          name={name}
+          onOpen={onOpenAvatar}
+          openLabel={t('action.openAvatarImage')}
+          src={avatarSrc}
+        />
         <div className="account-summary__text">
-          <strong>{label}</strong>
-          <span
-            className={`account-summary__status account-summary__status--${account.isUnlocked ? 'unlocked' : 'locked'}`}
-          >
-            {account.isUnlocked ? t('status.account.unlocked') : t('status.account.locked')}
-          </span>
-          <span>{account.address}</span>
+          <div className="account-summary__primary">
+            <strong>{label}</strong>
+            <span
+              className={`account-summary__status account-summary__status--${account.isUnlocked ? 'unlocked' : 'locked'}`}
+            >
+              {account.isUnlocked ? t('status.account.unlocked') : t('status.account.locked')}
+            </span>
+          </div>
+          <span className="account-summary__address">{account.address}</span>
         </div>
       </div>
     );
@@ -275,56 +690,117 @@ function AccountSummary({
 }
 
 function GroupList({
+  activityByGroupId,
   groups,
-  joinedIds,
   onSelect,
   selectedGroupId,
   t,
 }: {
+  activityByGroupId: ReadonlyMap<number, number>;
   groups: GroupData[];
-  joinedIds: Set<number>;
   onSelect: (group: GroupData) => void;
   selectedGroupId: number | null;
   t: TranslateFunction;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
   if (groups.length === 0) {
     return <p className="empty">{t('hint.noGroups')}</p>;
   }
 
   return (
     <div className="group-list">
-      {groups.map((group) => (
-        <button
-          className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}`}
-          key={group.groupId}
-          onClick={() => onSelect(group)}
-          type="button"
-        >
-          <span className="group-row__name">{getGroupTitle(group, t)}</span>
-          <span className="group-row__meta">
-            {joinedIds.has(group.groupId) ? t('label.joined') : group.isOpen === false ? t('label.group.closed') : t('label.group.open')}
-            {typeof group.memberCount === 'number' ? ` / ${group.memberCount.toLocaleString()}` : ''}
-          </span>
-        </button>
-      ))}
+      {groups.map((group) => {
+        const lastMessageTimestamp = activityByGroupId.get(group.groupId);
+
+        return (
+          <button
+            className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}`}
+            key={group.groupId}
+            onClick={() => onSelect(group)}
+            type="button"
+          >
+            <span className="group-row__top">
+              <span className="group-row__name">{getGroupTitle(group, t)}</span>
+              {lastMessageTimestamp ? (
+                <span className="group-row__time" title={formatTimestamp(lastMessageTimestamp)}>
+                  {formatTimeAgo(lastMessageTimestamp, now)}
+                </span>
+              ) : null}
+            </span>
+            <span className="group-row__footer">
+              <span className="group-row__id">{`id:${group.groupId}`}</span>
+              {!isGeneralChatGroup(group) && group.isOpen === false ? (
+                <span
+                  aria-label={t('label.group.closed')}
+                  className="group-row__lock"
+                  role="img"
+                  title={t('label.group.closed')}
+                >
+                  <LockIcon />
+                </span>
+              ) : null}
+              {!isGeneralChatGroup(group) && typeof group.memberCount === 'number' ? (
+                <span className="group-row__members">
+                  {t('group.meta.memberCount', { count: group.memberCount.toLocaleString() })}
+                </span>
+              ) : null}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
 
 function DirectList({
   activeChats,
+  activityByAddress,
   canOpen,
   onSelect,
   selectedAddress,
   t,
 }: {
   activeChats: ActiveChats;
+  activityByAddress: ReadonlyMap<string, number>;
   canOpen: boolean;
   onSelect: (direct: ActiveDirectChat) => void;
   selectedAddress: string | null;
   t: TranslateFunction;
 }) {
-  const directs = activeChats.direct ?? [];
+  const [now, setNow] = useState(() => Date.now());
+  const directs = useMemo(() => {
+    return [...(activeChats.direct ?? [])].sort((first, second) => {
+      const firstActivity = activityByAddress.get(first.address);
+      const secondActivity = activityByAddress.get(second.address);
+
+      if (firstActivity !== undefined && secondActivity !== undefined && firstActivity !== secondActivity) {
+        return secondActivity - firstActivity;
+      }
+
+      if (firstActivity !== undefined && secondActivity === undefined) {
+        return -1;
+      }
+
+      if (firstActivity === undefined && secondActivity !== undefined) {
+        return 1;
+      }
+
+      return getDirectTitle(first).localeCompare(getDirectTitle(second));
+    });
+  }, [activeChats.direct, activityByAddress]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   if (directs.length === 0) {
     return <p className="empty">{t('hint.noDirectChats')}</p>;
@@ -332,41 +808,695 @@ function DirectList({
 
   return (
     <div className="direct-list">
-      {directs.map((direct) => (
-        <button
-          className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}`}
-          disabled={!canOpen}
-          key={direct.address}
-          onClick={() => onSelect(direct)}
-          title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
-          type="button"
-        >
-          <span>{getDirectTitle(direct)}</span>
-          <small>{formatTimestamp(direct.timestamp)}</small>
-        </button>
+      {directs.map((direct) => {
+        const lastMessageTimestamp = activityByAddress.get(direct.address);
+
+        return (
+          <button
+            className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}`}
+            disabled={!canOpen}
+            key={direct.address}
+            onClick={() => onSelect(direct)}
+            title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
+            type="button"
+          >
+            <span>{getDirectTitle(direct)}</span>
+            {lastMessageTimestamp ? (
+              <small title={formatTimestamp(lastMessageTimestamp)}>
+                {formatTimeAgo(lastMessageTimestamp, now)}
+              </small>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function getMessageSnippet(message: ChatMessage, t: TranslateFunction, maxLength = 140) {
+  const body = decodeChatMessage(message, t).body || t('message.empty');
+  const flattened = body.replace(/\s+/g, ' ').trim();
+
+  return flattened.length > maxLength ? `${flattened.slice(0, maxLength - 1)}…` : flattened;
+}
+
+type ImagePreviewState =
+  | {
+      phase: 'loading';
+    }
+  | {
+      phase: 'ready';
+      preview: QdnImagePreview;
+    }
+  | {
+      message: string;
+      phase: 'error';
+    };
+
+function MessageImagePreview({ resource, t }: { resource: QdnImageResource; t: TranslateFunction }) {
+  const [state, setState] = useState<ImagePreviewState>({ phase: 'loading' });
+
+  useEffect(() => {
+    let isDisposed = false;
+
+    setState({ phase: 'loading' });
+
+    void fetchQdnImagePreview(resource)
+      .then((preview) => {
+        if (!isDisposed) {
+          setState({ phase: 'ready', preview });
+        }
+      })
+      .catch((error) => {
+        if (!isDisposed) {
+          setState({
+            phase: 'error',
+            message: error instanceof Error ? error.message : t('status.loadingError.imagePreview'),
+          });
+        }
+      });
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [resource.identifier, resource.name, resource.path, resource.qdnUrl, resource.service, t]);
+
+  if (state.phase === 'loading') {
+    return (
+      <div className="message__image-preview message__image-preview--loading">
+        {t('status.loading.imagePreview')}
+      </div>
+    );
+  }
+
+  if (state.phase === 'error') {
+    return (
+      <div className="message__image-preview message__image-preview--error">
+        {state.message}
+      </div>
+    );
+  }
+
+  return (
+    <figure className="message__image-preview">
+      <img alt={state.preview.alt} src={state.preview.src} />
+      <figcaption>{state.preview.alt}</figcaption>
+    </figure>
+  );
+}
+
+function MessageImagePreviews({ resources, t }: { resources: QdnImageResource[]; t: TranslateFunction }) {
+  return (
+    <div className="message__image-previews">
+      {resources.map((resource, index) => (
+        <MessageImagePreview key={`${resource.qdnUrl}-${index}`} resource={resource} t={t} />
       ))}
     </div>
   );
 }
 
-function MessageList({ messages, t }: { messages: ChatMessage[]; t: TranslateFunction }) {
+function MessageReactionPicker({
+  onReact,
+  original,
+  pendingReactionKey,
+  reactions,
+  t,
+}: {
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  original: ChatMessage;
+  pendingReactionKey: string;
+  reactions: MessageReactionSummary[];
+  t: TranslateFunction;
+}) {
+  const [fullPickerOpen, setFullPickerOpen] = useState(false);
+
+  if (!original.signature) {
+    return null;
+  }
+
+  const selectReaction = (reaction: string) => {
+    const existingReaction = reactions.find((summary) => summary.content === reaction);
+
+    onReact(original, reaction, !existingReaction?.reactedBySelf);
+  };
+
+  return (
+    <div className="message__reaction-picker" aria-label={t('label.reactions')}>
+      <div className="message__reaction-quick-row" role="toolbar">
+        {DEFAULT_REACTION_OPTIONS.map((reaction) => {
+          const existingReaction = reactions.find((summary) => summary.content === reaction);
+          const contentState = !existingReaction?.reactedBySelf;
+          const pendingKey = getReactionPendingKey(original.signature ?? '', reaction);
+
+          return (
+            <button
+              aria-label={contentState ? t('action.addReaction') : t('action.removeReaction')}
+              aria-pressed={existingReaction?.reactedBySelf ?? false}
+              disabled={pendingReactionKey === pendingKey}
+              key={reaction}
+              onClick={() => selectReaction(reaction)}
+              title={contentState ? t('action.addReaction') : t('action.removeReaction')}
+              type="button"
+            >
+              {reaction}
+            </button>
+          );
+        })}
+        <button
+          aria-expanded={fullPickerOpen}
+          aria-label={t('label.reactions')}
+          className="message__reaction-more"
+          onClick={() => setFullPickerOpen((current) => !current)}
+          title={t('label.reactions')}
+          type="button"
+        >
+          {fullPickerOpen ? '×' : '+'}
+        </button>
+      </div>
+      {fullPickerOpen ? (
+        <div className="message__emoji-picker-panel">
+          <EmojiPicker
+            allowExpandReactions
+            autoFocusSearch={false}
+            emojiStyle={EmojiStyle.NATIVE}
+            height={360}
+            lazyLoadEmojis
+            onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+            onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+            previewConfig={{ showPreview: false }}
+            reactions={[...DEFAULT_REACTION_OPTIONS]}
+            searchPlaceHolder={t('label.search')}
+            theme={Theme.AUTO}
+            width="100%"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MessageReactionDetails({
+  avatarProfiles,
+  canReact,
+  now,
+  onClose,
+  onReact,
+  original,
+  pendingReactionKey,
+  reaction,
+  t,
+}: {
+  avatarProfiles: AvatarProfilesByAddress;
+  canReact: boolean;
+  now: number;
+  onClose: () => void;
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  original: ChatMessage;
+  pendingReactionKey: string;
+  reaction: MessageReactionSummary;
+  t: TranslateFunction;
+}) {
+  const contentState = !reaction.reactedBySelf;
+  const pendingKey = getReactionPendingKey(original.signature ?? '', reaction.content);
+  const actionLabel = contentState ? t('action.addReaction') : t('action.removeReaction');
+
+  return (
+    <section
+      aria-label={t('label.reactionDetails')}
+      className="message__reaction-details"
+      id={getReactionDetailsDomId(original.signature ?? '', reaction.content)}
+    >
+      <header className="message__reaction-details-header">
+        <span>
+          {reaction.content} {t('label.reactions')}
+        </span>
+        <button
+          aria-label={t('button.close')}
+          className="message__reaction-details-close"
+          onClick={onClose}
+          title={t('button.close')}
+          type="button"
+        >
+          X
+        </button>
+      </header>
+      <ol className="message__reaction-reactors">
+        {reaction.reactors.map((reactor) => {
+          const profile = avatarProfiles[reactor.sender];
+          const label = getMessageSenderLabel({ sender: reactor.sender, senderName: null }, profile);
+
+          return (
+            <li className="message__reaction-reactor" key={`${reactor.sender}-${reactor.timestamp}`}>
+              <span className="message__reaction-reactor-name" title={reactor.sender}>
+                {label}
+              </span>
+              <time
+                className="message__reaction-reactor-time"
+                dateTime={new Date(reactor.timestamp).toISOString()}
+                title={formatTimestamp(reactor.timestamp)}
+              >
+                {formatTimeAgo(reactor.timestamp, now)}
+              </time>
+            </li>
+          );
+        })}
+      </ol>
+      <button
+        className="button button--secondary message__reaction-details-action"
+        disabled={!canReact || pendingReactionKey === pendingKey}
+        onClick={() => {
+          onClose();
+          onReact(original, reaction.content, contentState);
+        }}
+        type="button"
+      >
+        {actionLabel}
+      </button>
+    </section>
+  );
+}
+
+function MessageReactionChips({
+  avatarProfiles,
+  canReact,
+  now,
+  onCloseReactionDetails,
+  onReact,
+  onToggleReactionDetails,
+  openReactionDetailsKey,
+  original,
+  pendingReactionKey,
+  reactions,
+  t,
+}: {
+  avatarProfiles: AvatarProfilesByAddress;
+  canReact: boolean;
+  now: number;
+  onCloseReactionDetails: () => void;
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  onToggleReactionDetails: (detailsKey: string) => void;
+  openReactionDetailsKey: string;
+  original: ChatMessage;
+  pendingReactionKey: string;
+  reactions: MessageReactionSummary[];
+  t: TranslateFunction;
+}) {
+  if (!original.signature || reactions.length === 0) {
+    return null;
+  }
+
+  const openReaction = reactions.find((reaction) => {
+    return getReactionPendingKey(original.signature ?? '', reaction.content) === openReactionDetailsKey;
+  });
+
+  return (
+    <div className="message__reaction-block">
+      <div className="message__reactions" aria-label={t('label.reactions')}>
+        {reactions.map((reaction) => {
+          const pendingKey = getReactionPendingKey(original.signature ?? '', reaction.content);
+          const isOpen = openReactionDetailsKey === pendingKey;
+          const label = t('action.viewReactionDetails', { reaction: reaction.content });
+
+          return (
+            <button
+              aria-controls={isOpen ? getReactionDetailsDomId(original.signature ?? '', reaction.content) : undefined}
+              aria-expanded={isOpen}
+              aria-label={label}
+              className={`message__reaction-chip${reaction.reactedBySelf ? ' message__reaction-chip--active' : ''}`}
+              disabled={pendingReactionKey === pendingKey}
+              key={reaction.content}
+              onClick={() => onToggleReactionDetails(pendingKey)}
+              title={label}
+              type="button"
+            >
+              <span>{reaction.content}</span>
+              <span>{reaction.count}</span>
+            </button>
+          );
+        })}
+      </div>
+      {openReaction ? (
+        <MessageReactionDetails
+          avatarProfiles={avatarProfiles}
+          canReact={canReact}
+          now={now}
+          onClose={onCloseReactionDetails}
+          onReact={onReact}
+          original={original}
+          pendingReactionKey={pendingReactionKey}
+          reaction={openReaction}
+          t={t}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MessageList({
+  avatarProfiles,
+  canCompose,
+  canOpenMediaPlayer,
+  messages,
+  onEdit,
+  onOpenAccount,
+  onOpenAvatar,
+  onReact,
+  onReply,
+  pendingReactionKey,
+  selfAddress,
+  t,
+}: {
+  avatarProfiles: AvatarProfilesByAddress;
+  canCompose: boolean;
+  canOpenMediaPlayer: boolean;
+  messages: ChatMessage[];
+  onEdit: (thread: MessageThread) => void;
+  onOpenAccount: (target: AccountInfoTarget) => void;
+  onOpenAvatar: (image: AvatarLightboxImage) => void;
+  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
+  onReply: (message: ChatMessage) => void;
+  pendingReactionKey: string;
+  selfAddress: string | null;
+  t: TranslateFunction;
+}) {
+  const listRef = useRef<HTMLOListElement>(null);
+  const stickToBottomRef = useRef(true);
+  const itemsRef = useRef(new Map<string, HTMLLIElement>());
+  const highlightTimeoutRef = useRef(0);
+  const expandedTimeTimeoutRef = useRef(0);
+  const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
+  const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
+  const [openReactionPickerKey, setOpenReactionPickerKey] = useState('');
+  const [openReactionDetailsKey, setOpenReactionDetailsKey] = useState('');
+  const [highlightedKey, setHighlightedKey] = useState('');
+  const [expandedTimeKey, setExpandedTimeKey] = useState('');
+  const [now, setNow] = useState(() => Date.now());
+  const threads = useMemo(() => buildMessageThreads(messages), [messages]);
+  const reactionsBySignature = useMemo(
+    () => buildMessageReactionIndex(messages, selfAddress),
+    [messages, selfAddress],
+  );
+  const threadsBySignature = useMemo(() => {
+    const bySignature = new Map<string, MessageThread>();
+
+    for (const thread of threads) {
+      if (thread.original.signature) {
+        bySignature.set(thread.original.signature, thread);
+      }
+
+      for (const revision of thread.revisions) {
+        if (revision.signature) {
+          bySignature.set(revision.signature, thread);
+        }
+      }
+    }
+
+    return bySignature;
+  }, [threads]);
+  const lastThread = threads[threads.length - 1] ?? null;
+  const lastMessageKey = lastThread !== null ? getMessageKey(lastThread.latest, threads.length - 1) : '';
+  const lastMessageIsOwn = selfAddress !== null && lastThread?.original.sender === selfAddress;
+
+  useEffect(() => {
+    const list = listRef.current;
+
+    if (list && (stickToBottomRef.current || lastMessageIsOwn)) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }, [lastMessageIsOwn, lastMessageKey]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(highlightTimeoutRef.current);
+      window.clearTimeout(expandedTimeTimeoutRef.current);
+    };
+  }, []);
+
+  function toggleTimeDisplay(threadKey: string) {
+    window.clearTimeout(expandedTimeTimeoutRef.current);
+
+    if (expandedTimeKey === threadKey) {
+      setExpandedTimeKey('');
+      return;
+    }
+
+    setExpandedTimeKey(threadKey);
+    expandedTimeTimeoutRef.current = window.setTimeout(() => setExpandedTimeKey(''), 5000);
+  }
+
+  function scrollToThread(threadKey: string) {
+    const item = itemsRef.current.get(threadKey);
+
+    if (!item) {
+      return;
+    }
+
+    item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedKey(threadKey);
+    window.clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = window.setTimeout(() => setHighlightedKey(''), 1800);
+  }
+
+  function toggleHistory(threadKey: string) {
+    setOpenHistories((current) => {
+      const next = new Set(current);
+
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleImagePreview(threadKey: string) {
+    setOpenImagePreviews((current) => {
+      const next = new Set(current);
+
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleReactionPicker(threadKey: string) {
+    setOpenReactionDetailsKey('');
+    setOpenReactionPickerKey((current) => current === threadKey ? '' : threadKey);
+  }
+
+  function toggleReactionDetails(detailsKey: string) {
+    setOpenReactionPickerKey('');
+    setOpenReactionDetailsKey((current) => current === detailsKey ? '' : detailsKey);
+  }
+
+  function playMedia(resource: QdnMediaResource) {
+    void openQdnMediaPlayer(resource).catch((error) => {
+      console.warn('Unable to open QDN media player.', error);
+    });
+  }
+
   if (messages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
 
   return (
-    <ol className="message-list">
-      {messages.map((message, index) => {
-        const decoded = decodeChatMessage(message, t);
-        const signature = getMessageKey(message, index);
+    <ol
+      className="message-list"
+      onScroll={(event) => {
+        const list = event.currentTarget;
+
+        stickToBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+      }}
+      ref={listRef}
+    >
+      {threads.map((thread, index) => {
+        const { latest, original, revisions } = thread;
+        const decoded = decodeChatMessage(latest, t);
+        const threadKey = getMessageKey(original, index);
+        const isOwn = selfAddress !== null && original.sender === selfAddress;
+        const isEdited = revisions.length > 0;
+        const isHistoryOpen = isEdited && openHistories.has(threadKey);
+        const previousVersions = isHistoryOpen ? [original, ...revisions.slice(0, -1)] : [];
+        const repliedThread = decoded.repliedTo ? threadsBySignature.get(decoded.repliedTo) : undefined;
+        const isHighlighted = highlightedKey === threadKey;
+        const isContinuation = isThreadContinuation(threads[index - 1], thread);
+        const canEdit = isOwn && decoded.kind === 'text';
+        const isTimeExpanded = expandedTimeKey === threadKey;
+        const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
+        const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
+        const hasImagePreviews = imageResources.length > 0;
+        const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
+        const areImagePreviewsOpen = openImagePreviews.has(threadKey);
+        const canReplyOrEdit = canCompose && !!original.signature;
+        const canReact = canReplyOrEdit;
+        const isReactionPickerOpen = openReactionPickerKey === threadKey;
+        const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
+        const senderProfile = avatarProfiles[original.sender];
+        const actionButtons =
+          canReplyOrEdit || canReact || hasImagePreviews || hasMediaActions ? (
+            <div className="message__actions">
+              {hasImagePreviews ? (
+                <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
+                  {areImagePreviewsOpen ? t('button.hideImagePreview') : t('button.viewImagePreview')}
+                </button>
+              ) : null}
+              {hasMediaActions
+                ? mediaResources.map((resource, resourceIndex) => (
+                    <button
+                      aria-label={t('action.openMediaPlayer')}
+                      key={`${resource.qdnUrl}-${resourceIndex}`}
+                      onClick={() => playMedia(resource)}
+                      title={resource.qdnUrl}
+                      type="button"
+                    >
+                      {t('button.playMedia')}
+                    </button>
+                  ))
+                : null}
+              {canReplyOrEdit ? (
+                <button onClick={() => onReply(original)} type="button">
+                  {t('button.reply')}
+                </button>
+              ) : null}
+              {canReact ? (
+                <button aria-expanded={isReactionPickerOpen} onClick={() => toggleReactionPicker(threadKey)} type="button">
+                  {t('button.react')}
+                </button>
+              ) : null}
+              {canReplyOrEdit && canEdit ? (
+                <button onClick={() => onEdit(thread)} type="button">
+                  {t('button.edit')}
+                </button>
+              ) : null}
+            </div>
+          ) : null;
 
         return (
-          <li className={`message message--${decoded.kind}`} key={signature}>
-            <div className="message__meta">
-              <strong>{getSenderLabel(message)}</strong>
-              <span>{formatTimestamp(message.timestamp)}</span>
+          <li
+            className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}`}
+            key={threadKey}
+            ref={(element) => {
+              if (element) {
+                itemsRef.current.set(threadKey, element);
+              } else {
+                itemsRef.current.delete(threadKey);
+              }
+            }}
+          >
+            {isContinuation ? null : (
+              <div className="message__meta">
+                <MessageIdentity
+                  message={original}
+                  onOpenAccount={onOpenAccount}
+                  onOpenAvatar={onOpenAvatar}
+                  openAvatarLabel={t('action.openAvatarImage')}
+                  profile={senderProfile}
+                  t={t}
+                />
+                {actionButtons}
+              </div>
+            )}
+            {decoded.repliedTo ? (
+              repliedThread ? (
+                <button
+                  className="message__reply-preview"
+                  onClick={() => scrollToThread(decoded.repliedTo ?? '')}
+                  title={t('action.goToOriginal')}
+                  type="button"
+                >
+                  <strong>
+                    {getMessageSenderLabel(
+                      repliedThread.original,
+                      avatarProfiles[repliedThread.original.sender],
+                    )}
+                  </strong>
+                  <span>{getMessageSnippet(repliedThread.latest, t)}</span>
+                </button>
+              ) : (
+                <span className="message__reply-preview message__reply-preview--missing">
+                  {t('message.replyUnavailable')}
+                </span>
+              )
+            ) : null}
+            <div className="message__body">
+              {decoded.body ? renderMessageTextWithAppLinks(decoded.body) : t('message.empty')}
             </div>
-            <div className="message__body">{decoded.body || t('message.empty')}</div>
+            {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
+            {isReactionPickerOpen ? (
+              <MessageReactionPicker
+                onReact={(message, reaction, contentState) => {
+                  setOpenReactionPickerKey('');
+                  onReact(message, reaction, contentState);
+                }}
+                original={original}
+                pendingReactionKey={pendingReactionKey}
+                reactions={reactions}
+                t={t}
+              />
+            ) : null}
+            <MessageReactionChips
+              avatarProfiles={avatarProfiles}
+              canReact={canReact}
+              now={now}
+              onCloseReactionDetails={() => setOpenReactionDetailsKey('')}
+              onReact={onReact}
+              onToggleReactionDetails={toggleReactionDetails}
+              openReactionDetailsKey={openReactionDetailsKey}
+              original={original}
+              pendingReactionKey={pendingReactionKey}
+              reactions={reactions}
+              t={t}
+            />
+            <div className="message__footer">
+              <button
+                className="message__time"
+                onClick={() => toggleTimeDisplay(threadKey)}
+                title={formatTimestamp(original.timestamp)}
+                type="button"
+              >
+                {isTimeExpanded ? formatTimestamp(original.timestamp) : formatTimeAgo(original.timestamp, now)}
+              </button>
+              {isEdited ? (
+                <button
+                  aria-expanded={isHistoryOpen}
+                  className="message__edited"
+                  onClick={() => toggleHistory(threadKey)}
+                  title={t('action.toggleEditHistory')}
+                  type="button"
+                >
+                  {t('label.message.edited')} · {formatTimeAgo(latest.timestamp, now)}
+                </button>
+              ) : null}
+              {isContinuation ? actionButtons : null}
+            </div>
+            {isHistoryOpen ? (
+              <ol className="message__history" aria-label={t('label.editHistory')}>
+                {previousVersions.map((version, versionIndex) => {
+                  const versionBody = decodeChatMessage(version, t).body;
+
+                  return (
+                    <li key={getMessageKey(version, versionIndex)}>
+                      <span className="message__history-meta">
+                        {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
+                        {formatTimestamp(version.timestamp)}
+                      </span>
+                      <span className="message__history-body">
+                        {versionBody ? renderMessageTextWithAppLinks(versionBody) : t('message.empty')}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : null}
           </li>
         );
       })}
@@ -407,9 +1537,23 @@ export default function App() {
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
+  const [loadedGroupActivityById, setLoadedGroupActivityById] =
+    useState<ReadonlyMap<number, number | null>>(() => new Map());
+  const [loadedDirectActivityByAddress, setLoadedDirectActivityByAddress] =
+    useState<ReadonlyMap<string, number | null>>(() => new Map());
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [search, setSearch] = useState('');
+  const [isGroupSearchOpen, setGroupSearchOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const [composeContext, setComposeContext] = useState<
+    | { kind: 'edit'; thread: MessageThread }
+    | { kind: 'reply'; message: ChatMessage }
+    | null
+  >(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const groupSearchInputRef = useRef<HTMLInputElement>(null);
+  const loadedGroupActivityRef = useRef<ReadonlyMap<number, number | null>>(new Map());
+  const loadedDirectActivityRef = useRef<ReadonlyMap<string, number | null>>(new Map());
   const [directAddress, setDirectAddress] = useState('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
@@ -417,21 +1561,65 @@ export default function App() {
   const [startMintingPending, setStartMintingPending] = useState(false);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
+  const [reactionPendingKey, setReactionPendingKey] = useState('');
   const [writeError, setWriteError] = useState('');
   const [membersOpen, setMembersOpen] = useState(true);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
+  const [accountInfoTarget, setAccountInfoTarget] = useState<AccountInfoTarget | null>(null);
+  const [avatarLightboxImage, setAvatarLightboxImage] = useState<AvatarLightboxImage | null>(null);
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
 
   const joinedIds = useMemo(
-    () => new Set(memberGroups.value.map((group) => group.groupId)),
+    () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
     [memberGroups.value],
   );
-  const sortedGroups = useMemo(() => sortGroups(groups.value, t), [groups.value, t]);
   const selectedGroup = selectedChat?.kind === 'group' ? selectedChat.group : null;
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
   const selectedDirectAddress = selectedDirect?.address ?? null;
+  const groupActivityById = useMemo(() => {
+    const activity = new Map<number, number>();
+
+    for (const activeGroup of activeChats.value.groups ?? []) {
+      if (typeof activeGroup.timestamp === 'number') {
+        activity.set(activeGroup.groupId, activeGroup.timestamp);
+      }
+    }
+
+    for (const [groupId, timestamp] of loadedGroupActivityById) {
+      if (timestamp === null) {
+        activity.delete(groupId);
+      } else {
+        activity.set(groupId, timestamp);
+      }
+    }
+
+    return activity;
+  }, [activeChats.value.groups, loadedGroupActivityById]);
+  const directActivityByAddress = useMemo(() => {
+    const activity = new Map<string, number>();
+
+    for (const direct of activeChats.value.direct ?? []) {
+      if (typeof direct.timestamp === 'number') {
+        activity.set(direct.address, direct.timestamp);
+      }
+    }
+
+    for (const [address, timestamp] of loadedDirectActivityByAddress) {
+      if (timestamp === null) {
+        activity.delete(address);
+      } else {
+        activity.set(address, timestamp);
+      }
+    }
+
+    return activity;
+  }, [activeChats.value.direct, loadedDirectActivityByAddress]);
+  const sortedGroups = useMemo(() => sortGroups(groups.value, t, groupActivityById), [groupActivityById, groups.value, t]);
+  const isGroupSearchVisible = isGroupSearchOpen || search.trim().length > 0;
+  const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
+  const showGroupMembers = !!selectedGroup && !isSelectedGeneralChat;
   const pendingJoinGroupIds = useMemo(
     () => new Set(accountJoinRequests.value.map((request) => request.groupId)),
     [accountJoinRequests.value],
@@ -459,7 +1647,7 @@ export default function App() {
     [adminJoinRequests.value],
   );
   const selectedAdminJoinRequests =
-    selectedGroupId === null ? [] : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
+    selectedGroupId === null || isSelectedGeneralChat ? [] : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
   const selectedTransactions = Object.values(trackedTransactions).filter(
     (transaction) => selectedGroupId !== null && transaction.groupId === selectedGroupId,
   );
@@ -470,6 +1658,48 @@ export default function App() {
     : '';
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
+  const knownAvatarNames = useMemo(() => {
+    const namesByAddress = new Map<string, string>();
+    const accountName = normalizeRegisteredName(account?.name);
+
+    if (account?.address && accountName) {
+      namesByAddress.set(account.address, accountName);
+    }
+
+    const accountInfoName = normalizeRegisteredName(accountInfoTarget?.senderName);
+
+    if (accountInfoTarget?.sender && accountInfoName) {
+      namesByAddress.set(accountInfoTarget.sender, accountInfoName);
+    }
+
+    for (const message of messages.value) {
+      const senderName = normalizeRegisteredName(message.senderName);
+
+      if (senderName && !namesByAddress.has(message.sender)) {
+        namesByAddress.set(message.sender, senderName);
+      }
+    }
+
+    return namesByAddress;
+  }, [account?.address, account?.name, accountInfoTarget?.sender, accountInfoTarget?.senderName, messages.value]);
+  const avatarAddresses = useMemo(() => {
+    const addresses = new Set<string>();
+
+    if (account?.address) {
+      addresses.add(account.address);
+    }
+
+    if (accountInfoTarget?.sender) {
+      addresses.add(accountInfoTarget.sender);
+    }
+
+    for (const message of messages.value) {
+      addresses.add(message.sender);
+    }
+
+    return Array.from(addresses);
+  }, [account?.address, accountInfoTarget?.sender, messages.value]);
+  const avatarProfiles = useAvatarProfiles(avatarAddresses, knownAvatarNames, actions, actionsKey);
   const canJoinGroup = hasAction(actions, 'JOIN_GROUP');
   const canLeaveGroup = hasAction(actions, 'LEAVE_GROUP');
   const canApproveGroupJoinRequests = hasAction(actions, 'APPROVE_GROUP_JOIN_REQUEST');
@@ -477,47 +1707,70 @@ export default function App() {
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
+  const canOpenMediaPlayer = hasAction(actions, 'OPEN_QDN_MEDIA_PLAYER');
+  const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
   const canSendDirectChat = canSendGroupChat;
   const isAccountUnlocked = account?.isUnlocked === true;
-  const canOpenDirectChat = !!account && isAccountUnlocked && (canReadPrivateDirectChat || canSendDirectChat);
+  const canUseSelectedAccount = !!account && (isAccountUnlocked || canRequestUnlock);
+  const canOpenDirectChat = canUseSelectedAccount && (canReadPrivateDirectChat || canSendDirectChat);
   const isJoinedGroup = selectedGroupId !== null && joinedIds.has(selectedGroupId);
+  const isRegularSelectedGroup = selectedChat?.kind === 'group' && !isSelectedGeneralChat;
+  const isSelectedGroupMembershipConfirmed = !isRegularSelectedGroup || memberGroups.phase === 'ready';
+  const isConfirmedJoinedGroup = memberGroups.phase === 'ready' && isJoinedGroup;
+  const canPostInSelectedGroup =
+    selectedChat?.kind === 'group' &&
+    (isSelectedGeneralChat || isConfirmedJoinedGroup);
   const hasPendingJoinRequest = selectedGroupId !== null && pendingJoinGroupIds.has(selectedGroupId);
   const hasPendingJoinTransaction = selectedGroupId !== null && pendingTrackedJoinGroupIds.has(selectedGroupId);
   const hasPendingLeaveTransaction = selectedGroupId !== null && pendingTrackedLeaveGroupIds.has(selectedGroupId);
   const isJoinableGroup =
-    selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && !hasPendingJoinRequest && !hasPendingJoinTransaction;
-  const canSubmitJoin = !!account && isAccountUnlocked && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
+    selectedGroupId !== null &&
+    selectedGroupId > 0 &&
+    isSelectedGroupMembershipConfirmed &&
+    !isConfirmedJoinedGroup &&
+    !hasPendingJoinRequest &&
+    !hasPendingJoinTransaction;
+  const canSubmitJoin = canUseSelectedAccount && !!selectedGroup && canJoinGroup && isJoinableGroup && !joinPending;
   const canSubmitLeave =
-    !!account &&
-    isAccountUnlocked &&
+    canUseSelectedAccount &&
     !!selectedGroup &&
     selectedGroupId !== null &&
     selectedGroupId > 0 &&
     canLeaveGroup &&
-    isJoinedGroup &&
+    isConfirmedJoinedGroup &&
     !leavePending &&
     !hasPendingLeaveTransaction;
   const canStartMinting = hasAction(actions, 'START_MINTING');
   const isSelectedMintingGroup = selectedGroup?.isMintingGroup === true;
   const accountMintingStatus = mintingStatus.value;
-  const showMintingControls = isSelectedMintingGroup && isJoinedGroup && !!account;
+  const showMintingControls = isSelectedMintingGroup && isConfirmedJoinedGroup && !!account;
   const hasPendingRewardShareTransaction = Object.values(trackedTransactions).some(
     (transaction) => transaction.action === 'rewardshare' && transaction.phase === 'pending',
   );
   const canSubmitStartMinting =
     showMintingControls &&
-    isAccountUnlocked &&
+    canUseSelectedAccount &&
     canStartMinting &&
     accountMintingStatus?.keyOnNode === false &&
     !hasPendingRewardShareTransaction &&
     !startMintingPending;
   const canComposeMessage =
-    !!account &&
-    isAccountUnlocked &&
+    canUseSelectedAccount &&
     !!selectedChat &&
-    (selectedChat.kind === 'group' ? canSendGroupChat : canSendDirectChat);
+    (selectedChat.kind === 'group' ? canSendGroupChat && canPostInSelectedGroup : canSendDirectChat);
   const canSubmitMessage =
     canComposeMessage && draft.trim().length > 0 && !sendPending;
+  const showGroupComposerNotice =
+    canUseSelectedAccount &&
+    canSendGroupChat &&
+    isRegularSelectedGroup &&
+    !canPostInSelectedGroup;
+  const groupComposerNotice =
+    memberGroups.phase === 'error'
+      ? t('hint.groupMembershipUnavailable')
+      : !isSelectedGroupMembershipConfirmed
+        ? t('hint.groupMembershipChecking')
+        : t('hint.groupJoinToPost');
   const accountRequiredLabel = bridge.value.isHomeBridge
     ? t('action.account.notShared')
     : t('action.noAccountUse');
@@ -597,22 +1850,32 @@ export default function App() {
     setGroups({ phase: 'loading', value: groups.value });
 
     try {
-      const nextGroups = await searchGroups(nextSearch, actionList);
+      const nextGroups = withGeneralChatGroup(await searchGroups(nextSearch, actionList), nextSearch, t);
 
       setGroups({ phase: 'ready', value: nextGroups });
       if (!selectedChat && nextGroups.length > 0) {
         setSelectedChat({ group: nextGroups[0], kind: 'group' });
       }
     } catch (error) {
+      const fallbackGroups = withGeneralChatGroup(emptyGroups, nextSearch, t);
+
       setGroups({
         error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
         phase: 'error',
-        value: groups.value,
+        value: fallbackGroups,
       });
+      if (!selectedChat && fallbackGroups.length > 0) {
+        setSelectedChat({ group: fallbackGroups[0], kind: 'group' });
+      }
     }
   }
 
   async function loadGroupMembers(group: GroupData, actionList = actions, options: { quiet?: boolean } = {}) {
+    if (isGeneralChatGroup(group)) {
+      setGroupMembers({ phase: 'ready', value: emptyMembers });
+      return;
+    }
+
     if (!options.quiet) {
       setGroupMembers({ phase: 'loading', value: groupMembers.value });
     }
@@ -728,15 +1991,23 @@ export default function App() {
     void loadMintingStatus(selectedAccount, actionList);
   }
 
-  async function loadMessages(chat: SelectedChat | null, actionList = actions) {
+  async function loadMessages(
+    chat: SelectedChat | null,
+    actionList = actions,
+    options: { accountUnlocked?: boolean; quiet?: boolean } = {},
+  ) {
     if (!chat) {
       return;
     }
 
-    setMessages({ phase: 'loading', value: messages.value });
+    const canReadUnlockedMessages = options.accountUnlocked ?? isAccountUnlocked;
+
+    if (!options.quiet) {
+      setMessages({ phase: 'loading', value: messages.value });
+    }
 
     try {
-      if (chat.kind === 'direct' && !isAccountUnlocked) {
+      if (chat.kind === 'direct' && !canReadUnlockedMessages) {
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
@@ -746,7 +2017,7 @@ export default function App() {
         return;
       }
 
-      if (chat.kind === 'group' && chat.group.isOpen === false && !isAccountUnlocked) {
+      if (chat.kind === 'group' && chat.group.isOpen === false && !canReadUnlockedMessages) {
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
       }
@@ -765,6 +2036,12 @@ export default function App() {
           ? await getGroupMessages(chat.group, actionList)
           : await getDirectMessages(chat.direct.address, actionList);
 
+      if (chat.kind === 'group') {
+        setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+      } else {
+        setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, chat.direct.address, nextMessages));
+      }
+
       setMessages({ phase: 'ready', value: nextMessages });
     } catch (error) {
       setMessages({
@@ -772,6 +2049,38 @@ export default function App() {
         phase: 'error',
         value: messages.value,
       });
+    }
+  }
+
+  async function ensureSelectedAccountUnlocked() {
+    if (!account) {
+      setWriteError(accountRequiredLabel);
+      return null;
+    }
+
+    if (account.isUnlocked) {
+      return account;
+    }
+
+    if (!canRequestUnlock) {
+      setWriteError(accountLockedLabel);
+      return null;
+    }
+
+    setWriteError('');
+
+    try {
+      const selectedAccount = normalizeSelectedAccount(
+        await qdnRequest<QdnSelectedAccount>({ action: 'UNLOCK_SELECTED_ACCOUNT' }),
+      );
+
+      setAccount(selectedAccount);
+      setAccountError('');
+
+      return selectedAccount.isUnlocked ? selectedAccount : null;
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
+      return null;
     }
   }
 
@@ -784,6 +2093,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await joinGroup(selectedGroup.groupId);
 
       trackTransaction({
@@ -793,9 +2108,7 @@ export default function App() {
         result,
       });
 
-      if (account) {
-        await loadAccountData(account);
-      }
+      await loadAccountData(selectedAccount);
       await loadGroupMembers(selectedGroup);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.join'), t));
@@ -813,6 +2126,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await leaveGroup(selectedGroup.groupId);
 
       trackTransaction({
@@ -822,9 +2141,7 @@ export default function App() {
         result,
       });
 
-      if (account) {
-        await loadAccountData(account);
-      }
+      await loadAccountData(selectedAccount);
       await loadGroupMembers(selectedGroup);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.leave'), t));
@@ -842,6 +2159,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await startMinting();
 
       if (result.rewardSharePending) {
@@ -853,7 +2176,7 @@ export default function App() {
         });
       }
 
-      await loadMintingStatus(account);
+      await loadMintingStatus(selectedAccount);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.startMinting'), t));
       void loadMintingStatus(account, actions, { quiet: true });
@@ -863,7 +2186,7 @@ export default function App() {
   }
 
   async function handleApproveJoinRequest(request: GroupJoinRequest) {
-    if (!selectedGroup || !canApproveGroupJoinRequests || !isAccountUnlocked || approvePendingJoiner) {
+    if (!selectedGroup || !canApproveGroupJoinRequests || !canUseSelectedAccount || approvePendingJoiner) {
       return;
     }
 
@@ -871,6 +2194,12 @@ export default function App() {
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       const result = await approveGroupJoinRequest(request.groupId, request.joiner);
 
       trackTransaction({
@@ -881,9 +2210,7 @@ export default function App() {
         result,
       });
 
-      if (account) {
-        await loadAdminJoinRequests(account);
-      }
+      await loadAdminJoinRequests(selectedAccount);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.approveJoin'), t));
     } finally {
@@ -923,32 +2250,78 @@ export default function App() {
     }));
   }
 
-  async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+  function startReply(message: ChatMessage) {
+    if (!message.signature) {
+      return;
+    }
+
+    setComposeContext({ kind: 'reply', message });
+    composerRef.current?.focus();
+  }
+
+  function startEdit(thread: MessageThread) {
+    if (!thread.original.signature) {
+      return;
+    }
+
+    setComposeContext({ kind: 'edit', thread });
+    setDraft(decodeChatMessage(thread.latest, t).body);
+    composerRef.current?.focus();
+  }
+
+  function cancelComposeContext() {
+    if (composeContext?.kind === 'edit') {
+      setDraft('');
+    }
+
+    setComposeContext(null);
+  }
+
+  async function handleSendMessage(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!selectedChat || !canSubmitMessage) {
       return;
     }
 
-    const message = draft.trim();
+    const text = draft.trim();
     const chat = selectedChat;
+    const context = composeContext;
+    let message = text;
+    let chatReference: string | undefined;
+
+    if (context?.kind === 'edit') {
+      // An edit is a new transaction replacing the original via chatReference;
+      // keep the original's reply target so the reply preview survives edits.
+      chatReference = context.thread.original.signature ?? undefined;
+      message = buildChatMessageText(text, decodeChatMessage(context.thread.original).repliedTo);
+    } else if (context?.kind === 'reply') {
+      message = buildChatMessageText(text, context.message.signature);
+    }
 
     setSendPending(true);
     setWriteError('');
 
     try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
       if (chat.kind === 'group') {
-        await sendChatMessage(chat.group.groupId, message);
+        await sendChatMessage(chat.group.groupId, message, chatReference);
       } else {
-        await sendDirectChatMessage(chat.direct.address, message);
+        await sendDirectChatMessage(chat.direct.address, message, chatReference);
       }
 
       setDraft('');
-      if (chat.kind === 'direct' && account) {
-        await loadAccountData(account);
+      setComposeContext(null);
+      if (chat.kind === 'direct') {
+        await loadAccountData(selectedAccount);
       }
 
-      await loadMessages(chat);
+      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
     } finally {
@@ -956,17 +2329,74 @@ export default function App() {
     }
   }
 
+  async function handleMessageReaction(message: ChatMessage, reaction: string, contentState: boolean) {
+    if (!selectedChat || !canComposeMessage || !message.signature) {
+      return;
+    }
+
+    const chat = selectedChat;
+    const pendingKey = getReactionPendingKey(message.signature, reaction);
+
+    setReactionPendingKey(pendingKey);
+    setWriteError('');
+
+    try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
+      const reactionMessage = buildReactionMessageText(reaction, contentState);
+
+      if (chat.kind === 'group') {
+        await sendChatMessage(chat.group.groupId, reactionMessage, message.signature);
+      } else {
+        await sendDirectChatMessage(chat.direct.address, reactionMessage, message.signature);
+      }
+
+      if (chat.kind === 'direct') {
+        await loadAccountData(selectedAccount);
+      }
+
+      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendReaction'), t));
+    } finally {
+      setReactionPendingKey('');
+    }
+  }
+
   function selectGroup(group: GroupData) {
     setWriteError('');
+    setComposeContext(null);
     setSelectedChat({ group, kind: 'group' });
   }
 
   function selectDirect(direct: ActiveDirectChat) {
     setWriteError('');
+    setComposeContext(null);
     setSelectedChat({ direct, kind: 'direct' });
   }
 
-  function handleOpenDirectChat(event: FormEvent<HTMLFormElement>) {
+  function toggleGroupSearch() {
+    setGroupSearchOpen((current) => !current || search.trim().length > 0);
+  }
+
+  async function openDirectFromAccount(address: string, name: string | null) {
+    if (!canOpenDirectChat) {
+      return;
+    }
+
+    if (!(await ensureSelectedAccountUnlocked())) {
+      return;
+    }
+
+    setAccountInfoTarget(null);
+    selectDirect({ address, name: name ?? undefined });
+  }
+
+  async function handleOpenDirectChat(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const address = directAddress.trim();
@@ -975,7 +2405,12 @@ export default function App() {
       return;
     }
 
+    if (!(await ensureSelectedAccountUnlocked())) {
+      return;
+    }
+
     setWriteError('');
+    setComposeContext(null);
     setSelectedChat({
       direct: {
         address,
@@ -1040,6 +2475,97 @@ export default function App() {
   useEffect(() => {
     void initializeSession();
   }, []);
+
+  useEffect(() => {
+    if (isGroupSearchVisible) {
+      groupSearchInputRef.current?.focus();
+    }
+  }, [isGroupSearchVisible]);
+
+  useEffect(() => {
+    loadedGroupActivityRef.current = loadedGroupActivityById;
+  }, [loadedGroupActivityById]);
+
+  useEffect(() => {
+    loadedDirectActivityRef.current = loadedDirectActivityByAddress;
+  }, [loadedDirectActivityByAddress]);
+
+  useEffect(() => {
+    setLoadedDirectActivityByAddress(new Map());
+  }, [account?.address]);
+
+  useEffect(() => {
+    if (groups.value.length === 0) {
+      return undefined;
+    }
+
+    let isDisposed = false;
+    const readableGroups = groups.value.filter((group) => {
+      return group.isOpen !== false || (isAccountUnlocked && canReadPrivateGroupChat);
+    });
+
+    async function hydrateGroupActivity() {
+      for (const group of readableGroups) {
+        if (isDisposed || loadedGroupActivityRef.current.has(group.groupId)) {
+          continue;
+        }
+
+        try {
+          const nextMessages = await getGroupMessages(group, actions);
+
+          if (isDisposed) {
+            return;
+          }
+
+          setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, group.groupId, nextMessages));
+        } catch {
+          // Some closed groups cannot expose history in the current Home/Core context.
+        }
+      }
+    }
+
+    void hydrateGroupActivity();
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [actionsKey, canReadPrivateGroupChat, groups.value, isAccountUnlocked]);
+
+  useEffect(() => {
+    const directs = activeChats.value.direct ?? [];
+
+    if (!isAccountUnlocked || !canReadPrivateDirectChat || directs.length === 0) {
+      return undefined;
+    }
+
+    let isDisposed = false;
+
+    async function hydrateDirectActivity() {
+      for (const direct of directs) {
+        if (isDisposed || loadedDirectActivityRef.current.has(direct.address)) {
+          continue;
+        }
+
+        try {
+          const nextMessages = await getDirectMessages(direct.address, actions);
+
+          if (isDisposed) {
+            return;
+          }
+
+          setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, direct.address, nextMessages));
+        } catch {
+          // Direct history is optional in older Home/Core bridge contexts.
+        }
+      }
+    }
+
+    void hydrateDirectActivity();
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [actionsKey, activeChats.value.direct, canReadPrivateDirectChat, isAccountUnlocked]);
 
   useEffect(() => {
     applyDisplaySettings(displaySettings);
@@ -1154,52 +2680,84 @@ export default function App() {
     }
 
     if (selectedChat.kind !== 'group' || selectedChat.group.isOpen === false) {
-      void loadMessages(selectedChat);
-      return undefined;
+      // Direct and closed-group chats have no public websocket; poll quietly
+      // so newly received messages show up without a manual refresh.
+      const chat = selectedChat;
+
+      void loadMessages(chat);
+
+      const interval = window.setInterval(() => {
+        void loadMessages(chat, actions, { quiet: true });
+      }, 15000);
+
+      return () => window.clearInterval(interval);
     }
 
     const chat = selectedChat;
-    const socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId));
+    let socket: WebSocket | null = null;
+    let reconnectTimeout = 0;
+    let isDisposed = false;
     let receivedInitialMessages = false;
+    let usedRestFallback = false;
 
     setMessages({ phase: 'loading', value: messages.value });
 
-    socket.addEventListener('message', (event) => {
-      try {
-        const nextMessages = parseChatMessages(event.data);
+    function connect() {
+      if (isDisposed) {
+        return;
+      }
 
-        if (!receivedInitialMessages) {
-          receivedInitialMessages = true;
-          setMessages({ phase: 'ready', value: sortMessages(nextMessages) });
+      socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId));
+
+      socket.addEventListener('message', (event) => {
+        try {
+          const nextMessages = parseChatMessages(event.data);
+
+          setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+
+          if (!receivedInitialMessages) {
+            receivedInitialMessages = true;
+            setMessages({ phase: 'ready', value: sortMessagesByTimestamp(nextMessages) });
+            return;
+          }
+
+          // Reconnects resend the initial batch; merging dedupes by signature.
+          setMessages((current) => ({
+            phase: 'ready',
+            value: mergeMessages(current.value, nextMessages),
+          }));
+        } catch (error) {
+          setMessages({
+            error: getBridgeErrorMessage(error, t('status.loadingError.readLiveMessages'), t),
+            phase: 'error',
+            value: messages.value,
+          });
+        }
+      });
+
+      socket.addEventListener('close', () => {
+        if (isDisposed) {
           return;
         }
 
-        setMessages((current) => ({
-          phase: 'ready',
-          value: mergeMessages(current.value, nextMessages),
-        }));
-      } catch (error) {
-        setMessages({
-        error: getBridgeErrorMessage(error, t('status.loadingError.readLiveMessages'), t),
-          phase: 'error',
-          value: messages.value,
-        });
-      }
-    });
+        if (!receivedInitialMessages) {
+          // No websocket (e.g. browser dev against a REST-only node): fall back
+          // to REST, quietly after the first load so the list does not flicker.
+          void loadMessages(chat, actions, { quiet: usedRestFallback });
+          usedRestFallback = true;
+        }
 
-    socket.addEventListener('error', () => {
-      if (!receivedInitialMessages) {
-        void loadMessages(chat);
-      }
-    });
+        reconnectTimeout = window.setTimeout(connect, 5000);
+      });
+    }
 
-    socket.addEventListener('close', () => {
-      if (!receivedInitialMessages) {
-        void loadMessages(chat);
-      }
-    });
+    connect();
 
-    return () => socket.close();
+    return () => {
+      isDisposed = true;
+      window.clearTimeout(reconnectTimeout);
+      socket?.close();
+    };
   }, [selectedChatKey, actionsKey, isAccountUnlocked]);
 
   useEffect(() => {
@@ -1242,7 +2800,7 @@ export default function App() {
   }, [account?.address, actionsKey]);
 
   useEffect(() => {
-    if (!selectedGroup) {
+    if (!selectedGroup || isGeneralChatGroup(selectedGroup)) {
       return undefined;
     }
 
@@ -1252,6 +2810,45 @@ export default function App() {
 
     return () => window.clearInterval(interval);
   }, [selectedGroupId, actionsKey]);
+
+  function renderJoinGroupButton() {
+    if (!(
+      selectedChat?.kind === 'group' &&
+      selectedGroupId !== null &&
+      selectedGroupId > 0 &&
+      isSelectedGroupMembershipConfirmed &&
+      !isConfirmedJoinedGroup &&
+      canJoinGroup
+    )) {
+      return null;
+    }
+
+    return (
+      <button
+        className="button button--secondary"
+        disabled={!canSubmitJoin}
+        onClick={() => void handleJoinGroup()}
+        title={
+          hasPendingJoinTransaction
+            ? t('button.join.transaction.pending')
+            : hasPendingJoinRequest
+              ? t('button.join.request.pending')
+              : canUseSelectedAccount && canJoinGroup
+                ? t('button.join')
+                : groupJoinUnavailableLabel
+        }
+        type="button"
+      >
+        {joinPending
+          ? t('button.joining')
+          : hasPendingJoinTransaction
+            ? t('button.join.pending')
+            : hasPendingJoinRequest
+              ? t('button.join.request.pending')
+              : t('button.join')}
+      </button>
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -1265,42 +2862,59 @@ export default function App() {
             error={accountError}
             isHomeBridge={bridge.value.isHomeBridge}
             onConnect={() => void connectSelectedAccount()}
+            onOpenAvatar={setAvatarLightboxImage}
+            profile={account ? avatarProfiles[account.address] : undefined}
             t={t}
           />
         </div>
       </header>
 
-      <section className={`layout${selectedGroup && membersOpen ? ' layout--members-open' : ''}`}>
+      <section className={`layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}`}>
         <aside className="sidebar" aria-label={t('aria.navigation')}>
           <section className="panel">
             <div className="panel__header">
               <h2>{t('label.common.groups')}</h2>
-              <span>{groups.value.length}</span>
+              <div className="panel__header-actions">
+                <span className="panel__count">{groups.value.length}</span>
+                <button
+                  aria-expanded={isGroupSearchVisible}
+                  aria-label={t('label.searchGroups')}
+                  className="icon-button"
+                  onClick={toggleGroupSearch}
+                  title={t('label.searchGroups')}
+                  type="button"
+                >
+                  <SearchIcon />
+                </button>
+              </div>
             </div>
-            <form
-              className="search"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void loadGroups(search);
-              }}
-            >
-              <input
-                aria-label={t('label.searchGroups')}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t('placeholder.searchGroups')}
-                value={search}
-              />
-              <button className="button" type="submit">
-                {t('button.search')}
-              </button>
-            </form>
+            {isGroupSearchVisible ? (
+              <form
+                className="search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void loadGroups(search);
+                }}
+              >
+                <input
+                  aria-label={t('label.searchGroups')}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t('placeholder.searchGroups')}
+                  ref={groupSearchInputRef}
+                  value={search}
+                />
+                <button className="button" type="submit">
+                  {t('button.search')}
+                </button>
+              </form>
+            ) : null}
             {groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
             {groups.phase === 'loading' ? (
               <LoadingRows count={5} label={t('label.loading')} />
             ) : (
               <GroupList
+                activityByGroupId={groupActivityById}
                 groups={sortedGroups}
-                joinedIds={joinedIds}
                 onSelect={selectGroup}
                 selectedGroupId={selectedGroupId}
                 t={t}
@@ -1338,6 +2952,7 @@ export default function App() {
             ) : (
               <DirectList
                 activeChats={activeChats.value}
+                activityByAddress={directActivityByAddress}
                 canOpen={canOpenDirectChat}
                 onSelect={selectDirect}
                 selectedAddress={selectedDirectAddress}
@@ -1359,11 +2974,13 @@ export default function App() {
               </h2>
               {selectedChat?.kind === 'group' ? (
                 <p>
-                  {selectedChat.group.isOpen === false
-                    ? canReadPrivateGroupChat
-                      ? t('hint.groupMeta.privateRead')
-                      : t('hint.groupMeta.privateHistoryUnavailable')
-                    : t('group.meta.open')}
+                  {isGeneralChatGroup(selectedChat.group)
+                    ? t('group.meta.general')
+                    : selectedChat.group.isOpen === false
+                      ? canReadPrivateGroupChat
+                        ? t('hint.groupMeta.privateRead')
+                        : t('hint.groupMeta.privateHistoryUnavailable')
+                      : t('group.meta.open')}
                   {isSelectedMintingGroup ? t('group.status.minting.group') : ''}
                   {showMintingControls
                     ? accountMintingStatus?.isMinting === true
@@ -1381,7 +2998,7 @@ export default function App() {
                     : hasPendingJoinRequest
                       ? t('group.status.request.pending')
                       : ''}
-                  {typeof selectedChat.group.memberCount === 'number'
+                  {!isGeneralChatGroup(selectedChat.group) && typeof selectedChat.group.memberCount === 'number'
                     ? ` / ${selectedChat.group.memberCount.toLocaleString()} ${t('label.common.members')}`
                     : ''}
                 </p>
@@ -1394,7 +3011,7 @@ export default function App() {
               ) : null}
             </div>
             <div className="chat-pane__actions">
-              {selectedChat?.kind === 'group' ? (
+              {selectedChat?.kind === 'group' && !isSelectedGeneralChat ? (
                 <button
                   className="button button--secondary"
                   onClick={() => setMembersOpen((current) => !current)}
@@ -1405,32 +3022,8 @@ export default function App() {
                     : `${t('label.common.members')} (${groupMembers.value.length})`}
                 </button>
               ) : null}
-              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && !isJoinedGroup && canJoinGroup ? (
-                <button
-                  className="button button--secondary"
-                  disabled={!canSubmitJoin}
-                  onClick={() => void handleJoinGroup()}
-                  title={
-                    hasPendingJoinTransaction
-                      ? t('button.join.transaction.pending')
-                      : hasPendingJoinRequest
-                        ? t('button.join.request.pending')
-                        : isAccountUnlocked && canJoinGroup
-                          ? t('button.join')
-                          : groupJoinUnavailableLabel
-                  }
-                  type="button"
-                >
-                  {joinPending
-                    ? t('button.joining')
-                    : hasPendingJoinTransaction
-                      ? t('button.join.pending')
-                      : hasPendingJoinRequest
-                        ? t('button.join.request.pending')
-                        : t('button.join')}
-                </button>
-              ) : null}
-              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && isJoinedGroup && canLeaveGroup ? (
+              {renderJoinGroupButton()}
+              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && isConfirmedJoinedGroup && canLeaveGroup ? (
                 <button
                   className="button button--secondary"
                   disabled={!canSubmitLeave}
@@ -1438,7 +3031,7 @@ export default function App() {
                   title={
                     hasPendingLeaveTransaction
                       ? t('button.leave.transaction.pending')
-                      : isAccountUnlocked && canLeaveGroup
+                      : canUseSelectedAccount && canLeaveGroup
                         ? t('button.leave')
                         : groupLeaveUnavailableLabel
                   }
@@ -1499,38 +3092,91 @@ export default function App() {
           {messages.phase === 'loading' ? (
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
-            <MessageList messages={messages.value} t={t} />
+            <MessageList
+              avatarProfiles={avatarProfiles}
+              canCompose={canComposeMessage}
+              canOpenMediaPlayer={canOpenMediaPlayer}
+              messages={messages.value}
+              onEdit={startEdit}
+              onOpenAccount={setAccountInfoTarget}
+              onOpenAvatar={setAvatarLightboxImage}
+              onReact={(message, reaction, contentState) => void handleMessageReaction(message, reaction, contentState)}
+              onReply={startReply}
+              pendingReactionKey={reactionPendingKey}
+              selfAddress={account?.address ?? null}
+              t={t}
+            />
           )}
 
-          <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
-            <input
-              aria-label={t('label.common.message')}
-              disabled={!canComposeMessage || sendPending}
-              maxLength={4000}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder={t('placeholder.message')}
-              value={draft}
-            />
-            <button
-              className="button"
-              disabled={!canSubmitMessage}
-              title={
-                selectedChat?.kind === 'direct'
-                  ? canComposeMessage
-                    ? t('button.sendDirectMessage')
-                    : directSendUnavailableLabel
-                  : canComposeMessage
-                    ? t('button.sendMessage')
-                    : groupSendUnavailableLabel
-              }
-              type="submit"
-            >
-              {sendPending ? t('button.sending') : t('button.send')}
-            </button>
-          </form>
+          {showGroupComposerNotice ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{groupComposerNotice}</p>
+              {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}
+            </div>
+          ) : (
+            <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
+              {composeContext ? (
+                <div className="composer__context">
+                  <div className="composer__context-text">
+                    <strong>
+                      {composeContext.kind === 'edit'
+                        ? t('label.composer.editing')
+                        : t('label.composer.replyingTo', {
+                            name: getMessageSenderLabel(
+                              composeContext.message,
+                              avatarProfiles[composeContext.message.sender],
+                            ),
+                          })}
+                    </strong>
+                    <span>
+                      {getMessageSnippet(
+                        composeContext.kind === 'edit' ? composeContext.thread.latest : composeContext.message,
+                        t,
+                      )}
+                    </span>
+                  </div>
+                  <button className="button button--secondary" onClick={cancelComposeContext} type="button">
+                    {t('button.cancel')}
+                  </button>
+                </div>
+              ) : null}
+              <textarea
+                aria-label={t('label.common.message')}
+                disabled={!canComposeMessage || sendPending}
+                maxLength={4000}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={t('placeholder.message')}
+                ref={composerRef}
+                rows={1}
+                value={draft}
+              />
+              <button
+                className="button"
+                disabled={!canSubmitMessage}
+                title={
+                  selectedChat?.kind === 'direct'
+                    ? canComposeMessage
+                      ? t('button.sendDirectMessage')
+                      : directSendUnavailableLabel
+                    : canComposeMessage
+                      ? t('button.sendMessage')
+                      : groupSendUnavailableLabel
+                }
+                type="submit"
+              >
+                {sendPending ? t('button.sending') : t('button.send')}
+              </button>
+            </form>
+          )}
         </section>
 
-        {selectedGroup && membersOpen ? (
+        {showGroupMembers && membersOpen ? (
           <aside className="members-drawer" aria-label={t('aria.groupMembers')}>
             <div className="members-drawer__header">
               <div>
@@ -1556,10 +3202,12 @@ export default function App() {
                     <span>{getShortAddress(request.joiner)}</span>
                     <button
                       className="button button--secondary"
-                      disabled={!isAccountUnlocked || !canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
+                      disabled={!canUseSelectedAccount || !canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
                       onClick={() => void handleApproveJoinRequest(request)}
                       title={
-                        !isAccountUnlocked
+                        !account
+                          ? accountRequiredLabel
+                          : !canUseSelectedAccount
                           ? accountLockedLabel
                           : canApproveGroupJoinRequests
                             ? t('action.approveJoinRequest')
@@ -1576,6 +3224,28 @@ export default function App() {
           </aside>
         ) : null}
       </section>
+      {accountInfoTarget ? (
+        <AccountInfoDialog
+          canOpenDirect={canOpenDirectChat}
+          directUnavailableLabel={directAccessUnavailableLabel}
+          onClose={() => setAccountInfoTarget(null)}
+          onOpenAvatar={(image) => {
+            setAccountInfoTarget(null);
+            setAvatarLightboxImage(image);
+          }}
+          onOpenDirect={openDirectFromAccount}
+          profile={avatarProfiles[accountInfoTarget.sender]}
+          target={accountInfoTarget}
+          t={t}
+        />
+      ) : null}
+      {avatarLightboxImage ? (
+        <AvatarLightbox
+          image={avatarLightboxImage}
+          onClose={() => setAvatarLightboxImage(null)}
+          t={t}
+        />
+      ) : null}
     </main>
   );
 }

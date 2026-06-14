@@ -1,4 +1,5 @@
 import { buildNodeWebSocketUrl, qdnRequest } from './qdnRequest';
+import { sortMessagesByTimestamp } from './messageThreads';
 import type {
   ActiveChats,
   ChatActionResult,
@@ -9,6 +10,7 @@ import type {
   GroupMembersResponse,
   GroupWithJoinRequests,
   MintingStatus,
+  NameSummary,
   NodeApiFetchResult,
   NodeMintingAccount,
   NodeStatus,
@@ -39,10 +41,6 @@ function assertOk<T>(result: NodeApiFetchResult<T>, label: string) {
 
 function hasBridgeAction(actions: QdnAction[] | undefined, action: string) {
   return actions?.some((candidate) => candidate.toUpperCase() === action.toUpperCase()) ?? false;
-}
-
-function sortMessages(messages: ChatMessage[]) {
-  return [...messages].sort((first, second) => first.timestamp - second.timestamp);
 }
 
 function normalizeGroupMembers(response: GroupMember[] | GroupMembersResponse) {
@@ -109,11 +107,16 @@ export function buildActiveChatsPath(address: string) {
   return `/chat/active/${encodeURIComponent(address)}?encoding=BASE64&haschatreference=false`;
 }
 
+export function buildAccountNamesPath(address: string) {
+  return `/names/address/${encodeURIComponent(address)}`;
+}
+
 export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIMIT) {
+  // No haschatreference filter: edit revisions (messages with a chatReference)
+  // are needed to render edited messages.
   const query = new URLSearchParams({
     txGroupId: String(groupId),
     encoding: 'BASE64',
-    haschatreference: 'false',
     limit: String(limit),
     reverse: 'true',
   });
@@ -188,6 +191,17 @@ export async function getMemberGroups(address: string, actions?: QdnAction[]) {
   }
 
   return fetchNodeApiData<GroupData[]>(buildMemberGroupsPath(address), 'Member groups');
+}
+
+export async function getAccountNames(address: string, actions?: QdnAction[]) {
+  if (hasBridgeAction(actions, 'GET_ACCOUNT_NAMES')) {
+    return qdnRequest<NameSummary[]>({
+      action: 'GET_ACCOUNT_NAMES',
+      address,
+    });
+  }
+
+  return fetchNodeApiData<NameSummary[]>(buildAccountNamesPath(address), 'Account names');
 }
 
 export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
@@ -319,7 +333,6 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
   const messageRequest = {
     encoding: 'BASE64',
     groupId,
-    hasChatReference: false,
     limit: DEFAULT_LIST_LIMIT,
     reverse: true,
   };
@@ -334,7 +347,7 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
       ...messageRequest,
     });
 
-    return sortMessages(messages);
+    return sortMessagesByTimestamp(messages);
   }
 
   if (hasBridgeAction(actions, 'SEARCH_CHAT_MESSAGES')) {
@@ -343,12 +356,12 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
       ...messageRequest,
     });
 
-    return sortMessages(messages);
+    return sortMessagesByTimestamp(messages);
   }
 
   const messages = await fetchNodeApiData<ChatMessage[]>(buildGroupMessagesPath(groupId), 'Group messages');
 
-  return sortMessages(messages);
+  return sortMessagesByTimestamp(messages);
 }
 
 export async function getDirectMessages(otherAddress: string, actions?: QdnAction[]) {
@@ -356,13 +369,12 @@ export async function getDirectMessages(otherAddress: string, actions?: QdnActio
     const messages = await qdnRequest<ChatMessage[]>({
       action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
       encoding: 'BASE64',
-      hasChatReference: false,
       limit: DEFAULT_LIST_LIMIT,
       otherAddress,
       reverse: true,
     });
 
-    return sortMessages(messages);
+    return sortMessagesByTimestamp(messages);
   }
 
   throw new Error('Direct private chat reads require Qortium Home direct chat support.');

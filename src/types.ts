@@ -38,6 +38,11 @@ export type NodeStatus = {
   [key: string]: unknown;
 };
 
+export type NameSummary = {
+  name?: string | null;
+  owner?: string | null;
+};
+
 export type GroupData = {
   approvalThreshold?: string;
   created?: number;
@@ -144,6 +149,7 @@ export type ActiveChats = {
 export type ChatMessage = {
   chatReference?: string | null;
   data?: string | null;
+  decryptionStatus?: string;
   encoding?: 'BASE58' | 'BASE64';
   isEncrypted?: boolean;
   isText?: boolean;
@@ -152,6 +158,7 @@ export type ChatMessage = {
   sender: string;
   senderName?: string | null;
   signature?: string | null;
+  status?: string;
   timestamp: number;
   txGroupId: number;
 };
