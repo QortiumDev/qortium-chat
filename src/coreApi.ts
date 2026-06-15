@@ -406,9 +406,10 @@ export async function getPrivateDirectActiveChats(actions?: QdnAction[]) {
 export async function getGroupMessages(
   group: GroupData,
   actions?: QdnAction[],
-  options: { before?: number } = {},
+  options: { before?: number; decryptPrivate?: boolean } = {},
 ) {
   const groupId = group.groupId;
+  const shouldDecryptPrivate = options.decryptPrivate !== false;
   const messageRequest = {
     encoding: 'BASE64',
     groupId,
@@ -419,7 +420,7 @@ export async function getGroupMessages(
     ...(typeof options.before === 'number' ? { before: options.before } : {}),
   };
 
-  if (group.isOpen === false) {
+  if (group.isOpen === false && shouldDecryptPrivate) {
     if (!hasBridgeAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')) {
       throw new Error('Closed group chat reads require Qortium Home private group chat support.');
     }

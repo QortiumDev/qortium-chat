@@ -322,6 +322,27 @@ describe('Core API path builders', () => {
     });
   });
 
+  it('can read closed-group messages without private decryption', async () => {
+    qdnRequestMock.mockResolvedValueOnce([{ isEncrypted: true, sender: 'Qc', timestamp: 30, txGroupId: 8 }]);
+
+    await expect(
+      getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, [
+        'SEARCH_CHAT_MESSAGES',
+        'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
+      ], {
+        decryptPrivate: false,
+      }),
+    ).resolves.toEqual([{ isEncrypted: true, sender: 'Qc', timestamp: 30, txGroupId: 8 }]);
+
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'SEARCH_CHAT_MESSAGES',
+      encoding: 'BASE64',
+      groupId: 8,
+      limit: 100,
+      reverse: true,
+    });
+  });
+
   it('pages backward through history with a before timestamp', () => {
     expect(buildGroupMessagesPath(7, 100, 1234)).toBe(
       '/chat/messages?txGroupId=7&encoding=BASE64&limit=100&reverse=true&before=1234',
@@ -340,6 +361,24 @@ describe('Core API path builders', () => {
       before: 1234,
       encoding: 'BASE64',
       groupId: 7,
+      limit: 100,
+      reverse: true,
+    });
+  });
+
+  it('forwards the before timestamp through raw closed-group reads', async () => {
+    qdnRequestMock.mockResolvedValueOnce([{ isEncrypted: true, sender: 'Qa', timestamp: 5, txGroupId: 8 }]);
+
+    await getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES'], {
+      before: 1234,
+      decryptPrivate: false,
+    });
+
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'SEARCH_CHAT_MESSAGES',
+      before: 1234,
+      encoding: 'BASE64',
+      groupId: 8,
       limit: 100,
       reverse: true,
     });
