@@ -52,7 +52,9 @@ export type GroupData = {
   isAdmin?: boolean;
   isMintingGroup?: boolean;
   isOpen?: boolean;
+  maximumBlockDelay?: number;
   memberCount?: number;
+  minimumBlockDelay?: number;
   owner?: string;
   ownerPrimaryName?: string;
   updated?: number | null;
@@ -240,4 +242,24 @@ export type GroupApprovalResult = {
   pendingSignature?: string;
   result?: unknown;
   transactionSignature?: string;
+};
+
+// A confirmed GROUP_APPROVAL vote, as returned by /transactions/search. Votes
+// ride the root group (txGroupId 0) and reference the pending tx they decide.
+export type GroupApprovalVote = {
+  approval?: boolean;
+  blockHeight?: number | null;
+  creatorAddress?: string;
+  pendingSignature?: string;
+  signature?: string;
+  timestamp?: number;
+};
+
+// Derived client-side from the vote tally; not a Core response shape.
+export type ApprovalProgress = {
+  approvalsSoFar: number; // distinct eligible voters whose latest vote approves
+  opposed: number; // distinct eligible voters whose latest vote opposes (informational)
+  approvalsNeeded: number; // votes required to cross the group's approval threshold
+  totalAuthorities: number; // eligible approvers (non-null members for a null-owner group)
+  myVote: 'approve' | 'oppose' | null; // current account's latest confirmed vote
 };

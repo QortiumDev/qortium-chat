@@ -11,6 +11,8 @@ import {
   buildGroupJoinRequestsPath,
   buildGroupMembersPath,
   buildMemberGroupsPath,
+  buildBlockHeightPath,
+  buildGroupApprovalVotesPath,
   buildPendingTransactionsPath,
   buildSelfRewardSharesPath,
   buildTransactionStatusPath,
@@ -81,6 +83,10 @@ describe('Core API path builders', () => {
     );
     expect(buildTransactionStatusPath('sig/with+chars')).toBe('/transactions/signature/sig%2Fwith%2Bchars');
     expect(buildPendingTransactionsPath(1)).toBe('/transactions/pending?txGroupId=1&limit=100&reverse=false');
+    expect(buildGroupApprovalVotesPath()).toBe(
+      '/transactions/search?txType=GROUP_APPROVAL&confirmationStatus=CONFIRMED&limit=100&reverse=true',
+    );
+    expect(buildBlockHeightPath()).toBe('/blocks/height');
   });
 
   it('reads pending group approvals over the keyless FETCH_NODE_API fallback', async () => {

@@ -7,7 +7,9 @@ import {
   getActiveChats,
   getAccountGroupJoinRequests,
   getAdminGroupJoinRequests,
+  getCurrentBlockHeight,
   getDirectMessages,
+  getGroupApprovalVotes,
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
@@ -26,6 +28,13 @@ import {
   startMinting,
   submitGroupApproval,
 } from './coreApi';
+import {
+  BLOCK_TIME_MS,
+  computeApprovalProgress,
+  computeApprovalWindow,
+  NULL_ACCOUNT_ADDRESS,
+  type ApprovalWindowState,
+} from './approvalProgress';
 import {
   DEFAULT_REACTION_OPTIONS,
   buildChatMessageText,
@@ -86,7 +95,9 @@ import type {
   ActiveChats,
   ActiveDirectChat,
   BridgeState,
+  ApprovalProgress,
   ChatMessage,
+  GroupApprovalVote,
   GroupData,
   GroupJoinRequest,
   GroupWithJoinRequests,
@@ -108,6 +119,7 @@ const emptyMessages: ChatMessage[] = [];
 const emptyJoinRequests: GroupJoinRequest[] = [];
 const emptyAdminJoinRequests: GroupWithJoinRequests[] = [];
 const emptyPendingApprovals: PendingApprovalTransaction[] = [];
+const emptyApprovalVotes: GroupApprovalVote[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
 
 // Groups whose transactions are gated by development-group approval (e.g. Core
@@ -119,12 +131,6 @@ const DEV_GROUP_IDS = new Set(
     .map((value) => Number(value.trim()))
     .filter((value) => Number.isInteger(value) && value > 0),
 );
-
-// The null account (the all-zero public key burn address). A group whose only
-// admin is this account has no real admins, so the Core treats every member as
-// an approver for group-approval transactions (e.g. Previewnet's "development"
-// group, which self-governs Core auto-updates).
-const NULL_ACCOUNT_ADDRESS = 'QdSnUy6sUiEnaN87dWmE92g1uQjrvPgrWG';
 
 type SelectedChat =
   | {
@@ -607,24 +613,64 @@ function describeApprovalType(transaction: PendingApprovalTransaction, t: Transl
   return transaction.type ?? t('label.approval.type.unknown');
 }
 
+// Human-readable, approximate ETA for a target height relative to the tip.
+function formatBlockEta(targetHeight: number | null, currentHeight: number | null, t: TranslateFunction) {
+  if (targetHeight === null || currentHeight === null) {
+    return null;
+  }
+
+  const blocksRemaining = targetHeight - currentHeight;
+
+  if (blocksRemaining <= 0) {
+    return null;
+  }
+
+  const remainingMs = blocksRemaining * BLOCK_TIME_MS;
+  const minutes = Math.round(remainingMs / 60000);
+
+  if (minutes < 60) {
+    return t('label.approval.eta.minutes', { count: minutes });
+  }
+
+  if (remainingMs < 36 * 3600 * 1000) {
+    return t('label.approval.eta.hours', { count: Math.round(remainingMs / (3600 * 1000)) });
+  }
+
+  return t('label.approval.eta.days', { count: Math.round(remainingMs / (24 * 3600 * 1000)) });
+}
+
 function GroupApprovalDialog({
   actionSignature,
+  avatarProfiles,
   canVote,
+  currentHeight,
+  group,
+  knownNames,
   onApprove,
   onClose,
   onOppose,
   pending,
+  progressBySignature,
+  progressReady,
   t,
   voteUnavailableLabel,
+  votedSignatures,
 }: {
   actionSignature: string | null;
+  avatarProfiles: AvatarProfilesByAddress;
   canVote: boolean;
+  currentHeight: number | null;
+  group: GroupData | null;
+  knownNames: ReadonlyMap<string, string>;
   onApprove: (signature: string) => void;
   onClose: () => void;
   onOppose: (signature: string) => void;
   pending: AsyncState<PendingApprovalTransaction[]>;
+  progressBySignature: ReadonlyMap<string, ApprovalProgress>;
+  progressReady: boolean;
   t: TranslateFunction;
   voteUnavailableLabel: string;
+  votedSignatures: Record<string, { approval: boolean }>;
 }) {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -656,7 +702,10 @@ function GroupApprovalDialog({
       onClick={onClose}
       role="dialog"
     >
-      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()}>
+      <section
+        className="account-dialog__card account-dialog__card--approval"
+        onClick={(event) => event.stopPropagation()}
+      >
         <header className="account-dialog__header">
           <div className="account-dialog__heading">
             <span>{t('label.groupApproval.section')}</span>
@@ -674,6 +723,7 @@ function GroupApprovalDialog({
         </header>
 
         <p className="muted">{t('label.groupApproval.intro')}</p>
+        <p className="muted">{t('label.approval.pendingNote')}</p>
 
         {pending.phase === 'error' ? <p className="error">{pending.error}</p> : null}
 
@@ -685,15 +735,111 @@ function GroupApprovalDialog({
           <ul className="approval-list">
             {transactions.map((transaction) => {
               const busy = actionSignature === transaction.signature;
+              const creatorAddress = transaction.creatorAddress ?? '';
+              const creatorProfile = creatorAddress ? avatarProfiles[creatorAddress] : undefined;
+              const { avatarSrc, name } = getAvatarView(creatorProfile, knownNames.get(creatorAddress) ?? null);
+              const creatorLabel = name ?? (creatorAddress ? getShortAddress(creatorAddress) : '-');
+
+              const progress = progressBySignature.get(transaction.signature);
+              const approvalsValue =
+                progressReady && progress
+                  ? t('label.approval.approvalsValue', {
+                      count: progress.approvalsSoFar,
+                      needed: progress.approvalsNeeded,
+                    })
+                  : t('label.approval.unavailable');
+              const progressRatio =
+                progress && progress.approvalsNeeded > 0
+                  ? Math.min(1, progress.approvalsSoFar / progress.approvalsNeeded)
+                  : 0;
+
+              const optimisticVote = votedSignatures[transaction.signature];
+              const effectiveVote: 'approve' | 'oppose' | null = optimisticVote
+                ? optimisticVote.approval
+                  ? 'approve'
+                  : 'oppose'
+                : (progress?.myVote ?? null);
+
+              const approvalWindow = computeApprovalWindow(transaction, group, currentHeight);
+              const renderWindow = (height: number | null, state: ApprovalWindowState) => {
+                if (height === null) {
+                  return t('label.approval.unavailable');
+                }
+
+                if (state === 'expired') {
+                  return t('label.approval.windowExpired', { height });
+                }
+
+                if (state === 'open') {
+                  return t('label.approval.windowEligibleNow', { height });
+                }
+
+                const eta = formatBlockEta(height, currentHeight, t);
+
+                return eta
+                  ? t('label.approval.windowEta', { height, eta })
+                  : t('label.approval.windowEligibleNow', { height });
+              };
 
               return (
                 <li className="approval-item" key={transaction.signature}>
                   <div className="approval-item__details">
                     <strong>{describeApprovalType(transaction, t)}</strong>
+                    <div className="approval-item__creator">
+                      <UserAvatar className="approval-item__avatar" name={name} src={avatarSrc} />
+                      <span className="approval-item__creator-name" title={creatorAddress || undefined}>
+                        {creatorLabel}
+                      </span>
+                    </div>
                     <dl className="approval-item__meta">
                       <div>
+                        <dt>{t('label.approval.approvalsSoFar')}</dt>
+                        <dd>
+                          <span className="approval-item__progress">
+                            {approvalsValue}
+                            {progressReady && progress && progress.opposed > 0
+                              ? ` (${t('label.approval.opposed')}: ${progress.opposed})`
+                              : ''}
+                          </span>
+                          {progressReady && progress ? (
+                            <span className="approval-item__progress-bar" aria-hidden="true">
+                              <span style={{ width: `${Math.round(progressRatio * 100)}%` }} />
+                            </span>
+                          ) : null}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>{t('label.approval.threshold')}</dt>
+                        <dd>
+                          {progressReady && progress
+                            ? t('label.approval.thresholdValue', {
+                                pct: group?.approvalThreshold ?? '-',
+                                total: progress.totalAuthorities,
+                              })
+                            : t('label.approval.unavailable')}
+                        </dd>
+                      </div>
+                      {effectiveVote ? (
+                        <div>
+                          <dt>{t('label.approval.yourVote')}</dt>
+                          <dd className="approval-item__yourvote">
+                            {effectiveVote === 'approve'
+                              ? t('label.approval.yourVote.approve')
+                              : t('label.approval.yourVote.oppose')}
+                          </dd>
+                        </div>
+                      ) : null}
+                      <div>
+                        <dt>{t('label.approval.minWindow')}</dt>
+                        <dd>{renderWindow(approvalWindow.minEndsAtHeight, approvalWindow.minState)}</dd>
+                      </div>
+                      <div>
+                        <dt>{t('label.approval.maxWindow')}</dt>
+                        <dd>{renderWindow(approvalWindow.maxEndsAtHeight, approvalWindow.maxState)}</dd>
+                      </div>
+                      <div>
                         <dt>{t('label.approval.creator')}</dt>
-                        <dd>{transaction.creatorAddress ?? '-'}</dd>
+                        <dd>{creatorAddress || '-'}</dd>
                       </div>
                       <div>
                         <dt>{t('label.approval.time')}</dt>
@@ -728,7 +874,11 @@ function GroupApprovalDialog({
                       title={canVote ? t('button.approve') : voteUnavailableLabel}
                       type="button"
                     >
-                      {busy ? t('button.approving') : t('button.approve')}
+                      {busy
+                        ? t('button.approving')
+                        : effectiveVote === 'approve'
+                          ? t('button.voteSubmitted')
+                          : t('button.approve')}
                     </button>
                     <button
                       className="button button--secondary"
@@ -737,7 +887,11 @@ function GroupApprovalDialog({
                       title={canVote ? t('button.oppose') : voteUnavailableLabel}
                       type="button"
                     >
-                      {busy ? t('button.opposing') : t('button.oppose')}
+                      {busy
+                        ? t('button.opposing')
+                        : effectiveVote === 'oppose'
+                          ? t('button.voteSubmitted')
+                          : t('button.oppose')}
                     </button>
                   </div>
                 </li>
@@ -1839,6 +1993,10 @@ export default function App() {
   const [startMintingPending, setStartMintingPending] = useState(false);
   const [pendingApprovals, setPendingApprovals] =
     useState<AsyncState<PendingApprovalTransaction[]>>(createState(emptyPendingApprovals));
+  const [approvalVotes, setApprovalVotes] =
+    useState<AsyncState<GroupApprovalVote[]>>(createState(emptyApprovalVotes));
+  const [currentBlockHeight, setCurrentBlockHeight] = useState<number | null>(null);
+  const [votedSignatures, setVotedSignatures] = useState<Record<string, { approval: boolean }>>({});
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
   const [approvalActionSignature, setApprovalActionSignature] = useState<string | null>(null);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
@@ -2049,8 +2207,21 @@ export default function App() {
       addresses.add(selectedGroup.owner);
     }
 
+    for (const transaction of pendingApprovals.value) {
+      if (transaction.creatorAddress) {
+        addresses.add(transaction.creatorAddress);
+      }
+    }
+
     return Array.from(addresses);
-  }, [account?.address, accountInfoTarget?.sender, groupMembers.value, messages.value, selectedGroup?.owner]);
+  }, [
+    account?.address,
+    accountInfoTarget?.sender,
+    groupMembers.value,
+    messages.value,
+    pendingApprovals.value,
+    selectedGroup?.owner,
+  ]);
   const avatarProfiles = useAvatarProfiles(avatarAddresses, knownAvatarNames, actions, actionsKey);
 
   useEffect(() => {
@@ -2223,6 +2394,29 @@ export default function App() {
     (selectedGroupMembersLoaded && !selectedGroupHasRealAdmin && isMemberOfSelectedGroup);
   const showApprovalControls = isSelectedDevGroup && isApproverOfSelectedGroup && !!account;
   const pendingApprovalCount = pendingApprovals.value.length;
+  const approvalProgressReady = selectedGroupMembersLoaded && approvalVotes.phase === 'ready';
+  const approvalProgressBySignature = useMemo(() => {
+    const map = new Map<string, ApprovalProgress>();
+
+    if (!approvalProgressReady) {
+      return map;
+    }
+
+    for (const transaction of pendingApprovals.value) {
+      map.set(
+        transaction.signature,
+        computeApprovalProgress(
+          transaction,
+          selectedGroup,
+          groupMembers.value,
+          approvalVotes.value,
+          account?.address ?? null,
+        ),
+      );
+    }
+
+    return map;
+  }, [account?.address, approvalProgressReady, approvalVotes.value, groupMembers.value, pendingApprovals.value, selectedGroup]);
   const canSubmitGroupApproval =
     showApprovalControls && canUseSelectedAccount && canGroupApproval && approvalActionSignature === null;
   const groupApprovalUnavailableLabel = !account
@@ -2679,6 +2873,34 @@ export default function App() {
       setPendingApprovals({ phase: 'loading', value: emptyPendingApprovals });
     }
 
+    // Vote tally and tip height are best-effort context for the dialog; their
+    // failures must not break the pending list, so they are fetched separately.
+    void (async () => {
+      try {
+        const votes = await getGroupApprovalVotes();
+
+        if (pendingApprovalsRequestRef.current === requestId && selectedGroupIdRef.current === groupId) {
+          setApprovalVotes({ phase: 'ready', value: votes });
+        }
+      } catch {
+        if (pendingApprovalsRequestRef.current === requestId && selectedGroupIdRef.current === groupId) {
+          setApprovalVotes({ error: '', phase: 'error', value: emptyApprovalVotes });
+        }
+      }
+    })();
+
+    void (async () => {
+      try {
+        const height = await getCurrentBlockHeight();
+
+        if (pendingApprovalsRequestRef.current === requestId && selectedGroupIdRef.current === groupId) {
+          setCurrentBlockHeight(typeof height === 'number' ? height : null);
+        }
+      } catch {
+        // Leave the previous height; ETA simply falls back to height-only display.
+      }
+    })();
+
     try {
       const value = await getPendingGroupApprovals(groupId);
 
@@ -2716,6 +2938,10 @@ export default function App() {
       }
 
       const result = await submitGroupApproval(pendingSignature, approval, selectedGroup.groupId);
+
+      // Optimistic: reflect the just-cast vote until the next reload sees it
+      // confirmed on-chain (the tx stays pending until the threshold is met).
+      setVotedSignatures((previous) => ({ ...previous, [pendingSignature]: { approval } }));
 
       trackTransaction({
         action: 'groupApproval',
@@ -3035,12 +3261,44 @@ export default function App() {
     if (!account || selectedGroupId === null || !isSelectedDevGroup || !isApproverOfSelectedGroup) {
       pendingApprovalsRequestRef.current += 1;
       setPendingApprovals(createState(emptyPendingApprovals));
+      setApprovalVotes(createState(emptyApprovalVotes));
+      setVotedSignatures({});
       setApprovalModalOpen(false);
       return;
     }
 
+    // Optimistic votes belong to the previous group; clear them before loading.
+    setVotedSignatures({});
     void loadPendingApprovals(selectedGroupId);
   }, [account?.address, selectedGroupId, isSelectedDevGroup, isApproverOfSelectedGroup]);
+
+  // Reconcile optimistic votes with on-chain truth: once the confirmed tally
+  // reflects a vote (or its transaction is no longer pending), drop the optimistic
+  // entry so computeApprovalProgress.myVote becomes authoritative. This avoids a
+  // stale "Vote submitted" label sticking forever if a vote is dropped/orphaned.
+  useEffect(() => {
+    if (!approvalProgressReady) {
+      return;
+    }
+
+    setVotedSignatures((previous) => {
+      const next: Record<string, { approval: boolean }> = {};
+      let changed = false;
+
+      for (const [signature, vote] of Object.entries(previous)) {
+        const stillPending = pendingApprovals.value.some((transaction) => transaction.signature === signature);
+        const confirmed = approvalProgressBySignature.get(signature)?.myVote != null;
+
+        if (stillPending && !confirmed) {
+          next[signature] = vote;
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : previous;
+    });
+  }, [approvalProgressReady, approvalProgressBySignature, pendingApprovals.value]);
 
   useEffect(() => {
     if (isGroupSearchVisible) {
@@ -3861,13 +4119,20 @@ export default function App() {
       {approvalModalOpen ? (
         <GroupApprovalDialog
           actionSignature={approvalActionSignature}
+          avatarProfiles={avatarProfiles}
           canVote={canSubmitGroupApproval}
+          currentHeight={currentBlockHeight}
+          group={selectedGroup}
+          knownNames={knownAvatarNames}
           onApprove={(signature) => void handleGroupApproval(signature, true)}
           onClose={() => setApprovalModalOpen(false)}
           onOppose={(signature) => void handleGroupApproval(signature, false)}
           pending={pendingApprovals}
+          progressBySignature={approvalProgressBySignature}
+          progressReady={approvalProgressReady}
           t={t}
           voteUnavailableLabel={groupApprovalUnavailableLabel}
+          votedSignatures={votedSignatures}
         />
       ) : null}
     </main>

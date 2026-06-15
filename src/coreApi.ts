@@ -5,6 +5,7 @@ import type {
   ChatActionResult,
   ChatMessage,
   GroupApprovalResult,
+  GroupApprovalVote,
   GroupData,
   GroupJoinRequest,
   GroupMember,
@@ -279,6 +280,35 @@ export async function getPendingGroupApprovals(txGroupId: number) {
     buildPendingTransactionsPath(txGroupId),
     'Pending approvals',
   );
+}
+
+export function buildGroupApprovalVotesPath(limit = DEFAULT_LIST_LIMIT) {
+  // GROUP_APPROVAL votes always ride the root group; there is no pendingSignature
+  // query param, so the caller filters by pendingSignature client-side.
+  const query = new URLSearchParams({
+    txType: 'GROUP_APPROVAL',
+    confirmationStatus: 'CONFIRMED',
+    limit: String(limit),
+    reverse: 'true',
+  });
+
+  return `/transactions/search?${query.toString()}`;
+}
+
+export async function getGroupApprovalVotes(limit = DEFAULT_LIST_LIMIT) {
+  // Keyless read of recent confirmed approval votes; the tally for a given pending
+  // transaction is computed client-side (see computeApprovalProgress).
+  return fetchNodeApiData<GroupApprovalVote[]>(buildGroupApprovalVotesPath(limit), 'Approval votes');
+}
+
+export function buildBlockHeightPath() {
+  return '/blocks/height';
+}
+
+export async function getCurrentBlockHeight() {
+  // Keyless read returning the tip height as a bare number; used to compute the
+  // approval window's relative ETA.
+  return fetchNodeApiData<number>(buildBlockHeightPath(), 'Block height');
 }
 
 export async function submitGroupApproval(pendingSignature: string, approval: boolean, groupId?: number) {
