@@ -62,6 +62,7 @@ export const EN_STRINGS = {
   'hint.groupMembersDirectReadOnly': 'Direct / private history',
   'hint.groupMeta.privateRead': 'Closed / private read',
   'hint.groupMeta.privateHistoryUnavailable': 'Closed / private history unavailable',
+  'hint.groupJoinToRead': 'Join this group to read its private messages.',
   'hint.groupJoinToPost': 'Join this group to post messages.',
   'hint.groupMembershipChecking': 'Checking group membership...',
   'hint.groupMembershipUnavailable': 'Unable to confirm group membership.',

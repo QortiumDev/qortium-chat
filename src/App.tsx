@@ -86,6 +86,7 @@ import {
   getGroupMemberRole,
   getOrderedGroupMembers,
 } from './groupMembers';
+import { canReadGroupMessages } from './groupAccess';
 import {
   getAvatarFallbackCharacter,
   loadAvatarProfile,
@@ -2359,6 +2360,18 @@ export default function App() {
   const isRegularSelectedGroup = selectedChat?.kind === 'group' && !isSelectedGeneralChat;
   const isSelectedGroupMembershipConfirmed = !isRegularSelectedGroup || memberGroups.phase === 'ready';
   const isConfirmedJoinedGroup = memberGroups.phase === 'ready' && isJoinedGroup;
+  const canReadSelectedGroupMessages =
+    selectedChat?.kind === 'group' &&
+    canReadGroupMessages(selectedChat.group, {
+      canReadPrivateGroupChat,
+      isAccountUnlocked,
+      isGroupMembershipConfirmed: isSelectedGroupMembershipConfirmed,
+      isJoinedGroup: isConfirmedJoinedGroup,
+    });
+  const selectedClosedGroupReadKey =
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false
+      ? `${memberGroups.phase}:${isConfirmedJoinedGroup ? 'joined' : 'not-joined'}`
+      : '';
   const canPostInSelectedGroup =
     selectedChat?.kind === 'group' &&
     (isSelectedGeneralChat || isConfirmedJoinedGroup);
@@ -2481,12 +2494,18 @@ export default function App() {
   const selectedDirectHistoryUnavailable =
     selectedChat?.kind === 'direct' && (!isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
-    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && (!isAccountUnlocked || !canReadPrivateGroupChat);
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !canReadSelectedGroupMessages;
   const closedGroupHistoryUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
-      : t('action.closedGroupHistoryUnsupported');
+      : !canReadPrivateGroupChat
+        ? t('action.closedGroupHistoryUnsupported')
+        : memberGroups.phase === 'error'
+          ? t('hint.groupMembershipUnavailable')
+        : !isSelectedGroupMembershipConfirmed
+          ? t('hint.groupMembershipChecking')
+          : t('hint.groupJoinToRead');
   const canGroupApproval = hasAction(actions, 'GROUP_APPROVAL');
   const isSelectedDevGroup = selectedGroupId !== null && DEV_GROUP_IDS.has(selectedGroupId);
   const isAdminOfSelectedGroup =
@@ -2714,17 +2733,12 @@ export default function App() {
         return;
       }
 
-      if (chat.kind === 'group' && chat.group.isOpen === false && !canReadUnlockedMessages) {
-        setMessagesChatKey(chatKey);
-        setMessages({ phase: 'ready', value: emptyMessages });
-        return;
-      }
-
-      if (
-        chat.kind === 'group' &&
-        chat.group.isOpen === false &&
-        !hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')
-      ) {
+      if (chat.kind === 'group' && !canReadGroupMessages(chat.group, {
+        canReadPrivateGroupChat: hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES'),
+        isAccountUnlocked: canReadUnlockedMessages,
+        isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+        isJoinedGroup: joinedIds.has(chat.group.groupId),
+      })) {
         setMessagesChatKey(chatKey);
         setMessages({ phase: 'ready', value: emptyMessages });
         return;
@@ -2759,7 +2773,12 @@ export default function App() {
         chat.group.isOpen === false &&
         !options.skipKeyRecovery &&
         account?.isUnlocked === true &&
-        canReadUnlockedMessages
+        canReadGroupMessages(chat.group, {
+          canReadPrivateGroupChat: hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES'),
+          isAccountUnlocked: canReadUnlockedMessages,
+          isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+          isJoinedGroup: joinedIds.has(chat.group.groupId),
+        })
       ) {
         void recoverMissingPrivateGroupKeys(chat.group, nextMessages, account, actionList, {
           quiet: options.quiet,
@@ -2781,6 +2800,15 @@ export default function App() {
     const chat = selectedChat;
 
     if (!chat || loadingOlderRef.current || olderMessagesState.reachedStart) {
+      return;
+    }
+
+    if (chat.kind === 'group' && !canReadGroupMessages(chat.group, {
+      canReadPrivateGroupChat,
+      isAccountUnlocked,
+      isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+      isJoinedGroup: joinedIds.has(chat.group.groupId),
+    })) {
       return;
     }
 
@@ -3496,7 +3524,12 @@ export default function App() {
 
     let isDisposed = false;
     const readableGroups = groups.value.filter((group) => {
-      return group.isOpen !== false || (isAccountUnlocked && canReadPrivateGroupChat);
+      return canReadGroupMessages(group, {
+        canReadPrivateGroupChat,
+        isAccountUnlocked,
+        isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+        isJoinedGroup: joinedIds.has(group.groupId),
+      });
     });
 
     async function hydrateGroupActivity() {
@@ -3524,7 +3557,7 @@ export default function App() {
     return () => {
       isDisposed = true;
     };
-  }, [actionsKey, canReadPrivateGroupChat, groups.value, isAccountUnlocked]);
+  }, [actionsKey, canReadPrivateGroupChat, groups.value, isAccountUnlocked, joinedIds, memberGroups.phase]);
 
   useEffect(() => {
     const directs = activeChats.value.direct ?? [];
@@ -3683,6 +3716,11 @@ export default function App() {
       setGroupMembers({ phase: 'ready', value: emptyMembers });
     }
 
+    if (selectedChat.kind === 'group' && selectedChat.group.isOpen === false && !canReadSelectedGroupMessages) {
+      void loadMessages(selectedChat);
+      return undefined;
+    }
+
     if (selectedChat.kind !== 'group' || selectedChat.group.isOpen === false) {
       // Direct and closed-group chats have no public websocket; poll quietly
       // so newly received messages show up without a manual refresh.
@@ -3773,7 +3811,7 @@ export default function App() {
       window.clearTimeout(reconnectTimeout);
       socket?.close();
     };
-  }, [selectedChatKey, actionsKey, isAccountUnlocked]);
+  }, [selectedChatKey, actionsKey, isAccountUnlocked, selectedClosedGroupReadKey]);
 
   useEffect(() => {
     if (!account) {
