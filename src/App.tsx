@@ -1542,6 +1542,7 @@ function MessageList({
   onReply,
   pendingReactionKey,
   selfAddress,
+  systemMessages,
   t,
 }: {
   avatarProfiles: AvatarProfilesByAddress;
@@ -1555,6 +1556,7 @@ function MessageList({
   onReply: (message: ChatMessage) => void;
   pendingReactionKey: string;
   selfAddress: string | null;
+  systemMessages: TrackedTransaction[];
   t: TranslateFunction;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
@@ -1595,13 +1597,17 @@ function MessageList({
   const lastMessageKey = lastThread !== null ? getMessageKey(lastThread.latest, threads.length - 1) : '';
   const lastMessageIsOwn = selfAddress !== null && lastThread?.original.sender === selfAddress;
 
+  // System messages (transaction status) trail the feed, so a new or updated one
+  // should also scroll the feed when the user is stuck to the bottom.
+  const systemMessagesKey = systemMessages.map((entry) => `${entry.id}:${entry.phase}`).join('|');
+
   useEffect(() => {
     const list = listRef.current;
 
     if (list && (stickToBottomRef.current || lastMessageIsOwn)) {
       list.scrollTop = list.scrollHeight;
     }
-  }, [lastMessageIsOwn, lastMessageKey]);
+  }, [lastMessageIsOwn, lastMessageKey, systemMessagesKey]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30000);
@@ -1682,7 +1688,7 @@ function MessageList({
     });
   }
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && systemMessages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
 
@@ -1878,6 +1884,19 @@ function MessageList({
           </li>
         );
       })}
+      {systemMessages.map((transaction) => (
+        <li className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
+          <strong>
+            {transaction.phase === 'confirmed'
+              ? t('status.transaction.confirmed')
+              : transaction.phase === 'failed'
+                ? t('status.transaction.failed')
+                : t('status.transaction.pending')}
+          </strong>
+          <span>{transaction.message}</span>
+          {transaction.signature ? <small>{transaction.signature}</small> : null}
+        </li>
+      ))}
     </ol>
   );
 }
@@ -3935,24 +3954,6 @@ export default function App() {
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
           ) : null}
-          {selectedTransactions.length > 0 ? (
-            <div className="tx-status-list" aria-label={t('aria.transactionStatus')}>
-              {selectedTransactions.map((transaction) => (
-                <div className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
-                  <strong>
-                    {transaction.phase === 'confirmed'
-                      ? t('status.transaction.confirmed')
-                      : transaction.phase === 'failed'
-                        ? t('status.transaction.failed')
-                        : t('status.transaction.pending')}
-                  </strong>
-                  <span>{transaction.message}</span>
-                  {transaction.signature ? <small>{transaction.signature}</small> : null}
-                </div>
-              ))}
-            </div>
-          ) : null}
-
           {messages.phase === 'loading' ? (
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
@@ -3968,6 +3969,7 @@ export default function App() {
               onReply={startReply}
               pendingReactionKey={reactionPendingKey}
               selfAddress={account?.address ?? null}
+              systemMessages={selectedTransactions}
               t={t}
             />
           )}
