@@ -322,6 +322,29 @@ describe('Core API path builders', () => {
     });
   });
 
+  it('pages backward through history with a before timestamp', () => {
+    expect(buildGroupMessagesPath(7, 100, 1234)).toBe(
+      '/chat/messages?txGroupId=7&encoding=BASE64&limit=100&reverse=true&before=1234',
+    );
+  });
+
+  it('forwards the before timestamp through the message bridge action', async () => {
+    qdnRequestMock.mockResolvedValueOnce([{ sender: 'Qa', timestamp: 5, txGroupId: 7 }]);
+
+    await getGroupMessages({ groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES'], {
+      before: 1234,
+    });
+
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'SEARCH_CHAT_MESSAGES',
+      before: 1234,
+      encoding: 'BASE64',
+      groupId: 7,
+      limit: 100,
+      reverse: true,
+    });
+  });
+
   it('fails closed for closed-group message reads when private bridge support is absent', async () => {
     await expect(
       getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES']),

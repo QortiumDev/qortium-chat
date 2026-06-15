@@ -800,7 +800,8 @@ samp,
 }
 
 .icon-button svg,
-.group-row__lock svg {
+.group-row__lock svg,
+.chat-pane__title-lock svg {
   width: 16px;
   height: 16px;
   fill: none;
@@ -984,6 +985,26 @@ samp,
   min-width: 0;
 }
 
+.chat-pane__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-pane__title-lock {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--qc-color-muted);
+}
+
+.chat-pane__title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-pane__actions {
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -1161,6 +1182,16 @@ samp,
   overflow: auto;
   overscroll-behavior: contain;
   list-style: none;
+}
+
+.message-list__history-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 2px 0 6px;
+  text-align: center;
 }
 
 .message {

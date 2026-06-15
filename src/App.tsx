@@ -1,8 +1,9 @@
-import { type SubmitEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type SubmitEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
+  DEFAULT_LIST_LIMIT,
   approveGroupJoinRequest,
   getActiveChats,
   getAccountGroupJoinRequests,
@@ -290,7 +291,11 @@ function getMessageKey(message: ChatMessage, index = 0) {
   return message.signature || `${message.timestamp}-${message.sender}-${index}`;
 }
 
-function mergeMessages(currentMessages: ChatMessage[], nextMessages: ChatMessage[]) {
+function mergeMessages(
+  currentMessages: ChatMessage[],
+  nextMessages: ChatMessage[],
+  maxCount = 100,
+) {
   const messages = new Map<string, ChatMessage>();
 
   for (const [index, message] of currentMessages.entries()) {
@@ -301,7 +306,11 @@ function mergeMessages(currentMessages: ChatMessage[], nextMessages: ChatMessage
     messages.set(getMessageKey(message, index), message);
   }
 
-  return sortMessagesByTimestamp([...messages.values()]).slice(-100);
+  const merged = sortMessagesByTimestamp([...messages.values()]);
+
+  // The live tail is bounded; the on-demand history buffer is not (maxCount =
+  // Infinity) so paging backward can accumulate the full history.
+  return Number.isFinite(maxCount) ? merged.slice(-maxCount) : merged;
 }
 
 function mergeActivityTimestamp<Key>(
@@ -1535,7 +1544,11 @@ function MessageList({
   canCompose,
   canOpenMediaPlayer,
   messages,
+  olderMessagesError,
+  olderMessagesLoading,
+  olderMessagesReachedStart,
   onEdit,
+  onLoadOlder,
   onOpenAccount,
   onOpenAvatar,
   onReact,
@@ -1549,7 +1562,11 @@ function MessageList({
   canCompose: boolean;
   canOpenMediaPlayer: boolean;
   messages: ChatMessage[];
+  olderMessagesError: string;
+  olderMessagesLoading: boolean;
+  olderMessagesReachedStart: boolean;
   onEdit: (thread: MessageThread) => void;
+  onLoadOlder: () => void;
   onOpenAccount: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
@@ -1561,6 +1578,9 @@ function MessageList({
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottomRef = useRef(true);
+  // Captured before older history is prepended so we can restore the viewport to
+  // the same message instead of jumping when scrollHeight grows.
+  const olderScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
   const highlightTimeoutRef = useRef(0);
   const expandedTimeTimeoutRef = useRef(0);
@@ -1596,6 +1616,32 @@ function MessageList({
   const lastThread = threads[threads.length - 1] ?? null;
   const lastMessageKey = lastThread !== null ? getMessageKey(lastThread.latest, threads.length - 1) : '';
   const lastMessageIsOwn = selfAddress !== null && lastThread?.original.sender === selfAddress;
+  const firstMessageKey = messages.length > 0 ? getMessageKey(messages[0], 0) : '';
+
+  function captureScrollAnchor() {
+    const list = listRef.current;
+
+    if (list) {
+      olderScrollAnchorRef.current = { scrollHeight: list.scrollHeight, scrollTop: list.scrollTop };
+    }
+  }
+
+  // Manual retry after an error — bypasses the auto-trigger's error guard.
+  function handleLoadOlder() {
+    captureScrollAnchor();
+    onLoadOlder();
+  }
+
+  // Auto-trigger when the user scrolls near the top. Skips while a fetch is in
+  // flight, once history is exhausted, or after an error (so it does not loop).
+  function maybeLoadOlder(list: HTMLOListElement) {
+    if (list.scrollTop > 80 || olderMessagesLoading || olderMessagesReachedStart || olderMessagesError) {
+      return;
+    }
+
+    captureScrollAnchor();
+    onLoadOlder();
+  }
 
   // System messages (transaction status) trail the feed, so a new or updated one
   // should also scroll the feed when the user is stuck to the bottom.
@@ -1608,6 +1654,20 @@ function MessageList({
       list.scrollTop = list.scrollHeight;
     }
   }, [lastMessageIsOwn, lastMessageKey, systemMessagesKey]);
+
+  // After older history is prepended the list grows upward; restore the viewport
+  // so the message the user was reading stays put instead of jumping.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const anchor = olderScrollAnchorRef.current;
+
+    if (!list || !anchor) {
+      return;
+    }
+
+    olderScrollAnchorRef.current = null;
+    list.scrollTop = list.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
+  }, [firstMessageKey]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30000);
@@ -1699,9 +1759,24 @@ function MessageList({
         const list = event.currentTarget;
 
         stickToBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+        maybeLoadOlder(list);
       }}
       ref={listRef}
     >
+      {olderMessagesLoading || olderMessagesError ? (
+        <li className="message-list__history-control">
+          {olderMessagesLoading ? (
+            <span className="muted">{t('status.loadingOlderMessages')}</span>
+          ) : (
+            <>
+              <span className="error">{olderMessagesError}</span>
+              <button className="button button--secondary" onClick={handleLoadOlder} type="button">
+                {t('button.retry')}
+              </button>
+            </>
+          )}
+        </li>
+      ) : null}
       {threads.map((thread, index) => {
         const { latest, original, revisions } = thread;
         const decoded = decodeChatMessage(latest, t);
@@ -1984,6 +2059,19 @@ export default function App() {
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
   const [messagesChatKey, setMessagesChatKey] = useState('');
+  // History loaded on demand behind the live tail. The live `messages` state is
+  // capped at the latest 100; this buffer accumulates older windows paged in as
+  // the user scrolls toward the top, so the full group history can be read.
+  const [olderMessages, setOlderMessages] = useState<ChatMessage[]>(emptyMessages);
+  // `reachedStart` defaults true so paging stays off until a full initial page
+  // (== the cap) proves there may be older history worth fetching.
+  const [olderMessagesState, setOlderMessagesState] = useState<{
+    error: string;
+    loading: boolean;
+    reachedStart: boolean;
+  }>({ error: '', loading: false, reachedStart: true });
+  // Synchronous guard so rapid scroll events cannot fire overlapping fetches.
+  const loadingOlderRef = useRef(false);
   const [cachedGeneralChatMembers, setCachedGeneralChatMembers] = useState<GroupMember[]>(emptyMembers);
   const [loadedGroupActivityById, setLoadedGroupActivityById] =
     useState<ReadonlyMap<number, number | null>>(() => new Map());
@@ -2153,6 +2241,11 @@ export default function App() {
   );
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
+  // The rendered feed is the live tail plus any older history paged in behind it.
+  const combinedMessages = useMemo(
+    () => (olderMessages.length === 0 ? messages.value : mergeMessages(olderMessages, messages.value, Infinity)),
+    [olderMessages, messages.value],
+  );
   const knownAvatarNames = useMemo(() => {
     const namesByAddress = new Map<string, string>();
     const accountName = normalizeRegisteredName(account?.name);
@@ -2651,6 +2744,16 @@ export default function App() {
       setMessagesChatKey(chatKey);
       setMessages({ phase: 'ready', value: nextMessages });
 
+      // Only the initial (non-quiet) load establishes whether older history may
+      // exist; quiet 15s polls must not disturb paging once the user has paged.
+      if (!options.quiet) {
+        setOlderMessagesState({
+          error: '',
+          loading: false,
+          reachedStart: nextMessages.length < DEFAULT_LIST_LIMIT,
+        });
+      }
+
       if (
         chat.kind === 'group' &&
         chat.group.isOpen === false &&
@@ -2671,6 +2774,51 @@ export default function App() {
         phase: 'error',
         value: messages.value,
       });
+    }
+  }
+
+  async function loadOlderMessages() {
+    const chat = selectedChat;
+
+    if (!chat || loadingOlderRef.current || olderMessagesState.reachedStart) {
+      return;
+    }
+
+    // Page backward from the oldest message currently shown (live tail + any
+    // history already paged in).
+    const loadedMessages = mergeMessages(olderMessages, messages.value, Infinity);
+    const oldest = loadedMessages[0];
+
+    if (!oldest) {
+      return;
+    }
+
+    loadingOlderRef.current = true;
+    setOlderMessagesState((current) => ({ ...current, error: '', loading: true }));
+
+    try {
+      const olderWindow =
+        chat.kind === 'group'
+          ? await getGroupMessages(chat.group, actions, { before: oldest.timestamp })
+          : await getDirectMessages(chat.direct.address, actions, { before: oldest.timestamp });
+
+      const merged = mergeMessages(olderWindow, loadedMessages, Infinity);
+
+      // A short window (fewer than the cap) means the Core has no more history
+      // before this point; no net-new messages means the same (and guards
+      // against same-timestamp windows that never advance).
+      const reachedStart = olderWindow.length < DEFAULT_LIST_LIMIT || merged.length <= loadedMessages.length;
+
+      setOlderMessages(merged);
+      setOlderMessagesState({ error: '', loading: false, reachedStart });
+    } catch (error) {
+      setOlderMessagesState({
+        error: getBridgeErrorMessage(error, t('status.loadingError.olderMessages'), t),
+        loading: false,
+        reachedStart: false,
+      });
+    } finally {
+      loadingOlderRef.current = false;
     }
   }
 
@@ -3516,6 +3664,12 @@ export default function App() {
   }, [Object.values(trackedTransactions).map((transaction) => `${transaction.id}:${transaction.phase}`).join('|')]);
 
   useEffect(() => {
+    // A new conversation starts with no paged-in history; the live tail reloads
+    // below and decides (from its page size) whether older history may exist.
+    setOlderMessages(emptyMessages);
+    setOlderMessagesState({ error: '', loading: false, reachedStart: true });
+    loadingOlderRef.current = false;
+
     if (!selectedChat) {
       setMessagesChatKey('');
       setMessages({ phase: 'ready', value: emptyMessages });
@@ -3571,6 +3725,12 @@ export default function App() {
             receivedInitialMessages = true;
             setMessagesChatKey(chatKey);
             setMessages({ phase: 'ready', value: sortMessagesByTimestamp(nextMessages) });
+            // Older history can only exist if this first window filled the cap.
+            setOlderMessagesState({
+              error: '',
+              loading: false,
+              reachedStart: nextMessages.length < DEFAULT_LIST_LIMIT,
+            });
             return;
           }
 
@@ -3833,43 +3993,29 @@ export default function App() {
         <section className="chat-pane" aria-label={t('aria.selectedChat')}>
           <div className="chat-pane__header">
             <div>
-              <h2>
+              <h2 className="chat-pane__title">
+                {selectedChat?.kind === 'group' &&
+                !isGeneralChatGroup(selectedChat.group) &&
+                selectedChat.group.isOpen === false ? (
+                  <span
+                    aria-label={t('label.group.closed')}
+                    className="chat-pane__title-lock"
+                    role="img"
+                    title={t('label.group.closed')}
+                  >
+                    <LockIcon />
+                  </span>
+                ) : null}
+                <span className="chat-pane__title-text">
                 {selectedChat
                   ? selectedChat.kind === 'group'
                     ? getGroupTitle(selectedChat.group, t)
                     : getDirectTitle(selectedChat.direct)
                   : t('label.chat.select')}
+                </span>
               </h2>
-              {selectedChat?.kind === 'group' ? (
-                <p>
-                  {isGeneralChatGroup(selectedChat.group)
-                    ? t('group.meta.general')
-                    : selectedChat.group.isOpen === false
-                      ? canReadPrivateGroupChat
-                        ? t('hint.groupMeta.privateRead')
-                        : t('hint.groupMeta.privateHistoryUnavailable')
-                      : t('group.meta.open')}
-                  {isSelectedMintingGroup ? t('group.status.minting.group') : ''}
-                  {showMintingControls
-                    ? accountMintingStatus?.isMinting === true
-                      ? t('group.status.minting.minting')
-                      : accountMintingStatus?.isMinting === false
-                        ? t('group.status.minting.notMinting')
-                        : accountMintingStatus
-                          ? t('group.status.minting.unavailable')
-                          : ''
-                    : ''}
-                  {hasPendingJoinTransaction
-                    ? t('group.status.join.pending')
-                    : hasPendingLeaveTransaction
-                      ? t('group.status.leave.pending')
-                    : hasPendingJoinRequest
-                      ? t('group.status.request.pending')
-                      : ''}
-                  {!isGeneralChatGroup(selectedChat.group) && typeof selectedChat.group.memberCount === 'number'
-                    ? ` / ${selectedChat.group.memberCount.toLocaleString()} ${t('label.common.members')}`
-                    : ''}
-                </p>
+              {selectedChat?.kind === 'group' && selectedChat.group.description?.trim() ? (
+                <p>{selectedChat.group.description.trim()}</p>
               ) : null}
               {selectedChat?.kind === 'direct' ? (
                 <p>
@@ -3961,8 +4107,12 @@ export default function App() {
               avatarProfiles={avatarProfiles}
               canCompose={canComposeMessage}
               canOpenMediaPlayer={canOpenMediaPlayer}
-              messages={messages.value}
+              messages={combinedMessages}
+              olderMessagesError={olderMessagesState.error}
+              olderMessagesReachedStart={olderMessagesState.reachedStart}
+              olderMessagesLoading={olderMessagesState.loading}
               onEdit={startEdit}
+              onLoadOlder={() => void loadOlderMessages()}
               onOpenAccount={setAccountInfoTarget}
               onOpenAvatar={setAvatarLightboxImage}
               onReact={(message, reaction, contentState) => void handleMessageReaction(message, reaction, contentState)}

@@ -27,7 +27,7 @@ import type {
 } from './types';
 
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
-const DEFAULT_LIST_LIMIT = 100;
+export const DEFAULT_LIST_LIMIT = 100;
 
 function appendQueryValue(query: URLSearchParams, key: string, value: string | number | boolean | undefined) {
   if (value === undefined || value === '') {
@@ -127,7 +127,7 @@ export function buildAccountNamesPath(address: string) {
   return `/names/address/${encodeURIComponent(address)}`;
 }
 
-export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIMIT) {
+export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIMIT, before?: number) {
   // No haschatreference filter: edit revisions (messages with a chatReference)
   // are needed to render edited messages.
   const query = new URLSearchParams({
@@ -136,6 +136,12 @@ export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIM
     limit: String(limit),
     reverse: 'true',
   });
+
+  // `before` (ms timestamp) pages backward into history one window at a time so
+  // the full group history can be loaded beyond the live tail's limit.
+  if (typeof before === 'number') {
+    query.set('before', String(before));
+  }
 
   return `/chat/messages?${query.toString()}`;
 }
@@ -397,13 +403,20 @@ export async function getPrivateDirectActiveChats(actions?: QdnAction[]) {
   });
 }
 
-export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) {
+export async function getGroupMessages(
+  group: GroupData,
+  actions?: QdnAction[],
+  options: { before?: number } = {},
+) {
   const groupId = group.groupId;
   const messageRequest = {
     encoding: 'BASE64',
     groupId,
     limit: DEFAULT_LIST_LIMIT,
     reverse: true,
+    // When set, return the window of messages immediately older than this
+    // timestamp so callers can page backward through the full history.
+    ...(typeof options.before === 'number' ? { before: options.before } : {}),
   };
 
   if (group.isOpen === false) {
@@ -428,7 +441,10 @@ export async function getGroupMessages(group: GroupData, actions?: QdnAction[]) 
     return sortMessagesByTimestamp(messages);
   }
 
-  const messages = await fetchNodeApiData<ChatMessage[]>(buildGroupMessagesPath(groupId), 'Group messages');
+  const messages = await fetchNodeApiData<ChatMessage[]>(
+    buildGroupMessagesPath(groupId, DEFAULT_LIST_LIMIT, options.before),
+    'Group messages',
+  );
 
   return sortMessagesByTimestamp(messages);
 }
@@ -497,7 +513,11 @@ export async function resolvePrivateGroupChatKeyRequests(
   });
 }
 
-export async function getDirectMessages(otherAddress: string, actions?: QdnAction[]) {
+export async function getDirectMessages(
+  otherAddress: string,
+  actions?: QdnAction[],
+  options: { before?: number } = {},
+) {
   if (hasBridgeAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
     const messages = await qdnRequest<ChatMessage[]>({
       action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
@@ -505,6 +525,7 @@ export async function getDirectMessages(otherAddress: string, actions?: QdnActio
       limit: DEFAULT_LIST_LIMIT,
       otherAddress,
       reverse: true,
+      ...(typeof options.before === 'number' ? { before: options.before } : {}),
     });
 
     return sortMessagesByTimestamp(messages);
