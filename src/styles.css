@@ -1864,12 +1864,6 @@ button.message__reply-preview:focus-visible {
   outline-offset: 2px;
 }
 
-.tx-status-list {
-  display: grid;
-  gap: 8px;
-  padding: 12px 0 0;
-}
-
 .tx-status {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
