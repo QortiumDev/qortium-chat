@@ -523,6 +523,20 @@ samp,
   min-width: 0;
 }
 
+.topbar__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar__brand-mark {
+  flex: none;
+  font-size: var(--qc-text-heading);
+  width: 1.6em;
+  height: 1.6em;
+  color: var(--qc-color-text);
+}
+
 .topbar__account,
 .panel__header,
 .panel__header-actions,

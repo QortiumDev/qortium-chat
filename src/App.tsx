@@ -288,6 +288,24 @@ function LockIcon() {
   );
 }
 
+function BrandMark() {
+  return (
+    <svg
+      className="topbar__brand-mark"
+      viewBox="0 0 683 685"
+      fill="none"
+      stroke="currentColor"
+      strokeLinejoin="miter"
+      strokeMiterlimit={10}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path strokeWidth={6} d="M341,29.5 69,186.7 69,503.3 341,659.5 478.5,580.5 613,657.8 613,186.7Z" />
+      <path strokeWidth={37} d="M341,208.3 223.5,275.7 223.5,412.3 341,479.7 409,440.7 458.5,469.1 458.5,275.7Z" />
+    </svg>
+  );
+}
+
 function getMessageKey(message: ChatMessage, index = 0) {
   return message.signature || `${message.timestamp}-${message.sender}-${index}`;
 }
@@ -3925,6 +3943,7 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="topbar__title">
+          <BrandMark />
           <h1>{t('app.title')}</h1>
         </div>
         <div className="topbar__account">
