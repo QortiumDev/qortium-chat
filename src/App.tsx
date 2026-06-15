@@ -86,7 +86,7 @@ import {
   getGroupMemberRole,
   getOrderedGroupMembers,
 } from './groupMembers';
-import { canReadGroupMessages } from './groupAccess';
+import { shouldDecryptGroupMessages } from './groupAccess';
 import {
   getAvatarFallbackCharacter,
   loadAvatarProfile,
@@ -2360,9 +2360,9 @@ export default function App() {
   const isRegularSelectedGroup = selectedChat?.kind === 'group' && !isSelectedGeneralChat;
   const isSelectedGroupMembershipConfirmed = !isRegularSelectedGroup || memberGroups.phase === 'ready';
   const isConfirmedJoinedGroup = memberGroups.phase === 'ready' && isJoinedGroup;
-  const canReadSelectedGroupMessages =
+  const shouldDecryptSelectedGroupMessages =
     selectedChat?.kind === 'group' &&
-    canReadGroupMessages(selectedChat.group, {
+    shouldDecryptGroupMessages(selectedChat.group, {
       canReadPrivateGroupChat,
       isAccountUnlocked,
       isGroupMembershipConfirmed: isSelectedGroupMembershipConfirmed,
@@ -2494,7 +2494,7 @@ export default function App() {
   const selectedDirectHistoryUnavailable =
     selectedChat?.kind === 'direct' && (!isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
-    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !canReadSelectedGroupMessages;
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !shouldDecryptSelectedGroupMessages;
   const closedGroupHistoryUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
@@ -2733,20 +2733,18 @@ export default function App() {
         return;
       }
 
-      if (chat.kind === 'group' && !canReadGroupMessages(chat.group, {
-        canReadPrivateGroupChat: hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES'),
-        isAccountUnlocked: canReadUnlockedMessages,
-        isGroupMembershipConfirmed: memberGroups.phase === 'ready',
-        isJoinedGroup: joinedIds.has(chat.group.groupId),
-      })) {
-        setMessagesChatKey(chatKey);
-        setMessages({ phase: 'ready', value: emptyMessages });
-        return;
-      }
+      const shouldDecryptPrivateGroup =
+        chat.kind === 'group' &&
+        shouldDecryptGroupMessages(chat.group, {
+          canReadPrivateGroupChat: hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES'),
+          isAccountUnlocked: canReadUnlockedMessages,
+          isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+          isJoinedGroup: joinedIds.has(chat.group.groupId),
+        });
 
       const nextMessages =
         chat.kind === 'group'
-          ? await getGroupMessages(chat.group, actionList)
+          ? await getGroupMessages(chat.group, actionList, { decryptPrivate: shouldDecryptPrivateGroup })
           : await getDirectMessages(chat.direct.address, actionList);
 
       if (chat.kind === 'group') {
@@ -2773,12 +2771,7 @@ export default function App() {
         chat.group.isOpen === false &&
         !options.skipKeyRecovery &&
         account?.isUnlocked === true &&
-        canReadGroupMessages(chat.group, {
-          canReadPrivateGroupChat: hasAction(actionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES'),
-          isAccountUnlocked: canReadUnlockedMessages,
-          isGroupMembershipConfirmed: memberGroups.phase === 'ready',
-          isJoinedGroup: joinedIds.has(chat.group.groupId),
-        })
+        shouldDecryptPrivateGroup
       ) {
         void recoverMissingPrivateGroupKeys(chat.group, nextMessages, account, actionList, {
           quiet: options.quiet,
@@ -2803,14 +2796,14 @@ export default function App() {
       return;
     }
 
-    if (chat.kind === 'group' && !canReadGroupMessages(chat.group, {
-      canReadPrivateGroupChat,
-      isAccountUnlocked,
-      isGroupMembershipConfirmed: memberGroups.phase === 'ready',
-      isJoinedGroup: joinedIds.has(chat.group.groupId),
-    })) {
-      return;
-    }
+    const shouldDecryptPrivateGroup =
+      chat.kind === 'group' &&
+      shouldDecryptGroupMessages(chat.group, {
+        canReadPrivateGroupChat,
+        isAccountUnlocked,
+        isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+        isJoinedGroup: joinedIds.has(chat.group.groupId),
+      });
 
     // Page backward from the oldest message currently shown (live tail + any
     // history already paged in).
@@ -2827,7 +2820,10 @@ export default function App() {
     try {
       const olderWindow =
         chat.kind === 'group'
-          ? await getGroupMessages(chat.group, actions, { before: oldest.timestamp })
+          ? await getGroupMessages(chat.group, actions, {
+              before: oldest.timestamp,
+              decryptPrivate: shouldDecryptPrivateGroup,
+            })
           : await getDirectMessages(chat.direct.address, actions, { before: oldest.timestamp });
 
       const merged = mergeMessages(olderWindow, loadedMessages, Infinity);
@@ -3524,12 +3520,15 @@ export default function App() {
 
     let isDisposed = false;
     const readableGroups = groups.value.filter((group) => {
-      return canReadGroupMessages(group, {
-        canReadPrivateGroupChat,
-        isAccountUnlocked,
-        isGroupMembershipConfirmed: memberGroups.phase === 'ready',
-        isJoinedGroup: joinedIds.has(group.groupId),
-      });
+      return (
+        group.isOpen !== false ||
+        shouldDecryptGroupMessages(group, {
+          canReadPrivateGroupChat,
+          isAccountUnlocked,
+          isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+          isJoinedGroup: joinedIds.has(group.groupId),
+        })
+      );
     });
 
     async function hydrateGroupActivity() {
@@ -3539,7 +3538,14 @@ export default function App() {
         }
 
         try {
-          const nextMessages = await getGroupMessages(group, actions);
+          const nextMessages = await getGroupMessages(group, actions, {
+            decryptPrivate: shouldDecryptGroupMessages(group, {
+              canReadPrivateGroupChat,
+              isAccountUnlocked,
+              isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+              isJoinedGroup: joinedIds.has(group.groupId),
+            }),
+          });
 
           if (isDisposed) {
             return;
@@ -3716,7 +3722,7 @@ export default function App() {
       setGroupMembers({ phase: 'ready', value: emptyMembers });
     }
 
-    if (selectedChat.kind === 'group' && selectedChat.group.isOpen === false && !canReadSelectedGroupMessages) {
+    if (selectedChat.kind === 'group' && selectedChat.group.isOpen === false && !shouldDecryptSelectedGroupMessages) {
       void loadMessages(selectedChat);
       return undefined;
     }

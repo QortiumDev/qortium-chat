@@ -8,9 +8,9 @@ export type GroupReadAccessState = {
   isJoinedGroup: boolean;
 };
 
-export function canReadGroupMessages(group: GroupData, state: GroupReadAccessState) {
+export function shouldDecryptGroupMessages(group: GroupData, state: GroupReadAccessState) {
   if (isGeneralChatGroup(group) || group.isOpen !== false) {
-    return true;
+    return false;
   }
 
   return (

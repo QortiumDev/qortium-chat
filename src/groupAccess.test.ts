@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canReadGroupMessages, type GroupReadAccessState } from './groupAccess';
+import { shouldDecryptGroupMessages, type GroupReadAccessState } from './groupAccess';
 import type { GroupData } from './types';
 
 const allowed: GroupReadAccessState = {
@@ -19,18 +19,18 @@ function group(groupId: number, overrides: Partial<GroupData> = {}): GroupData {
 }
 
 describe('group read access', () => {
-  it('allows public and general group reads without private membership checks', () => {
-    expect(canReadGroupMessages(group(7, { isOpen: true }), { ...allowed, isAccountUnlocked: false })).toBe(true);
-    expect(canReadGroupMessages(group(0, { isOpen: false }), { ...allowed, isJoinedGroup: false })).toBe(true);
+  it('does not use private decryption for public or general group reads', () => {
+    expect(shouldDecryptGroupMessages(group(7, { isOpen: true }), allowed)).toBe(false);
+    expect(shouldDecryptGroupMessages(group(0, { isOpen: false }), allowed)).toBe(false);
   });
 
-  it('requires confirmed membership before reading closed group messages', () => {
+  it('requires confirmed membership before decrypting closed group messages', () => {
     const closed = group(8, { isOpen: false });
 
-    expect(canReadGroupMessages(closed, allowed)).toBe(true);
-    expect(canReadGroupMessages(closed, { ...allowed, isAccountUnlocked: false })).toBe(false);
-    expect(canReadGroupMessages(closed, { ...allowed, canReadPrivateGroupChat: false })).toBe(false);
-    expect(canReadGroupMessages(closed, { ...allowed, isGroupMembershipConfirmed: false })).toBe(false);
-    expect(canReadGroupMessages(closed, { ...allowed, isJoinedGroup: false })).toBe(false);
+    expect(shouldDecryptGroupMessages(closed, allowed)).toBe(true);
+    expect(shouldDecryptGroupMessages(closed, { ...allowed, isAccountUnlocked: false })).toBe(false);
+    expect(shouldDecryptGroupMessages(closed, { ...allowed, canReadPrivateGroupChat: false })).toBe(false);
+    expect(shouldDecryptGroupMessages(closed, { ...allowed, isGroupMembershipConfirmed: false })).toBe(false);
+    expect(shouldDecryptGroupMessages(closed, { ...allowed, isJoinedGroup: false })).toBe(false);
   });
 });
