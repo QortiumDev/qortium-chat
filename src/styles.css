@@ -1795,6 +1795,53 @@ button.message__reply-preview:focus-visible {
   font-size: var(--qc-text-tiny);
 }
 
+/* Floating reaction popover: anchored to the viewport above its trigger so it
+   never expands the message bubble. The backdrop closes it on an outside tap. */
+.reaction-popover__backdrop {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: default;
+}
+
+.reaction-popover {
+  position: fixed;
+  z-index: 71;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--qc-color-surface-raised);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+  box-shadow: var(--qc-shadow-pop);
+  animation: qortium-reaction-pop 140ms var(--qc-ease-pop);
+}
+
+.reaction-popover:focus {
+  outline: none;
+}
+
+/* Inside the popover the picker/details fill it and drop their own card chrome. */
+.reaction-popover .message__reaction-picker,
+.reaction-popover .message__reaction-details {
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+@keyframes qortium-reaction-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 .message__meta {
   display: flex;
   align-items: center;
@@ -2529,6 +2576,7 @@ button.message__reply-preview:focus-visible {
   .message,
   .members-drawer,
   .members-drawer__scrim,
+  .reaction-popover,
   .skeleton::after {
     animation: none;
   }
