@@ -1,4 +1,4 @@
-import { type SubmitEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, type SubmitEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
@@ -16,6 +16,7 @@ import {
   getMemberGroups,
   getMissingPrivateGroupKeyRequests,
   getMintingStatus,
+  getNameOwnerAddress,
   getPendingGroupApprovals,
   getTransactionStatus,
   getPrivateDirectActiveChats,
@@ -248,6 +249,12 @@ function getShortAddress(address: string) {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }
 
+// Qortium/Qortal addresses are Base58, start with 'Q', and are ~34 chars. Anything
+// that does not match is treated as a registered name to resolve to an owner.
+function looksLikeQortalAddress(value: string) {
+  return /^Q[1-9A-HJ-NP-Za-km-z]{25,40}$/.test(value);
+}
+
 function getDirectTitle(direct: ActiveDirectChat) {
   return direct.name || getShortAddress(direct.address);
 }
@@ -257,6 +264,15 @@ function SearchIcon() {
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
       <path d="m21 21-4.35-4.35" />
       <circle cx="11" cy="11" r="7" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
     </svg>
   );
 }
@@ -284,6 +300,14 @@ function LockIcon() {
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
       <rect height="11" rx="2" width="14" x="5" y="10" />
       <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="m15 5-7 7 7 7" />
     </svg>
   );
 }
@@ -511,18 +535,22 @@ function MessageIdentity({
 }
 
 function AccountInfoDialog({
+  canMention,
   canOpenDirect,
   directUnavailableLabel,
   onClose,
+  onMention,
   onOpenAvatar,
   onOpenDirect,
   profile,
   target,
   t,
 }: {
+  canMention: boolean;
   canOpenDirect: boolean;
   directUnavailableLabel: string;
   onClose: () => void;
+  onMention: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   onOpenDirect: (address: string, name: string | null) => void;
   profile: AvatarProfile | undefined;
@@ -612,6 +640,16 @@ function AccountInfoDialog({
           >
             {t('button.openDirectChat')}
           </button>
+          {canMention ? (
+            <button
+              className="button button--secondary"
+              onClick={() => onMention(target)}
+              title={t('action.mention', { account: label })}
+              type="button"
+            >
+              {t('button.mention')}
+            </button>
+          ) : null}
           {avatarSrc ? (
             <button
               className="button button--secondary"
@@ -1094,6 +1132,7 @@ function GroupList({
   onSelect,
   selectedGroupId,
   t,
+  unreadGroupIds,
 }: {
   activityByGroupId: ReadonlyMap<number, number>;
   groups: GroupData[];
@@ -1101,6 +1140,7 @@ function GroupList({
   onSelect: (group: GroupData) => void;
   selectedGroupId: number | null;
   t: TranslateFunction;
+  unreadGroupIds: ReadonlySet<number>;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -1118,18 +1158,29 @@ function GroupList({
     <div className="group-list">
       {groups.map((group) => {
         const lastMessageTimestamp = activityByGroupId.get(group.groupId);
+        const isUnread = unreadGroupIds.has(group.groupId);
         const memberCount =
           memberCountsByGroupId?.get(group.groupId) ?? (isGeneralChatGroup(group) ? undefined : group.memberCount);
 
         return (
           <button
-            className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}`}
+            className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}${isUnread ? ' group-row--unread' : ''}`}
             key={group.groupId}
             onClick={() => onSelect(group)}
             type="button"
           >
             <span className="group-row__top">
-              <span className="group-row__name">{getGroupTitle(group, t)}</span>
+              <span className="group-row__heading">
+                {isUnread ? (
+                  <span
+                    aria-label={t('label.unread')}
+                    className="group-row__unread"
+                    role="img"
+                    title={t('label.unread')}
+                  />
+                ) : null}
+                <span className="group-row__name">{getGroupTitle(group, t)}</span>
+              </span>
               {lastMessageTimestamp ? (
                 <span className="group-row__time" title={formatTimestamp(lastMessageTimestamp)}>
                   {formatTimeAgo(lastMessageTimestamp, now)}
@@ -1168,6 +1219,7 @@ function DirectList({
   onSelect,
   selectedAddress,
   t,
+  unreadAddresses,
 }: {
   activeChats: ActiveChats;
   activityByAddress: ReadonlyMap<string, number>;
@@ -1175,6 +1227,7 @@ function DirectList({
   onSelect: (direct: ActiveDirectChat) => void;
   selectedAddress: string | null;
   t: TranslateFunction;
+  unreadAddresses: ReadonlySet<string>;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const directs = useMemo(() => {
@@ -1212,17 +1265,28 @@ function DirectList({
     <div className="direct-list">
       {directs.map((direct) => {
         const lastMessageTimestamp = activityByAddress.get(direct.address);
+        const isUnread = unreadAddresses.has(direct.address);
 
         return (
           <button
-            className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}`}
+            className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}${isUnread ? ' direct-row--unread' : ''}`}
             disabled={!canOpen}
             key={direct.address}
             onClick={() => onSelect(direct)}
             title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
             type="button"
           >
-            <span>{getDirectTitle(direct)}</span>
+            <span className="direct-row__main">
+              {isUnread ? (
+                <span
+                  aria-label={t('label.unread')}
+                  className="direct-row__unread"
+                  role="img"
+                  title={t('label.unread')}
+                />
+              ) : null}
+              <span className="direct-row__title">{getDirectTitle(direct)}</span>
+            </span>
             {lastMessageTimestamp ? (
               <small title={formatTimestamp(lastMessageTimestamp)}>
                 {formatTimeAgo(lastMessageTimestamp, now)}
@@ -1562,6 +1626,7 @@ function MessageList({
   avatarProfiles,
   canCompose,
   canOpenMediaPlayer,
+  initialScrollTop,
   messages,
   olderMessagesError,
   olderMessagesLoading,
@@ -1572,14 +1637,20 @@ function MessageList({
   onOpenAvatar,
   onReact,
   onReply,
+  onScrollPositionChange,
   pendingReactionKey,
+  scrollChatKey,
   selfAddress,
+  sentMessageNonce,
   systemMessages,
   t,
+  unreadDividerCeiling,
+  unreadDividerTimestamp,
 }: {
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
   canOpenMediaPlayer: boolean;
+  initialScrollTop: number | undefined;
   messages: ChatMessage[];
   olderMessagesError: string;
   olderMessagesLoading: boolean;
@@ -1590,13 +1661,21 @@ function MessageList({
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   onReply: (message: ChatMessage) => void;
+  onScrollPositionChange: (chatKey: string, scrollTop: number) => void;
   pendingReactionKey: string;
+  scrollChatKey: string;
   selfAddress: string | null;
+  sentMessageNonce: number;
   systemMessages: TrackedTransaction[];
   t: TranslateFunction;
+  unreadDividerCeiling: number | null;
+  unreadDividerTimestamp: number | null;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottomRef = useRef(true);
+  // Restores the reading position when returning to a chat: false until the saved
+  // (or default-bottom) scroll position has been applied for the current chat.
+  const didRestoreScrollRef = useRef(false);
   // Captured before older history is prepended so we can restore the viewport to
   // the same message instead of jumping when scrollHeight grows.
   const olderScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
@@ -1611,6 +1690,33 @@ function MessageList({
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
+  // Index of the first thread newer than the user's read watermark; the "new
+  // messages" divider is drawn just above it. Only shown when at least one read
+  // message sits above the boundary, so it reads as a separator (not a top edge).
+  const unreadDividerIndex = useMemo(() => {
+    if (unreadDividerTimestamp === null || unreadDividerCeiling === null) {
+      return -1;
+    }
+
+    // The divider marks the backlog that was unread when the chat was opened:
+    // newer than the read watermark, but no newer than the open moment. Messages
+    // sent or received while reading (including the user's own) sit past the
+    // ceiling, so they never spawn or move the divider.
+    const index = threads.findIndex(
+      (thread) =>
+        thread.original.timestamp > unreadDividerTimestamp && thread.original.timestamp <= unreadDividerCeiling,
+    );
+
+    if (index > 0) {
+      return index;
+    }
+
+    // Every loaded message is newer than the watermark: anchor the marker at the
+    // top while older (read) history can still page in, so it shows from open
+    // instead of popping in mid-feed on scroll-up. If the start is already loaded
+    // there is no read context to separate, so suppress it.
+    return index === 0 && !olderMessagesReachedStart ? 0 : -1;
+  }, [threads, unreadDividerTimestamp, unreadDividerCeiling, olderMessagesReachedStart]);
   const reactionsBySignature = useMemo(
     () => buildMessageReactionIndex(messages, selfAddress),
     [messages, selfAddress],
@@ -1634,7 +1740,6 @@ function MessageList({
   }, [threads]);
   const lastThread = threads[threads.length - 1] ?? null;
   const lastMessageKey = lastThread !== null ? getMessageKey(lastThread.latest, threads.length - 1) : '';
-  const lastMessageIsOwn = selfAddress !== null && lastThread?.original.sender === selfAddress;
   const firstMessageKey = messages.length > 0 ? getMessageKey(messages[0], 0) : '';
 
   function captureScrollAnchor() {
@@ -1666,13 +1771,67 @@ function MessageList({
   // should also scroll the feed when the user is stuck to the bottom.
   const systemMessagesKey = systemMessages.map((entry) => `${entry.id}:${entry.phase}`).join('|');
 
+  // Reset restoration when switching chats so the next chat's saved position (or
+  // bottom) is applied instead of the previous chat's.
   useEffect(() => {
+    didRestoreScrollRef.current = false;
+  }, [scrollChatKey]);
+
+  // Restore the saved reading position (or default to the bottom) once the chat's
+  // messages have rendered. Runs before the stick-to-bottom effect below so a
+  // restored mid-feed position is not immediately yanked to the bottom.
+  useLayoutEffect(() => {
     const list = listRef.current;
 
-    if (list && (stickToBottomRef.current || lastMessageIsOwn)) {
+    if (!list || didRestoreScrollRef.current || messages.length === 0) {
+      return;
+    }
+
+    didRestoreScrollRef.current = true;
+
+    if (typeof initialScrollTop === 'number' && Number.isFinite(initialScrollTop)) {
+      const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+      const target = Math.min(initialScrollTop, maxScrollTop);
+
+      list.scrollTop = target;
+      stickToBottomRef.current = maxScrollTop - target < 48;
+    } else {
+      list.scrollTop = list.scrollHeight;
+      stickToBottomRef.current = true;
+    }
+  }, [initialScrollTop, messages.length, scrollChatKey]);
+
+  // Keep the newest content in view only when the user is already reading at the
+  // bottom; if they have scrolled up, their position is left untouched. Runs as a
+  // layout effect so it measures the committed DOM (incl. a new message's height)
+  // before paint, avoiding a flash of unscrolled content.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+
+    if (list && didRestoreScrollRef.current && stickToBottomRef.current) {
       list.scrollTop = list.scrollHeight;
     }
-  }, [lastMessageIsOwn, lastMessageKey, systemMessagesKey]);
+  }, [lastMessageKey, systemMessagesKey]);
+
+  // Sending a message always returns the user to the bottom so their own message
+  // is in view, regardless of where they had scrolled. Pinning stickToBottom also
+  // keeps the feed at the bottom once the sent message lands a moment later.
+  const didMountSendRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!didMountSendRef.current) {
+      didMountSendRef.current = true;
+      return;
+    }
+
+    const list = listRef.current;
+
+    stickToBottomRef.current = true;
+
+    if (list && didRestoreScrollRef.current) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }, [sentMessageNonce]);
 
   // After older history is prepended the list grows upward; restore the viewport
   // so the message the user was reading stays put instead of jumping.
@@ -1778,6 +1937,14 @@ function MessageList({
         const list = event.currentTarget;
 
         stickToBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+
+        // Remember where the user is reading so it can be restored on return.
+        // Skip until the initial position is applied so transient scrolls during
+        // mount/restore do not overwrite the saved position.
+        if (didRestoreScrollRef.current) {
+          onScrollPositionChange(scrollChatKey, list.scrollTop);
+        }
+
         maybeLoadOlder(list);
       }}
       ref={listRef}
@@ -1859,9 +2026,14 @@ function MessageList({
           ) : null;
 
         return (
+          <Fragment key={threadKey}>
+            {unreadDividerIndex === index ? (
+              <li className="message-list__unread-divider" role="separator">
+                <span>{t('label.newMessages')}</span>
+              </li>
+            ) : null}
           <li
             className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}`}
-            key={threadKey}
             ref={(element) => {
               if (element) {
                 itemsRef.current.set(threadKey, element);
@@ -1976,6 +2148,7 @@ function MessageList({
               </ol>
             ) : null}
           </li>
+          </Fragment>
         );
       })}
       {systemMessages.map((transaction) => (
@@ -1999,12 +2172,14 @@ function GroupMemberList({
   avatarProfiles,
   group,
   members,
+  onOpenAccount,
   onOpenAvatar,
   t,
 }: {
   avatarProfiles: AvatarProfilesByAddress;
   group: GroupData | null;
   members: GroupMember[];
+  onOpenAccount: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   t: TranslateFunction;
 }) {
@@ -2042,7 +2217,18 @@ function GroupMemberList({
               src={avatarSrc}
             />
             <span className="member-chip__text">
-              <span className="member-chip__name">{label}</span>
+              {address ? (
+                <button
+                  className="member-chip__name member-chip__name-button"
+                  onClick={() => onOpenAccount({ sender: address, senderName: name })}
+                  title={t('action.openAccountInfo', { account: label })}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ) : (
+                <span className="member-chip__name">{label}</span>
+              )}
               {shortAddress && label !== shortAddress ? (
                 <span className="member-chip__address">{shortAddress}</span>
               ) : null}
@@ -2062,6 +2248,30 @@ function GroupMemberList({
       })}
     </div>
   );
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia(query).matches
+      : false,
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia(query);
+    const handleChange = () => setMatches(mediaQuery.matches);
+
+    handleChange();
+    mediaQuery.addEventListener('change', handleChange);
+
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, [query]);
+
+  return matches;
 }
 
 export default function App() {
@@ -2113,6 +2323,22 @@ export default function App() {
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const pendingApprovalsRequestRef = useRef(0);
   const [directAddress, setDirectAddress] = useState('');
+  const [isDirectSearchOpen, setDirectSearchOpen] = useState(false);
+  const [directLookupPending, setDirectLookupPending] = useState(false);
+  const [directLookupError, setDirectLookupError] = useState('');
+  const directSearchInputRef = useRef<HTMLInputElement>(null);
+  // Per-chat read watermark (latest activity timestamp the user has seen). Held in
+  // memory for the session: baselined to current activity when a chat is first
+  // discovered so existing history is not flagged, then advanced as chats are read.
+  const [lastReadByGroupId, setLastReadByGroupId] = useState<ReadonlyMap<number, number>>(() => new Map());
+  const [lastReadByAddress, setLastReadByAddress] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // Mirrors of the read watermarks, read synchronously when a chat opens to
+  // snapshot the divider position before the "mark read" effect advances them.
+  const lastReadByGroupIdRef = useRef(lastReadByGroupId);
+  const lastReadByAddressRef = useRef(lastReadByAddress);
+  // Saved scroll position per chat key so the reading position is restored when
+  // the user returns to a conversation after visiting another.
+  const scrollPositionsRef = useRef(new Map<string, number>());
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
@@ -2131,7 +2357,26 @@ export default function App() {
   const [writeError, setWriteError] = useState('');
   const [privateGroupKeyStatus, setPrivateGroupKeyStatus] = useState('');
   const [privateGroupKeyError, setPrivateGroupKeyError] = useState('');
-  const [membersOpen, setMembersOpen] = useState(true);
+  // Members are auto-hidden behind a toggle so groups/chat get the full width;
+  // on a narrow screen the panel opens as an off-canvas overlay instead.
+  const [membersOpen, setMembersOpen] = useState(false);
+  // Narrow-screen single-view navigation: false shows the group/direct list,
+  // true shows the open conversation (toggled by selecting a chat / the back
+  // button). Ignored by the desktop layout, which shows both side by side.
+  const [mobileChatView, setMobileChatView] = useState(false);
+  // Tracks the single-view breakpoint so the members panel can behave as a modal
+  // overlay (focus, Escape, inert background) only when it is actually one.
+  const isNarrowLayout = useMediaQuery('(max-width: 860px)');
+  const membersToggleRef = useRef<HTMLButtonElement>(null);
+  const membersCloseRef = useRef<HTMLButtonElement>(null);
+  // Read watermark + open moment captured when a chat is opened, frozen for the
+  // session: the "new messages" divider spans (watermark, openedAt], so it marks
+  // the backlog that was unread on open and stays put as new messages arrive.
+  const [unreadDividerTimestamp, setUnreadDividerTimestamp] = useState<number | null>(null);
+  const [unreadDividerCeiling, setUnreadDividerCeiling] = useState<number | null>(null);
+  // Bumped on every message the user sends, so the feed scrolls back to the
+  // bottom to reveal it even if they had scrolled up.
+  const [sentMessageNonce, setSentMessageNonce] = useState(0);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
   const [accountInfoTarget, setAccountInfoTarget] = useState<AccountInfoTarget | null>(null);
@@ -2161,9 +2406,13 @@ export default function App() {
 
     for (const [groupId, timestamp] of loadedGroupActivityById) {
       if (timestamp === null) {
+        // Tombstone: loaded history found no real (non-reaction) message.
         activity.delete(groupId);
       } else {
-        activity.set(groupId, timestamp);
+        // Merge as a floor, not an override, so a newer live active-chats
+        // timestamp (a fresh message in an already-loaded group) still wins and
+        // can surface as unread.
+        activity.set(groupId, Math.max(activity.get(groupId) ?? Number.NEGATIVE_INFINITY, timestamp));
       }
     }
 
@@ -2180,9 +2429,12 @@ export default function App() {
 
     for (const [address, timestamp] of loadedDirectActivityByAddress) {
       if (timestamp === null) {
+        // Tombstone: loaded history found no real (non-reaction) message.
         activity.delete(address);
       } else {
-        activity.set(address, timestamp);
+        // Merge as a floor, not an override, so a newer live timestamp still
+        // wins and can surface as unread.
+        activity.set(address, Math.max(activity.get(address) ?? Number.NEGATIVE_INFINITY, timestamp));
       }
     }
 
@@ -2190,6 +2442,45 @@ export default function App() {
   }, [activeChats.value.direct, loadedDirectActivityByAddress]);
   const sortedGroups = useMemo(() => sortGroups(groups.value, t, groupActivityById), [groupActivityById, groups.value, t]);
   const isGroupSearchVisible = isGroupSearchOpen || search.trim().length > 0;
+  const isDirectFormVisible = isDirectSearchOpen || directAddress.trim().length > 0;
+  // A chat is unread when its latest activity is newer than the user's read
+  // watermark. The currently open chat is excluded (it is being read).
+  const unreadGroupIds = useMemo(() => {
+    const ids = new Set<number>();
+
+    for (const [groupId, timestamp] of groupActivityById) {
+      if (groupId === selectedGroupId) {
+        continue;
+      }
+
+      const lastRead = lastReadByGroupId.get(groupId);
+
+      if (lastRead !== undefined && timestamp > lastRead) {
+        ids.add(groupId);
+      }
+    }
+
+    return ids;
+  }, [groupActivityById, lastReadByGroupId, selectedGroupId]);
+  const unreadDirectAddresses = useMemo(() => {
+    const addresses = new Set<string>();
+
+    for (const [address, timestamp] of directActivityByAddress) {
+      if (address === selectedDirectAddress) {
+        continue;
+      }
+
+      const lastRead = lastReadByAddress.get(address);
+
+      if (lastRead !== undefined && timestamp > lastRead) {
+        addresses.add(address);
+      }
+    }
+
+    return addresses;
+  }, [directActivityByAddress, lastReadByAddress, selectedDirectAddress]);
+  const hasUnreadGroups = unreadGroupIds.size > 0;
+  const hasUnreadDirect = unreadDirectAddresses.size > 0;
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
   const hasSelectedMessages = selectedChatKey !== '' && messagesChatKey === selectedChatKey;
   const selectedGeneralChatMembers = useMemo(
@@ -2227,6 +2518,9 @@ export default function App() {
         ? groupMembers.error
         : '';
   const showGroupMembers = !!selectedGroup;
+  // The members panel is a modal overlay (not a side column) only at the narrow
+  // breakpoint; that is when it needs dialog semantics + an inert background.
+  const isMembersOverlay = isNarrowLayout && showGroupMembers && membersOpen;
   const pendingJoinGroupIds = useMemo(
     () => new Set(accountJoinRequests.value.map((request) => request.groupId)),
     [accountJoinRequests.value],
@@ -3299,6 +3593,8 @@ export default function App() {
 
       setDraft('');
       setComposeContext(null);
+      // Return the feed to the bottom so the just-sent message is in view.
+      setSentMessageNonce((nonce) => nonce + 1);
       if (chat.kind === 'direct') {
         await loadAccountData(selectedAccount);
       }
@@ -3353,20 +3649,50 @@ export default function App() {
     setWriteError('');
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
+    setDirectLookupError('');
     setComposeContext(null);
     setSelectedChat({ group, kind: 'group' });
+    setMobileChatView(true);
   }
 
   function selectDirect(direct: ActiveDirectChat) {
     setWriteError('');
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
+    setDirectLookupError('');
     setComposeContext(null);
     setSelectedChat({ direct, kind: 'direct' });
+    setMobileChatView(true);
+  }
+
+  // Narrow-screen "back" control: returns to the group/direct list and dismisses
+  // the members overlay. A no-op visually on desktop, where both panes show.
+  function showChatList() {
+    setMobileChatView(false);
+    setMembersOpen(false);
   }
 
   function toggleGroupSearch() {
     setGroupSearchOpen((current) => !current || search.trim().length > 0);
+  }
+
+  function toggleDirectSearch() {
+    setDirectSearchOpen((current) => !current || directAddress.trim().length > 0);
+  }
+
+  function mentionAccount(target: AccountInfoTarget) {
+    const label = getMessageSenderLabel(target, avatarProfiles[target.sender]);
+    const mention = `@${label} `;
+
+    setAccountInfoTarget(null);
+    setDraft((current) => {
+      if (!current) {
+        return mention;
+      }
+
+      return /\s$/.test(current) ? `${current}${mention}` : `${current} ${mention}`;
+    });
+    composerRef.current?.focus();
   }
 
   async function openDirectFromAccount(address: string, name: string | null) {
@@ -3385,9 +3711,9 @@ export default function App() {
   async function handleOpenDirectChat(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const address = directAddress.trim();
+    const value = directAddress.trim();
 
-    if (!address || !canOpenDirectChat) {
+    if (!value || !canOpenDirectChat || directLookupPending) {
       return;
     }
 
@@ -3396,13 +3722,42 @@ export default function App() {
     }
 
     setWriteError('');
+    setDirectLookupError('');
+
+    let address = value;
+    let name: string | undefined;
+
+    // Anything that does not look like an address is treated as a registered name
+    // and resolved to its owner address so the chat opens for that account.
+    if (!looksLikeQortalAddress(value)) {
+      setDirectLookupPending(true);
+
+      try {
+        const ownerAddress = await getNameOwnerAddress(value);
+
+        if (!ownerAddress) {
+          setDirectLookupError(t('status.direct.nameNotFound'));
+          return;
+        }
+
+        address = ownerAddress;
+        name = value;
+      } catch (error) {
+        setDirectLookupError(getBridgeErrorMessage(error, t('status.loadingError.nameLookup'), t));
+        return;
+      } finally {
+        setDirectLookupPending(false);
+      }
+    }
+
     setComposeContext(null);
+    setDirectAddress('');
+    setDirectSearchOpen(false);
     setSelectedChat({
-      direct: {
-        address,
-      },
+      direct: name ? { address, name } : { address },
       kind: 'direct',
     });
+    setMobileChatView(true);
   }
 
   async function connectSelectedAccount(actionList = actions) {
@@ -3516,6 +3871,130 @@ export default function App() {
   }, [isGroupSearchVisible]);
 
   useEffect(() => {
+    if (isDirectFormVisible) {
+      directSearchInputRef.current?.focus();
+    }
+  }, [isDirectFormVisible]);
+
+  // Baseline the read watermark for any chat the first time its activity is seen,
+  // so pre-existing history is not flagged as unread. Established entries are left
+  // alone so genuinely new activity can surface as unread.
+  useEffect(() => {
+    setLastReadByGroupId((current) => {
+      let next: Map<number, number> | null = null;
+
+      for (const [groupId, timestamp] of groupActivityById) {
+        if (!current.has(groupId)) {
+          next ??= new Map(current);
+          next.set(groupId, timestamp);
+        }
+      }
+
+      return next ?? current;
+    });
+  }, [groupActivityById]);
+
+  useEffect(() => {
+    setLastReadByAddress((current) => {
+      let next: Map<string, number> | null = null;
+
+      for (const [address, timestamp] of directActivityByAddress) {
+        if (!current.has(address)) {
+          next ??= new Map(current);
+          next.set(address, timestamp);
+        }
+      }
+
+      return next ?? current;
+    });
+  }, [directActivityByAddress]);
+
+  // Mark the open chat read once its messages are shown, and keep it read as new
+  // activity arrives while it stays open (so reading clears unread, not just the
+  // initial click).
+  useEffect(() => {
+    // Require at least one rendered message: a locked / read-only private chat
+    // reports its messages ready but empty, and must not be silently marked read.
+    if (!selectedChat || !hasSelectedMessages || messages.value.length === 0) {
+      return;
+    }
+
+    if (selectedChat.kind === 'group') {
+      const groupId = selectedChat.group.groupId;
+      const timestamp = groupActivityById.get(groupId);
+
+      if (typeof timestamp === 'number') {
+        setLastReadByGroupId((current) =>
+          (current.get(groupId) ?? -1) >= timestamp ? current : new Map(current).set(groupId, timestamp),
+        );
+      }
+    } else {
+      const address = selectedChat.direct.address;
+      const timestamp = directActivityByAddress.get(address);
+
+      if (typeof timestamp === 'number') {
+        setLastReadByAddress((current) =>
+          (current.get(address) ?? -1) >= timestamp ? current : new Map(current).set(address, timestamp),
+        );
+      }
+    }
+  }, [selectedChat, hasSelectedMessages, messages.value, groupActivityById, directActivityByAddress]);
+
+  useEffect(() => {
+    lastReadByGroupIdRef.current = lastReadByGroupId;
+  }, [lastReadByGroupId]);
+
+  useEffect(() => {
+    lastReadByAddressRef.current = lastReadByAddress;
+  }, [lastReadByAddress]);
+
+  // Snapshot the read watermark for the chat being opened so the "new messages"
+  // divider can sit above the first unread message. Keyed on the chat only, so
+  // it captures the pre-open watermark and stays frozen as new messages arrive.
+  useEffect(() => {
+    if (!selectedChat) {
+      setUnreadDividerTimestamp(null);
+      setUnreadDividerCeiling(null);
+      return;
+    }
+
+    const watermark =
+      selectedChat.kind === 'group'
+        ? lastReadByGroupIdRef.current.get(selectedChat.group.groupId)
+        : lastReadByAddressRef.current.get(selectedChat.direct.address);
+
+    setUnreadDividerTimestamp(typeof watermark === 'number' ? watermark : null);
+    // Freeze the upper bound at the open moment so live/own messages stay below it.
+    setUnreadDividerCeiling(Date.now());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChatKey]);
+
+  // While the members panel is a modal overlay (narrow screens), close it on
+  // Escape and move focus into it, restoring focus to the toggle on dismissal.
+  useEffect(() => {
+    if (!(membersOpen && isNarrowLayout && showGroupMembers)) {
+      return undefined;
+    }
+
+    const toggle = membersToggleRef.current;
+
+    membersCloseRef.current?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setMembersOpen(false);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      toggle?.focus();
+    };
+  }, [membersOpen, isNarrowLayout, showGroupMembers]);
+
+  useEffect(() => {
     loadedGroupActivityRef.current = loadedGroupActivityById;
   }, [loadedGroupActivityById]);
 
@@ -3525,10 +4004,14 @@ export default function App() {
 
   useEffect(() => {
     setLoadedDirectActivityByAddress(new Map());
+    setLastReadByGroupId(new Map());
+    setLastReadByAddress(new Map());
+    scrollPositionsRef.current.clear();
     requestedPrivateGroupKeysRef.current.clear();
     resolvedPrivateGroupKeyRequestsRef.current.clear();
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
+    setDirectLookupError('');
   }, [account?.address]);
 
   useEffect(() => {
@@ -3537,49 +4020,77 @@ export default function App() {
     }
 
     let isDisposed = false;
-    const readableGroups = groups.value.filter((group) => {
-      return (
-        group.isOpen !== false ||
-        shouldDecryptGroupMessages(group, {
-          canReadPrivateGroupChat,
-          isAccountUnlocked,
-          isGroupMembershipConfirmed: memberGroups.phase === 'ready',
-          isJoinedGroup: joinedIds.has(group.groupId),
-        })
-      );
-    });
+    let isHydrating = false;
 
-    async function hydrateGroupActivity() {
-      for (const group of readableGroups) {
-        if (isDisposed || loadedGroupActivityRef.current.has(group.groupId)) {
-          continue;
-        }
+    // Hydrate every listed group, not just readable ones: closed groups the user
+    // is not a member of still expose message timestamps (without decryption), so
+    // their sidebar activity + unread dot can surface a new message has arrived.
+    async function hydrateGroupActivity(refresh: boolean) {
+      if (isHydrating) {
+        // A prior sweep is still in flight; skip so passes do not pile up.
+        return;
+      }
 
-        try {
-          const nextMessages = await getGroupMessages(group, actions, {
-            decryptPrivate: shouldDecryptGroupMessages(group, {
-              canReadPrivateGroupChat,
-              isAccountUnlocked,
-              isGroupMembershipConfirmed: memberGroups.phase === 'ready',
-              isJoinedGroup: joinedIds.has(group.groupId),
-            }),
-          });
+      isHydrating = true;
 
+      // The open group has its own live socket; skip it to avoid redundant reads.
+      const openGroupId = selectedGroupIdRef.current;
+
+      try {
+        for (const group of groups.value) {
           if (isDisposed) {
             return;
           }
 
-          setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, group.groupId, nextMessages));
-        } catch {
-          // Some closed groups cannot expose history in the current Home/Core context.
+          if (group.groupId === openGroupId) {
+            continue;
+          }
+
+          // First pass only fills gaps; the periodic refresh re-reads known groups
+          // so non-member / browsed groups (off the active-chats stream) stay live.
+          if (!refresh && loadedGroupActivityRef.current.has(group.groupId)) {
+            continue;
+          }
+
+          try {
+            const nextMessages = await getGroupMessages(group, actions, {
+              decryptPrivate: shouldDecryptGroupMessages(group, {
+                canReadPrivateGroupChat,
+                isAccountUnlocked,
+                isGroupMembershipConfirmed: memberGroups.phase === 'ready',
+                isJoinedGroup: joinedIds.has(group.groupId),
+              }),
+            });
+
+            if (isDisposed) {
+              return;
+            }
+
+            setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, group.groupId, nextMessages));
+          } catch {
+            // Some closed groups cannot expose history in the current Home/Core context.
+          }
         }
+      } finally {
+        isHydrating = false;
       }
     }
 
-    void hydrateGroupActivity();
+    void hydrateGroupActivity(false);
+
+    // Refresh on a slow cadence (only while the tab is visible) so the indicator
+    // keeps up for groups the active-chats websocket does not cover.
+    const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      void hydrateGroupActivity(true);
+    }, 30000);
 
     return () => {
       isDisposed = true;
+      window.clearInterval(interval);
     };
   }, [actionsKey, canReadPrivateGroupChat, groups.value, isAccountUnlocked, joinedIds, memberGroups.phase]);
 
@@ -3842,9 +4353,12 @@ export default function App() {
       return undefined;
     }
 
-    const socket = new WebSocket(buildActiveChatsWebSocketUrl(account.address));
+    const address = account.address;
+    let socket: WebSocket | null = null;
+    let reconnectTimeout = 0;
+    let isDisposed = false;
 
-    socket.addEventListener('message', (event) => {
+    function handleMessage(event: MessageEvent) {
       try {
         const nextActiveChats = parseActiveChats(event.data);
 
@@ -3855,12 +4369,86 @@ export default function App() {
             groups: nextActiveChats.groups ?? current.value.groups,
           },
         }));
+
+        // The public stream's group entries carry live timestamps; fold them in
+        // as an activity floor too so the sidebar indicator survives a stream
+        // that later drops a group from its active list.
+        const groupActivity = nextActiveChats.groups ?? [];
+
+        if (groupActivity.length > 0) {
+          setLoadedGroupActivityById((currentActivity) => {
+            let next: Map<number, number | null> | null = null;
+
+            for (const group of groupActivity) {
+              if (typeof group.timestamp !== 'number') {
+                continue;
+              }
+
+              if (group.timestamp > (currentActivity.get(group.groupId) ?? Number.NEGATIVE_INFINITY)) {
+                next ??= new Map(currentActivity);
+                next.set(group.groupId, group.timestamp);
+              }
+            }
+
+            return next ?? currentActivity;
+          });
+        }
+
+        // The public stream's direct entries lack decrypted names, so they do not
+        // replace the decrypted direct list; their timestamps are still folded in
+        // as a live activity signal so a new inbound direct message can surface as
+        // unread without the chat being opened.
+        const directActivity = nextActiveChats.direct ?? [];
+
+        if (directActivity.length > 0) {
+          setLoadedDirectActivityByAddress((currentActivity) => {
+            let next: Map<string, number | null> | null = null;
+
+            for (const direct of directActivity) {
+              if (typeof direct.timestamp !== 'number') {
+                continue;
+              }
+
+              if (direct.timestamp > (currentActivity.get(direct.address) ?? Number.NEGATIVE_INFINITY)) {
+                next ??= new Map(currentActivity);
+                next.set(direct.address, direct.timestamp);
+              }
+            }
+
+            return next ?? currentActivity;
+          });
+        }
       } catch {
         // Keep the last active-chat snapshot.
       }
-    });
+    }
 
-    return () => socket.close();
+    // The active-chats stream is the sidebar's only live signal, so reconnect on
+    // drop (idle timeout, network blip) the way the group-message socket does —
+    // otherwise unread indicators silently stop updating after the first close.
+    function connect() {
+      if (isDisposed) {
+        return;
+      }
+
+      socket = new WebSocket(buildActiveChatsWebSocketUrl(address));
+      socket.addEventListener('message', handleMessage);
+      socket.addEventListener('close', () => {
+        if (isDisposed) {
+          return;
+        }
+
+        reconnectTimeout = window.setTimeout(connect, 5000);
+      });
+    }
+
+    connect();
+
+    return () => {
+      isDisposed = true;
+      window.clearTimeout(reconnectTimeout);
+      socket?.close();
+    };
   }, [account?.address]);
 
   useEffect(() => {
@@ -3959,12 +4547,24 @@ export default function App() {
         </div>
       </header>
 
-      <section className={`layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}`}>
-        <aside className="sidebar" aria-label={t('aria.navigation')}>
+      <section
+        className={`layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}${
+          mobileChatView ? ' layout--mobile-chat' : ''
+        }`}
+      >
+        <aside className="sidebar" aria-label={t('aria.navigation')} inert={isMembersOverlay || undefined}>
           <section className="panel">
             <div className="panel__header">
               <h2>{t('label.common.groups')}</h2>
               <div className="panel__header-actions">
+                {hasUnreadGroups ? (
+                  <span
+                    aria-label={t('aria.unreadGroups')}
+                    className="panel__unread-dot"
+                    role="img"
+                    title={t('aria.unreadGroups')}
+                  />
+                ) : null}
                 <span className="panel__count">{groups.value.length}</span>
                 <button
                   aria-expanded={isGroupSearchVisible}
@@ -4009,6 +4609,7 @@ export default function App() {
                 onSelect={selectGroup}
                 selectedGroupId={selectedGroupId}
                 t={t}
+                unreadGroupIds={unreadGroupIds}
               />
             )}
           </section>
@@ -4016,25 +4617,52 @@ export default function App() {
           <section className="panel">
             <div className="panel__header">
               <h2>{t('label.common.direct')}</h2>
-              <span>{activeChats.value.direct?.length ?? 0}</span>
+              <div className="panel__header-actions">
+                {hasUnreadDirect ? (
+                  <span
+                    aria-label={t('aria.unreadDirect')}
+                    className="panel__unread-dot"
+                    role="img"
+                    title={t('aria.unreadDirect')}
+                  />
+                ) : null}
+                <span className="panel__count">{activeChats.value.direct?.length ?? 0}</span>
+                <button
+                  aria-expanded={isDirectFormVisible}
+                  aria-label={t('label.newDirectChat')}
+                  className="icon-button"
+                  onClick={toggleDirectSearch}
+                  title={t('label.newDirectChat')}
+                  type="button"
+                >
+                  <PlusIcon />
+                </button>
+              </div>
             </div>
-            <form className="search" onSubmit={handleOpenDirectChat}>
-              <input
-                aria-label={t('placeholder.directAddress')}
-                disabled={!canOpenDirectChat}
-                onChange={(event) => setDirectAddress(event.target.value)}
-                placeholder={t('placeholder.directAddress')}
-                value={directAddress}
-              />
-              <button
-                className="button"
-                disabled={!canOpenDirectChat || !directAddress.trim()}
-                title={canOpenDirectChat ? t('action.directTooltip') : directAccessUnavailableLabel}
-                type="submit"
-              >
-                {t('button.open')}
-              </button>
-            </form>
+            {isDirectFormVisible ? (
+              <form className="search" onSubmit={handleOpenDirectChat}>
+                <input
+                  aria-label={t('placeholder.directNameOrAddress')}
+                  disabled={!canOpenDirectChat || directLookupPending}
+                  onChange={(event) => {
+                    setDirectAddress(event.target.value);
+                    setDirectLookupError('');
+                  }}
+                  placeholder={t('placeholder.directNameOrAddress')}
+                  ref={directSearchInputRef}
+                  value={directAddress}
+                />
+                <button
+                  className="button"
+                  disabled={!canOpenDirectChat || !directAddress.trim() || directLookupPending}
+                  title={canOpenDirectChat ? t('action.directTooltip') : directAccessUnavailableLabel}
+                  type="submit"
+                >
+                  {directLookupPending ? t('button.opening') : t('button.open')}
+                </button>
+              </form>
+            ) : null}
+            {directLookupError ? <p className="error">{directLookupError}</p> : null}
             {activeChats.phase === 'error' ? <p className="error">{activeChats.error}</p> : null}
             {!canOpenDirectChat ? <p className="muted">{directAccessUnavailableLabel}</p> : null}
             {canOpenDirectChat && !canLoadPrivateDirectChats ? <p className="muted">{directListUnavailableLabel}</p> : null}
@@ -4048,14 +4676,24 @@ export default function App() {
                 onSelect={selectDirect}
                 selectedAddress={selectedDirectAddress}
                 t={t}
+                unreadAddresses={unreadDirectAddresses}
               />
             )}
           </section>
         </aside>
 
-        <section className="chat-pane" aria-label={t('aria.selectedChat')}>
+        <section className="chat-pane" aria-label={t('aria.selectedChat')} inert={isMembersOverlay || undefined}>
           <div className="chat-pane__header">
-            <div>
+            <button
+              aria-label={t('button.back')}
+              className="chat-pane__back"
+              onClick={showChatList}
+              title={t('button.back')}
+              type="button"
+            >
+              <BackIcon />
+            </button>
+            <div className="chat-pane__heading">
               <h2 className="chat-pane__title">
                 {selectedChat?.kind === 'group' &&
                 !isGeneralChatGroup(selectedChat.group) &&
@@ -4090,8 +4728,11 @@ export default function App() {
             <div className="chat-pane__actions">
               {selectedChat?.kind === 'group' ? (
                 <button
+                  aria-controls="members-drawer"
+                  aria-expanded={membersOpen}
                   className="button button--secondary"
                   onClick={() => setMembersOpen((current) => !current)}
+                  ref={membersToggleRef}
                   type="button"
                 >
                   {membersOpen
@@ -4170,6 +4811,7 @@ export default function App() {
               avatarProfiles={avatarProfiles}
               canCompose={canComposeMessage}
               canOpenMediaPlayer={canOpenMediaPlayer}
+              initialScrollTop={scrollPositionsRef.current.get(selectedChatKey)}
               messages={combinedMessages}
               olderMessagesError={olderMessagesState.error}
               olderMessagesReachedStart={olderMessagesState.reachedStart}
@@ -4180,10 +4822,17 @@ export default function App() {
               onOpenAvatar={setAvatarLightboxImage}
               onReact={(message, reaction, contentState) => void handleMessageReaction(message, reaction, contentState)}
               onReply={startReply}
+              onScrollPositionChange={(chatKey, scrollTop) => {
+                scrollPositionsRef.current.set(chatKey, scrollTop);
+              }}
               pendingReactionKey={reactionPendingKey}
+              scrollChatKey={selectedChatKey}
               selfAddress={account?.address ?? null}
+              sentMessageNonce={sentMessageNonce}
               systemMessages={selectedTransactions}
               t={t}
+              unreadDividerCeiling={unreadDividerCeiling}
+              unreadDividerTimestamp={unreadDividerTimestamp}
             />
           )}
 
@@ -4256,13 +4905,37 @@ export default function App() {
         </section>
 
         {showGroupMembers && membersOpen ? (
-          <aside className="members-drawer" aria-label={t('aria.groupMembers')}>
+          <>
+            <button
+              aria-hidden="true"
+              className="members-drawer__scrim"
+              onClick={() => setMembersOpen(false)}
+              tabIndex={-1}
+              type="button"
+            />
+          <aside
+            aria-label={t('aria.groupMembers')}
+            aria-modal={isMembersOverlay || undefined}
+            className="members-drawer"
+            id="members-drawer"
+            role={isMembersOverlay ? 'dialog' : undefined}
+          >
             <div className="members-drawer__header">
               <div>
                 <h2>{t('label.common.members')}</h2>
                 <p>{getGroupTitle(selectedGroup, t)}</p>
               </div>
               <span>{selectedGroupMembers.length}</span>
+              <button
+                aria-label={t('button.close')}
+                className="members-drawer__close"
+                onClick={() => setMembersOpen(false)}
+                ref={membersCloseRef}
+                title={t('button.close')}
+                type="button"
+              >
+                X
+              </button>
             </div>
             {selectedGroupMembersPhase === 'error' ? <p className="error">{selectedGroupMembersError}</p> : null}
             {selectedGroupMembersPhase === 'loading' ? (
@@ -4272,6 +4945,7 @@ export default function App() {
                 avatarProfiles={avatarProfiles}
                 group={isSelectedGeneralChat ? null : selectedGroup}
                 members={selectedGroupMembers}
+                onOpenAccount={setAccountInfoTarget}
                 onOpenAvatar={setAvatarLightboxImage}
                 t={t}
               />
@@ -4307,13 +4981,16 @@ export default function App() {
               </div>
             ) : null}
           </aside>
+          </>
         ) : null}
       </section>
       {accountInfoTarget ? (
         <AccountInfoDialog
+          canMention={canComposeMessage}
           canOpenDirect={canOpenDirectChat}
           directUnavailableLabel={directAccessUnavailableLabel}
           onClose={() => setAccountInfoTarget(null)}
+          onMention={mentionAccount}
           onOpenAvatar={(image) => {
             setAccountInfoTarget(null);
             setAvatarLightboxImage(image);
