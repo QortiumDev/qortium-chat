@@ -80,6 +80,15 @@ import {
 } from './generalChat';
 import { copyTextToClipboard } from './clipboard';
 import {
+  mergePersistedDirect,
+  readLastChat,
+  readPersistedDirects,
+  toStoredSelectedChat,
+  writeLastChat,
+  writePersistedDirects,
+  type PersistedDirect,
+} from './chatStorage';
+import {
   getActiveMessageGroupMembers,
   getGroupMemberAddress,
   getGroupMemberDisplayName,
@@ -308,6 +317,15 @@ function BackIcon() {
   return (
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
       <path d="m15 5-7 7 7 7" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="M6 6l12 12" />
+      <path d="M18 6 6 18" />
     </svg>
   );
 }
@@ -1213,25 +1231,29 @@ function GroupList({
 }
 
 function DirectList({
-  activeChats,
   activityByAddress,
   canOpen,
+  directs: directEntries,
+  onRemove,
   onSelect,
+  removableAddresses,
   selectedAddress,
   t,
   unreadAddresses,
 }: {
-  activeChats: ActiveChats;
   activityByAddress: ReadonlyMap<string, number>;
   canOpen: boolean;
+  directs: ActiveDirectChat[];
+  onRemove: (address: string) => void;
   onSelect: (direct: ActiveDirectChat) => void;
+  removableAddresses: ReadonlySet<string>;
   selectedAddress: string | null;
   t: TranslateFunction;
   unreadAddresses: ReadonlySet<string>;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const directs = useMemo(() => {
-    return [...(activeChats.direct ?? [])].sort((first, second) => {
+    return [...directEntries].sort((first, second) => {
       const firstActivity = activityByAddress.get(first.address);
       const secondActivity = activityByAddress.get(second.address);
 
@@ -1249,7 +1271,7 @@ function DirectList({
 
       return getDirectTitle(first).localeCompare(getDirectTitle(second));
     });
-  }, [activeChats.direct, activityByAddress]);
+  }, [directEntries, activityByAddress]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30000);
@@ -1266,33 +1288,50 @@ function DirectList({
       {directs.map((direct) => {
         const lastMessageTimestamp = activityByAddress.get(direct.address);
         const isUnread = unreadAddresses.has(direct.address);
+        const isRemovable = removableAddresses.has(direct.address);
+        const title = getDirectTitle(direct);
 
         return (
-          <button
-            className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}${isUnread ? ' direct-row--unread' : ''}`}
-            disabled={!canOpen}
+          <div
+            className={`direct-row-wrap${isRemovable ? ' direct-row-wrap--removable' : ''}`}
             key={direct.address}
-            onClick={() => onSelect(direct)}
-            title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
-            type="button"
           >
-            <span className="direct-row__main">
-              {isUnread ? (
-                <span
-                  aria-label={t('label.unread')}
-                  className="direct-row__unread"
-                  role="img"
-                  title={t('label.unread')}
-                />
+            <button
+              className={`direct-row${selectedAddress === direct.address ? ' direct-row--selected' : ''}${isUnread ? ' direct-row--unread' : ''}`}
+              disabled={!canOpen}
+              onClick={() => onSelect(direct)}
+              title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
+              type="button"
+            >
+              <span className="direct-row__main">
+                {isUnread ? (
+                  <span
+                    aria-label={t('label.unread')}
+                    className="direct-row__unread"
+                    role="img"
+                    title={t('label.unread')}
+                  />
+                ) : null}
+                <span className="direct-row__title">{title}</span>
+              </span>
+              {lastMessageTimestamp && !isRemovable ? (
+                <small title={formatTimestamp(lastMessageTimestamp)}>
+                  {formatTimeAgo(lastMessageTimestamp, now)}
+                </small>
               ) : null}
-              <span className="direct-row__title">{getDirectTitle(direct)}</span>
-            </span>
-            {lastMessageTimestamp ? (
-              <small title={formatTimestamp(lastMessageTimestamp)}>
-                {formatTimeAgo(lastMessageTimestamp, now)}
-              </small>
+            </button>
+            {isRemovable ? (
+              <button
+                aria-label={t('action.removeDirectChat', { name: title })}
+                className="direct-row__remove"
+                onClick={() => onRemove(direct.address)}
+                title={t('button.removeChat')}
+                type="button"
+              >
+                <CloseIcon />
+              </button>
             ) : null}
-          </button>
+          </div>
         );
       })}
     </div>
@@ -2313,6 +2352,12 @@ export default function App() {
     useState<AsyncState<GroupWithJoinRequests[]>>(createState(emptyAdminJoinRequests));
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
+  // Direct chats kept in the sidebar even after their messages expire off the
+  // active-chats list, persisted per account; removable when no longer active.
+  const [persistedDirects, setPersistedDirects] = useState<PersistedDirect[]>([]);
+  // Tracks the account whose saved last-chat has already been restored, so the
+  // restore runs once per account rather than fighting later selections.
+  const restoredForAccountRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
   const [messagesChatKey, setMessagesChatKey] = useState('');
   // History loaded on demand behind the live tail. The live `messages` state is
@@ -2420,8 +2465,19 @@ export default function App() {
   const selectedDirectAddress = selectedDirect?.address ?? null;
   const selectedChatKey = getSelectedChatKey(selectedChat);
   const selectedGroupIdRef = useRef<number | null>(selectedGroupId);
+  // Live mirror of the current selection so async callbacks (e.g. a group search
+  // resolving after the saved-chat restore) don't auto-select over a real choice.
+  const hasSelectedChatRef = useRef(selectedChat !== null);
+  // Live mirror of the account address so storage writes update the visible state
+  // only while that account is still selected (avoids cross-account contamination).
+  const currentAccountAddressRef = useRef<string | null>(account?.address ?? null);
+  // Set once the user explicitly picks a chat, so a late-arriving account does not
+  // restore over their choice. Reset per account so each account restores once.
+  const userSelectedChatRef = useRef(false);
 
   selectedGroupIdRef.current = selectedGroupId;
+  hasSelectedChatRef.current = selectedChat !== null;
+  currentAccountAddressRef.current = account?.address ?? null;
   const groupActivityById = useMemo(() => {
     const activity = new Map<number, number>();
 
@@ -2467,6 +2523,25 @@ export default function App() {
 
     return activity;
   }, [activeChats.value.direct, loadedDirectActivityByAddress]);
+  // Sidebar direct list = active chats plus persisted ones whose messages have
+  // expired off the active list. Persisted-only entries (no active messages) are
+  // the removable ones — surfaced via removableDirectAddresses.
+  const activeDirectAddresses = useMemo(
+    () => new Set((activeChats.value.direct ?? []).map((direct) => direct.address)),
+    [activeChats.value.direct],
+  );
+  const mergedDirects = useMemo(() => {
+    const active = activeChats.value.direct ?? [];
+    const extras = persistedDirects
+      .filter((direct) => !activeDirectAddresses.has(direct.address))
+      .map((direct): ActiveDirectChat => (direct.name ? { address: direct.address, name: direct.name } : { address: direct.address }));
+
+    return [...active, ...extras];
+  }, [activeChats.value.direct, activeDirectAddresses, persistedDirects]);
+  const removableDirectAddresses = useMemo(
+    () => new Set(mergedDirects.map((direct) => direct.address).filter((address) => !activeDirectAddresses.has(address))),
+    [mergedDirects, activeDirectAddresses],
+  );
   const sortedGroups = useMemo(() => sortGroups(groups.value, t, groupActivityById), [groupActivityById, groups.value, t]);
   const isGroupSearchVisible = isGroupSearchOpen || search.trim().length > 0;
   const isDirectFormVisible = isDirectSearchOpen || directAddress.trim().length > 0;
@@ -2904,7 +2979,7 @@ export default function App() {
       const nextGroups = withGeneralChatGroup(await searchGroups(nextSearch, actionList), nextSearch, t);
 
       setGroups({ phase: 'ready', value: nextGroups });
-      if (!selectedChat && nextGroups.length > 0) {
+      if (!hasSelectedChatRef.current && nextGroups.length > 0) {
         setSelectedChat({ group: nextGroups[0], kind: 'group' });
       }
     } catch (error) {
@@ -2915,7 +2990,7 @@ export default function App() {
         phase: 'error',
         value: fallbackGroups,
       });
-      if (!selectedChat && fallbackGroups.length > 0) {
+      if (!hasSelectedChatRef.current && fallbackGroups.length > 0) {
         setSelectedChat({ group: fallbackGroups[0], kind: 'group' });
       }
     }
@@ -3029,6 +3104,9 @@ export default function App() {
         : nextActiveChats.direct;
 
       setActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct } });
+      // Keep these directs listed after their messages later expire. Done here
+      // (not in an effect) so the write is tied to the account just loaded.
+      persistDirects(selectedAccount.address, direct ?? []);
     } catch (error) {
       setActiveChats({
         error: getBridgeErrorMessage(error, t('status.loadingError.activeChats'), t),
@@ -3672,13 +3750,57 @@ export default function App() {
     }
   }
 
+  // Persist the user's last explicit selection so the app reopens on it next time
+  // (per account). The provisional General Chat auto-select and restore do not
+  // call this, so they never overwrite a real choice.
+  function rememberLastChat(chat: SelectedChat) {
+    if (account) {
+      writeLastChat(account.address, toStoredSelectedChat(chat));
+    }
+  }
+
+  // Keep directs in the sidebar after their messages expire off the active list.
+  // Storage is the source of truth (keyed by account), so a write always targets
+  // the right account even when activeChats/state for a prior account lag behind;
+  // the visible state updates only while that account is still selected.
+  function persistDirects(accountAddress: string, directs: ActiveDirectChat[]) {
+    if (directs.length === 0) {
+      return;
+    }
+
+    const stored = readPersistedDirects(accountAddress);
+    let next = stored;
+
+    for (const direct of directs) {
+      next = mergePersistedDirect(next, direct.address, direct.name);
+    }
+
+    if (next === stored) {
+      return;
+    }
+
+    writePersistedDirects(accountAddress, next);
+
+    if (currentAccountAddressRef.current === accountAddress) {
+      setPersistedDirects(next);
+    }
+  }
+
+  function rememberDirect(direct: ActiveDirectChat) {
+    if (account) {
+      persistDirects(account.address, [direct]);
+    }
+  }
+
   function selectGroup(group: GroupData) {
     setWriteError('');
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
     setComposeContext(null);
+    userSelectedChatRef.current = true;
     setSelectedChat({ group, kind: 'group' });
+    rememberLastChat({ group, kind: 'group' });
     setMobileChatView(true);
   }
 
@@ -3688,8 +3810,51 @@ export default function App() {
     setPrivateGroupKeyError('');
     setDirectLookupError('');
     setComposeContext(null);
+    userSelectedChatRef.current = true;
     setSelectedChat({ direct, kind: 'direct' });
+    rememberLastChat({ direct, kind: 'direct' });
+    rememberDirect(direct);
     setMobileChatView(true);
+  }
+
+  // Remove a persisted direct from the sidebar. If it is the open chat, fall back
+  // to General Chat and return to the list on narrow screens so the user is not
+  // left on a chat that no longer exists; also repoint a saved last-chat that
+  // pointed at the removed direct so it does not dangle on the next open.
+  function removeDirect(address: string) {
+    const accountAddress = account?.address ?? null;
+    const generalChat = groups.value.find((group) => isGeneralChatGroup(group)) ?? null;
+
+    if (accountAddress) {
+      const stored = readPersistedDirects(accountAddress);
+      const next = stored.filter((direct) => direct.address !== address);
+
+      if (next.length !== stored.length) {
+        writePersistedDirects(accountAddress, next);
+      }
+
+      if (currentAccountAddressRef.current === accountAddress) {
+        setPersistedDirects(next);
+      }
+
+      const savedChat = readLastChat(accountAddress);
+
+      if (savedChat?.kind === 'direct' && savedChat.direct.address === address && generalChat) {
+        writeLastChat(accountAddress, toStoredSelectedChat({ group: generalChat, kind: 'group' }));
+      }
+    } else {
+      setPersistedDirects((current) => current.filter((direct) => direct.address !== address));
+    }
+
+    if (selectedChat?.kind === 'direct' && selectedChat.direct.address === address) {
+      if (generalChat) {
+        setSelectedChat({ group: generalChat, kind: 'group' });
+      } else {
+        setSelectedChat(null);
+      }
+
+      setMobileChatView(false);
+    }
   }
 
   // Narrow-screen "back" control: returns to the group/direct list and dismisses
@@ -3780,10 +3945,11 @@ export default function App() {
     setComposeContext(null);
     setDirectAddress('');
     setDirectSearchOpen(false);
-    setSelectedChat({
-      direct: name ? { address, name } : { address },
-      kind: 'direct',
-    });
+    const direct: ActiveDirectChat = name ? { address, name } : { address };
+    userSelectedChatRef.current = true;
+    setSelectedChat({ direct, kind: 'direct' });
+    rememberLastChat({ direct, kind: 'direct' });
+    rememberDirect(direct);
     setMobileChatView(true);
   }
 
@@ -4039,6 +4205,49 @@ export default function App() {
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
+    // A new account restores its own last chat, regardless of the prior choice.
+    userSelectedChatRef.current = false;
+  }, [account?.address]);
+
+  // Load this account's persisted direct chats from storage.
+  useEffect(() => {
+    setPersistedDirects(account ? readPersistedDirects(account.address) : []);
+  }, [account?.address]);
+
+  // Reopen on the account's last-selected chat (once per account), overriding the
+  // provisional General Chat default. Skips if the user already picked a chat for
+  // this account; falls back to General Chat when nothing usable is saved (the
+  // account-switch path does not re-run the group auto-select that mount uses).
+  useEffect(() => {
+    if (!account || restoredForAccountRef.current === account.address) {
+      return;
+    }
+
+    restoredForAccountRef.current = account.address;
+
+    if (userSelectedChatRef.current) {
+      return;
+    }
+
+    const saved = readLastChat(account.address);
+
+    if (saved?.kind === 'direct') {
+      setSelectedChat({ direct: saved.direct, kind: 'direct' });
+      return;
+    }
+
+    if (saved?.kind === 'group') {
+      setSelectedChat({ group: saved.group, kind: 'group' });
+      return;
+    }
+
+    // Nothing saved: fall back to General Chat when it is loaded, otherwise leave
+    // the mount-time group auto-select to pick it once groups arrive.
+    const generalChat = groups.value.find((group) => isGeneralChatGroup(group)) ?? null;
+
+    if (generalChat) {
+      setSelectedChat({ group: generalChat, kind: 'group' });
+    }
   }, [account?.address]);
 
   useEffect(() => {
@@ -4653,7 +4862,7 @@ export default function App() {
                     title={t('aria.unreadDirect')}
                   />
                 ) : null}
-                <span className="panel__count">{activeChats.value.direct?.length ?? 0}</span>
+                <span className="panel__count">{mergedDirects.length}</span>
                 <button
                   aria-expanded={isDirectFormVisible}
                   aria-label={t('label.newDirectChat')}
@@ -4697,10 +4906,12 @@ export default function App() {
               <LoadingRows count={3} label={t('label.loading')} />
             ) : (
               <DirectList
-                activeChats={activeChats.value}
                 activityByAddress={directActivityByAddress}
                 canOpen={canOpenDirectChat}
+                directs={mergedDirects}
+                onRemove={removeDirect}
                 onSelect={selectDirect}
+                removableAddresses={removableDirectAddresses}
                 selectedAddress={selectedDirectAddress}
                 t={t}
                 unreadAddresses={unreadDirectAddresses}
@@ -4765,6 +4976,18 @@ export default function App() {
                   {membersOpen
                     ? t('button.hideMembers')
                     : `${t('label.common.members')} (${selectedGroupMembers.length})`}
+                </button>
+              ) : null}
+              {selectedChat?.kind === 'direct' &&
+              selectedDirectAddress !== null &&
+              removableDirectAddresses.has(selectedDirectAddress) ? (
+                <button
+                  className="button button--secondary"
+                  onClick={() => removeDirect(selectedDirectAddress)}
+                  title={t('action.removeDirectChat', { name: getDirectTitle(selectedChat.direct) })}
+                  type="button"
+                >
+                  {t('button.removeChat')}
                 </button>
               ) : null}
               {renderJoinGroupButton()}

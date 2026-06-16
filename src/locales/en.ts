@@ -194,6 +194,8 @@ export const EN_STRINGS = {
   'button.cancel': 'Cancel',
   'button.close': 'Close',
   'button.back': 'Back to chats',
+  'button.removeChat': 'Remove chat',
+  'action.removeDirectChat': 'Remove the chat with {name} from your list',
   'button.playMedia': 'Play',
   'label.message.edited': 'Edited',
   'label.message.original': 'Original',
