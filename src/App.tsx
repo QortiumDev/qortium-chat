@@ -1,4 +1,4 @@
-import { Fragment, type SubmitEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, type ReactNode, type SubmitEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
@@ -1585,12 +1585,105 @@ function MessageReactionDetails({
   );
 }
 
+// Floating, viewport-anchored container for the reaction picker and the reaction
+// details. It is rendered outside the message bubble so opening it never expands
+// the message, and it grows upward (bottom pinned just above the trigger) rather
+// than pushing content down. A transparent backdrop closes it on an outside tap.
+function ReactionPopover({
+  anchorRect,
+  children,
+  label,
+  onClose,
+  width,
+}: {
+  anchorRect: DOMRect;
+  children: ReactNode;
+  label: string;
+  onClose: () => void;
+  width: number;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Focus the popover on open and restore focus to the trigger on close. Mount
+  // only, so a parent re-render (the 30s clock, a new message) cannot re-steal
+  // focus out of the emoji search field while the user is typing in it.
+  useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    cardRef.current?.focus();
+
+    return () => {
+      if (trigger && document.contains(trigger)) {
+        trigger.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
+
+    function handleResize() {
+      // A mobile soft keyboard fires resize; keep the popover open while its
+      // search field is focused, else the stale anchor warrants a dismiss.
+      if (cardRef.current?.contains(document.activeElement)) {
+        return;
+      }
+
+      onClose();
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [onClose]);
+
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const clampedWidth = Math.min(width, viewportWidth - 16);
+  const left = Math.max(8, Math.min(anchorRect.left, viewportWidth - clampedWidth - 8));
+  const spaceAbove = anchorRect.top - 16;
+  const spaceBelow = viewportHeight - anchorRect.bottom - 16;
+  // Open upward (the requested behaviour) whenever there is room; only flip down
+  // for a near-top trigger with little room above and more below, so the panel is
+  // never clipped off the top of the viewport. maxHeight caps it to the space on
+  // the chosen side and the content scrolls if it does not fit.
+  const openUp = spaceAbove >= 240 || spaceAbove >= spaceBelow;
+  const position = openUp
+    ? { bottom: viewportHeight - anchorRect.top + 8, maxHeight: Math.max(40, spaceAbove) }
+    : { top: anchorRect.bottom + 8, maxHeight: Math.max(40, spaceBelow) };
+
+  return (
+    <>
+      <button
+        aria-hidden="true"
+        className="reaction-popover__backdrop"
+        onClick={onClose}
+        tabIndex={-1}
+        type="button"
+      />
+      <div
+        aria-label={label}
+        className="reaction-popover"
+        ref={cardRef}
+        role="dialog"
+        style={{ left, width: clampedWidth, ...position }}
+        tabIndex={-1}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
 function MessageReactionChips({
-  avatarProfiles,
-  canReact,
-  now,
-  onCloseReactionDetails,
-  onReact,
   onToggleReactionDetails,
   openReactionDetailsKey,
   original,
@@ -1598,12 +1691,7 @@ function MessageReactionChips({
   reactions,
   t,
 }: {
-  avatarProfiles: AvatarProfilesByAddress;
-  canReact: boolean;
-  now: number;
-  onCloseReactionDetails: () => void;
-  onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
-  onToggleReactionDetails: (detailsKey: string) => void;
+  onToggleReactionDetails: (detailsKey: string, anchor: HTMLElement) => void;
   openReactionDetailsKey: string;
   original: ChatMessage;
   pendingReactionKey: string;
@@ -1613,10 +1701,6 @@ function MessageReactionChips({
   if (!original.signature || reactions.length === 0) {
     return null;
   }
-
-  const openReaction = reactions.find((reaction) => {
-    return getReactionPendingKey(original.signature ?? '', reaction.content) === openReactionDetailsKey;
-  });
 
   return (
     <div className="message__reaction-block">
@@ -1628,13 +1712,13 @@ function MessageReactionChips({
 
           return (
             <button
-              aria-controls={isOpen ? getReactionDetailsDomId(original.signature ?? '', reaction.content) : undefined}
               aria-expanded={isOpen}
               aria-label={label}
+              aria-haspopup="dialog"
               className={`message__reaction-chip${reaction.reactedBySelf ? ' message__reaction-chip--active' : ''}`}
               disabled={pendingReactionKey === pendingKey}
               key={reaction.content}
-              onClick={() => onToggleReactionDetails(pendingKey)}
+              onClick={(event) => onToggleReactionDetails(pendingKey, event.currentTarget)}
               title={label}
               type="button"
             >
@@ -1644,19 +1728,6 @@ function MessageReactionChips({
           );
         })}
       </div>
-      {openReaction ? (
-        <MessageReactionDetails
-          avatarProfiles={avatarProfiles}
-          canReact={canReact}
-          now={now}
-          onClose={onCloseReactionDetails}
-          onReact={onReact}
-          original={original}
-          pendingReactionKey={pendingReactionKey}
-          reaction={openReaction}
-          t={t}
-        />
-      ) : null}
     </div>
   );
 }
@@ -1728,6 +1799,9 @@ function MessageList({
   const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
   const [openReactionPickerKey, setOpenReactionPickerKey] = useState('');
   const [openReactionDetailsKey, setOpenReactionDetailsKey] = useState('');
+  // Viewport rect of the trigger (React button / reaction chip) that opened the
+  // floating reaction popover, so it can be anchored above that element.
+  const [reactionAnchorRect, setReactionAnchorRect] = useState<DOMRect | null>(null);
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
   const [now, setNow] = useState(() => Date.now());
@@ -1780,6 +1854,55 @@ function MessageList({
 
     return bySignature;
   }, [threads]);
+  const threadByKey = useMemo(() => {
+    const byKey = new Map<string, MessageThread>();
+
+    threads.forEach((thread, index) => byKey.set(getMessageKey(thread.original, index), thread));
+
+    return byKey;
+  }, [threads]);
+  // Resolve which message/reaction the open popover belongs to. Looked up live
+  // (not snapshotted) so reaction counts stay current while it is open.
+  const reactionPopoverContent = useMemo(() => {
+    const pickerThread = openReactionPickerKey ? threadByKey.get(openReactionPickerKey) : undefined;
+    const pickerSignature = pickerThread?.original.signature ?? '';
+    const pickerReactions = pickerSignature ? reactionsBySignature.get(pickerSignature) ?? [] : [];
+
+    let detailsThread: MessageThread | undefined;
+    let detailsReaction: MessageReactionSummary | undefined;
+
+    if (openReactionDetailsKey) {
+      for (const thread of threadByKey.values()) {
+        const signature = thread.original.signature;
+
+        if (!signature) {
+          continue;
+        }
+
+        const match = (reactionsBySignature.get(signature) ?? []).find(
+          (reaction) => getReactionPendingKey(signature, reaction.content) === openReactionDetailsKey,
+        );
+
+        if (match) {
+          detailsThread = thread;
+          detailsReaction = match;
+          break;
+        }
+      }
+    }
+
+    return { detailsReaction, detailsThread, pickerReactions, pickerThread };
+  }, [openReactionDetailsKey, openReactionPickerKey, reactionsBySignature, threadByKey]);
+  // If a live update removes the message/reaction the open popover points at, the
+  // lookup fails; close so the keys + anchor cannot linger or spontaneously reopen.
+  useEffect(() => {
+    if (
+      (openReactionPickerKey && !reactionPopoverContent.pickerThread) ||
+      (openReactionDetailsKey && !reactionPopoverContent.detailsReaction)
+    ) {
+      closeReactionPopover();
+    }
+  }, [openReactionDetailsKey, openReactionPickerKey, reactionPopoverContent]);
   const lastThread = threads[threads.length - 1] ?? null;
   const lastMessageKey = lastThread !== null ? getMessageKey(lastThread.latest, threads.length - 1) : '';
   const firstMessageKey = messages.length > 0 ? getMessageKey(messages[0], 0) : '';
@@ -1837,9 +1960,10 @@ function MessageList({
   const systemMessagesKey = systemMessages.map((entry) => `${entry.id}:${entry.phase}`).join('|');
 
   // Reset restoration when switching chats so the next chat's saved position (or
-  // bottom) is applied instead of the previous chat's.
+  // bottom) is applied instead of the previous chat's, and drop any open popover.
   useEffect(() => {
     didRestoreScrollRef.current = false;
+    closeReactionPopover();
   }, [scrollChatKey]);
 
   // Restore the saved reading position (or default to the bottom) once the chat's
@@ -1976,14 +2100,26 @@ function MessageList({
     });
   }
 
-  function toggleReactionPicker(threadKey: string) {
+  function closeReactionPopover() {
+    setOpenReactionPickerKey('');
     setOpenReactionDetailsKey('');
-    setOpenReactionPickerKey((current) => current === threadKey ? '' : threadKey);
+    setReactionAnchorRect(null);
   }
 
-  function toggleReactionDetails(detailsKey: string) {
+  function toggleReactionPicker(threadKey: string, anchor: HTMLElement) {
+    const willOpen = openReactionPickerKey !== threadKey;
+
+    setOpenReactionDetailsKey('');
+    setOpenReactionPickerKey(willOpen ? threadKey : '');
+    setReactionAnchorRect(willOpen ? anchor.getBoundingClientRect() : null);
+  }
+
+  function toggleReactionDetails(detailsKey: string, anchor: HTMLElement) {
+    const willOpen = openReactionDetailsKey !== detailsKey;
+
     setOpenReactionPickerKey('');
-    setOpenReactionDetailsKey((current) => current === detailsKey ? '' : detailsKey);
+    setOpenReactionDetailsKey(willOpen ? detailsKey : '');
+    setReactionAnchorRect(willOpen ? anchor.getBoundingClientRect() : null);
   }
 
   function playMedia(resource: QdnMediaResource) {
@@ -1996,13 +2132,22 @@ function MessageList({
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
 
+  const { detailsReaction, detailsThread, pickerReactions, pickerThread } = reactionPopoverContent;
+
   return (
+    <>
     <ol
       className="message-list"
       onScroll={(event) => {
         const list = event.currentTarget;
 
         stickToBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+
+        // The feed moving (e.g. a new message auto-scrolling) would leave a
+        // viewport-anchored reaction popover misaligned, so dismiss it.
+        if (openReactionPickerKey || openReactionDetailsKey) {
+          closeReactionPopover();
+        }
 
         // Remember where the user is reading so it can be restored on return.
         // Skip until the initial position is applied so transient scrolls during
@@ -2079,7 +2224,12 @@ function MessageList({
                 </button>
               ) : null}
               {canReact ? (
-                <button aria-expanded={isReactionPickerOpen} onClick={() => toggleReactionPicker(threadKey)} type="button">
+                <button
+                  aria-expanded={isReactionPickerOpen}
+                  aria-haspopup="dialog"
+                  onClick={(event) => toggleReactionPicker(threadKey, event.currentTarget)}
+                  type="button"
+                >
                   {t('button.react')}
                 </button>
               ) : null}
@@ -2147,24 +2297,7 @@ function MessageList({
               {decoded.body ? renderMessageTextWithAppLinks(decoded.body) : t('message.empty')}
             </div>
             {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
-            {isReactionPickerOpen ? (
-              <MessageReactionPicker
-                onReact={(message, reaction, contentState) => {
-                  setOpenReactionPickerKey('');
-                  onReact(message, reaction, contentState);
-                }}
-                original={original}
-                pendingReactionKey={pendingReactionKey}
-                reactions={reactions}
-                t={t}
-              />
-            ) : null}
             <MessageReactionChips
-              avatarProfiles={avatarProfiles}
-              canReact={canReact}
-              now={now}
-              onCloseReactionDetails={() => setOpenReactionDetailsKey('')}
-              onReact={onReact}
               onToggleReactionDetails={toggleReactionDetails}
               openReactionDetailsKey={openReactionDetailsKey}
               original={original}
@@ -2231,6 +2364,46 @@ function MessageList({
         </li>
       ))}
     </ol>
+    {reactionAnchorRect && pickerThread ? (
+      <ReactionPopover
+        anchorRect={reactionAnchorRect}
+        label={t('label.reactions')}
+        onClose={closeReactionPopover}
+        width={360}
+      >
+        <MessageReactionPicker
+          onReact={(message, reaction, contentState) => {
+            closeReactionPopover();
+            onReact(message, reaction, contentState);
+          }}
+          original={pickerThread.original}
+          pendingReactionKey={pendingReactionKey}
+          reactions={pickerReactions}
+          t={t}
+        />
+      </ReactionPopover>
+    ) : null}
+    {reactionAnchorRect && detailsThread && detailsReaction ? (
+      <ReactionPopover
+        anchorRect={reactionAnchorRect}
+        label={t('label.reactionDetails')}
+        onClose={closeReactionPopover}
+        width={300}
+      >
+        <MessageReactionDetails
+          avatarProfiles={avatarProfiles}
+          canReact={canCompose && !!detailsThread.original.signature}
+          now={now}
+          onClose={closeReactionPopover}
+          onReact={onReact}
+          original={detailsThread.original}
+          pendingReactionKey={pendingReactionKey}
+          reaction={detailsReaction}
+          t={t}
+        />
+      </ReactionPopover>
+    ) : null}
+    </>
   );
 }
 
