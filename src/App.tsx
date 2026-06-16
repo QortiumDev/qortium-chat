@@ -321,6 +321,14 @@ function BackIcon() {
   );
 }
 
+function DownIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 function CloseIcon() {
   return (
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
@@ -1815,6 +1823,7 @@ function MessageList({
   // Viewport rect of the trigger (React button / reaction chip) that opened the
   // floating reaction popover, so it can be anchored above that element.
   const [reactionAnchorRect, setReactionAnchorRect] = useState<DOMRect | null>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
   const [now, setNow] = useState(() => Date.now());
@@ -1928,6 +1937,13 @@ function MessageList({
     }
   }
 
+  function updateBottomState(list: HTMLOListElement) {
+    const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+
+    stickToBottomRef.current = isAtBottom;
+    setShowScrollToBottom(!isAtBottom);
+  }
+
   // Pin the feed to the bottom now, then again after the next frame so a layout
   // settling pass (the composer reflowing on a narrow screen, a late image or
   // font measurement) cannot leave the newest message just out of view.
@@ -1939,6 +1955,7 @@ function MessageList({
     }
 
     list.scrollTop = list.scrollHeight;
+    updateBottomState(list);
 
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
@@ -1946,6 +1963,7 @@ function MessageList({
 
         if (nextList) {
           nextList.scrollTop = nextList.scrollHeight;
+          updateBottomState(nextList);
         }
       });
     }
@@ -1996,10 +2014,10 @@ function MessageList({
       const target = Math.min(initialScrollTop, maxScrollTop);
 
       list.scrollTop = target;
-      stickToBottomRef.current = maxScrollTop - target < 48;
+      updateBottomState(list);
     } else {
       list.scrollTop = list.scrollHeight;
-      stickToBottomRef.current = true;
+      updateBottomState(list);
     }
   }, [initialScrollTop, messages.length, scrollChatKey]);
 
@@ -2048,6 +2066,7 @@ function MessageList({
 
     olderScrollAnchorRef.current = null;
     list.scrollTop = list.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
+    updateBottomState(list);
   }, [firstMessageKey]);
 
   useEffect(() => {
@@ -2149,45 +2168,46 @@ function MessageList({
 
   return (
     <>
-    <ol
-      className="message-list"
-      onScroll={(event) => {
-        const list = event.currentTarget;
+      <div className="message-feed">
+        <ol
+          className="message-list"
+          onScroll={(event) => {
+            const list = event.currentTarget;
 
-        stickToBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+            updateBottomState(list);
 
-        // The feed moving (e.g. a new message auto-scrolling) would leave a
-        // viewport-anchored reaction popover misaligned, so dismiss it.
-        if (openReactionPickerKey || openReactionDetailsKey) {
-          closeReactionPopover();
-        }
+            // The feed moving (e.g. a new message auto-scrolling) would leave a
+            // viewport-anchored reaction popover misaligned, so dismiss it.
+            if (openReactionPickerKey || openReactionDetailsKey) {
+              closeReactionPopover();
+            }
 
-        // Remember where the user is reading so it can be restored on return.
-        // Skip until the initial position is applied so transient scrolls during
-        // mount/restore do not overwrite the saved position.
-        if (didRestoreScrollRef.current) {
-          onScrollPositionChange(scrollChatKey, list.scrollTop);
-        }
+            // Remember where the user is reading so it can be restored on return.
+            // Skip until the initial position is applied so transient scrolls during
+            // mount/restore do not overwrite the saved position.
+            if (didRestoreScrollRef.current) {
+              onScrollPositionChange(scrollChatKey, list.scrollTop);
+            }
 
-        maybeLoadOlder(list);
-      }}
-      ref={listRef}
-    >
-      {olderMessagesLoading || olderMessagesError ? (
-        <li className="message-list__history-control">
-          {olderMessagesLoading ? (
-            <span className="muted">{t('status.loadingOlderMessages')}</span>
-          ) : (
-            <>
-              <span className="error">{olderMessagesError}</span>
-              <button className="button button--secondary" onClick={handleLoadOlder} type="button">
-                {t('button.retry')}
-              </button>
-            </>
-          )}
-        </li>
-      ) : null}
-      {threads.map((thread, index) => {
+            maybeLoadOlder(list);
+          }}
+          ref={listRef}
+        >
+          {olderMessagesLoading || olderMessagesError ? (
+            <li className="message-list__history-control">
+              {olderMessagesLoading ? (
+                <span className="muted">{t('status.loadingOlderMessages')}</span>
+              ) : (
+                <>
+                  <span className="error">{olderMessagesError}</span>
+                  <button className="button button--secondary" onClick={handleLoadOlder} type="button">
+                    {t('button.retry')}
+                  </button>
+                </>
+              )}
+            </li>
+          ) : null}
+          {threads.map((thread, index) => {
         const { latest, original, revisions } = thread;
         const decoded = decodeChatMessage(latest, t);
         const threadKey = getMessageKey(original, index);
@@ -2362,21 +2382,27 @@ function MessageList({
           </li>
           </Fragment>
         );
-      })}
-      {systemMessages.map((transaction) => (
-        <li className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
-          <strong>
-            {transaction.phase === 'confirmed'
-              ? t('status.transaction.confirmed')
-              : transaction.phase === 'failed'
-                ? t('status.transaction.failed')
-                : t('status.transaction.pending')}
-          </strong>
-          <span>{transaction.message}</span>
-          {transaction.signature ? <small>{transaction.signature}</small> : null}
-        </li>
-      ))}
-    </ol>
+          })}
+          {systemMessages.map((transaction) => (
+            <li className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
+              <strong>
+                {transaction.phase === 'confirmed'
+                  ? t('status.transaction.confirmed')
+                  : transaction.phase === 'failed'
+                    ? t('status.transaction.failed')
+                    : t('status.transaction.pending')}
+              </strong>
+              <span>{transaction.message}</span>
+              {transaction.signature ? <small>{transaction.signature}</small> : null}
+            </li>
+          ))}
+        </ol>
+        {showScrollToBottom ? (
+          <button aria-label="↓" className="message-feed__scroll-bottom" onClick={scrollToBottom} type="button">
+            <DownIcon />
+          </button>
+        ) : null}
+      </div>
     {reactionAnchorRect && pickerThread ? (
       <ReactionPopover
         anchorRect={reactionAnchorRect}
