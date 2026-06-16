@@ -11,6 +11,7 @@ import {
   buildGroupJoinRequestsPath,
   buildGroupMembersPath,
   buildMemberGroupsPath,
+  buildNameInfoPath,
   buildBlockHeightPath,
   buildGroupApprovalVotesPath,
   buildPendingTransactionsPath,
@@ -30,6 +31,7 @@ import {
   getMemberGroups,
   getMissingPrivateGroupKeyRequests,
   getMintingStatus,
+  getNameOwnerAddress,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
@@ -69,6 +71,8 @@ describe('Core API path builders', () => {
     expect(buildGroupJoinRequestsPath(7)).toBe('/groups/joinrequests/7');
     expect(buildActiveChatsPath('Qabc')).toBe('/chat/active/Qabc?encoding=BASE64&haschatreference=false');
     expect(buildAccountNamesPath('Qabc')).toBe('/names/address/Qabc');
+    expect(buildNameInfoPath('alice')).toBe('/names/alice');
+    expect(buildNameInfoPath('a/b c')).toBe('/names/a%2Fb%20c');
   });
 
   it('builds chat message paths', () => {
@@ -222,6 +226,53 @@ describe('Core API path builders', () => {
       maxBytes: 2097152,
       path: '/names/address/Qabc',
     });
+  });
+
+  it('resolves a registered name to its owner address over FETCH_NODE_API', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      body: '{"name":"alice","owner":"Qowner"}',
+      contentType: 'application/json',
+      data: { name: 'alice', owner: 'Qowner' },
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getNameOwnerAddress(' alice ')).resolves.toBe('Qowner');
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/names/alice',
+    });
+  });
+
+  it('returns null when the registered name is unknown (HTTP 404)', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      body: '',
+      contentType: 'application/json',
+      data: null,
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+    });
+
+    await expect(getNameOwnerAddress('ghost')).resolves.toBeNull();
+  });
+
+  it('returns null when the name has no owner, and skips the request for blank input', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      body: '{"name":"alice"}',
+      contentType: 'application/json',
+      data: { name: 'alice' },
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getNameOwnerAddress('alice')).resolves.toBeNull();
+
+    await expect(getNameOwnerAddress('   ')).resolves.toBeNull();
+    expect(qdnRequestMock).toHaveBeenCalledTimes(1);
   });
 
   it('uses the group members bridge action when available', async () => {

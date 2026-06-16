@@ -127,6 +127,10 @@ export function buildAccountNamesPath(address: string) {
   return `/names/address/${encodeURIComponent(address)}`;
 }
 
+export function buildNameInfoPath(name: string) {
+  return `/names/${encodeURIComponent(name)}`;
+}
+
 export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIMIT, before?: number) {
   // No haschatreference filter: edit revisions (messages with a chatReference)
   // are needed to render edited messages.
@@ -224,6 +228,31 @@ export async function getAccountNames(address: string, actions?: QdnAction[]) {
   }
 
   return fetchNodeApiData<NameSummary[]>(buildAccountNamesPath(address), 'Account names');
+}
+
+// Resolve a registered name to its owner address so a direct chat can be opened
+// by name. Returns null when the name is unregistered (Core answers 404). This is
+// a keyless, CORS-open read that works through the Home bridge and in browser dev.
+export async function getNameOwnerAddress(name: string): Promise<string | null> {
+  const trimmedName = name.trim();
+
+  if (!trimmedName) {
+    return null;
+  }
+
+  const result = await qdnRequest<NodeApiFetchResult<NameSummary | null>>({
+    action: 'FETCH_NODE_API',
+    maxBytes: DEFAULT_MAX_BYTES,
+    path: buildNameInfoPath(trimmedName),
+  });
+
+  if (result.status === 404) {
+    return null;
+  }
+
+  const data = assertOk(result, 'Name lookup');
+
+  return data && typeof data.owner === 'string' && data.owner ? data.owner : null;
 }
 
 export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
