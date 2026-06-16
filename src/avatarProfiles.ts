@@ -4,6 +4,26 @@ import type { NameSummary, QdnAction } from './types';
 
 const AVATAR_MAX_BYTES = 500 * 1024;
 
+// Avatars are rendered straight into `<img src>`. We only ever build them from
+// an allowlisted raster image type — raster-only deliberately excludes
+// `image/svg+xml`, whose data URLs can carry script — and we validate the base64
+// alphabet before decoding. The decoded bytes are wrapped in a Blob and served
+// via `URL.createObjectURL`, so the value handed to `<img src>` is an opaque
+// `blob:` URL rather than a string built from the remote payload.
+const SAFE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function decodeBase64ToBytes(base64: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
 export type AvatarProfile = {
   address: string;
   avatarSrc: string | null;
@@ -57,9 +77,9 @@ function getFirstRegisteredName(names: NameSummary[]) {
 }
 
 function getImageMimeType(properties: unknown, base64: string) {
-  const mimeType = getStringProperty(properties, 'mimeType');
+  const mimeType = getStringProperty(properties, 'mimeType')?.toLowerCase();
 
-  if (mimeType?.toLowerCase().startsWith('image/')) {
+  if (mimeType && SAFE_IMAGE_MIME_TYPES.has(mimeType)) {
     return mimeType;
   }
 
@@ -91,6 +111,10 @@ function getBase64Payload(value: unknown) {
 
   if (!base64) {
     throw new Error('Avatar resource returned empty image data.');
+  }
+
+  if (!BASE64_PATTERN.test(base64)) {
+    throw new Error('Avatar resource returned malformed image data.');
   }
 
   return base64;
@@ -133,8 +157,13 @@ export async function fetchAvatarImage(name: string) {
     }),
   );
   const mimeType = getImageMimeType(properties, base64);
+  const blob = new Blob([decodeBase64ToBytes(base64)], { type: mimeType });
 
-  return `data:${mimeType};base64,${base64}`;
+  // Returns an opaque `blob:` URL. The cache in useAvatarProfiles holds these
+  // for the session (mirroring the prior in-memory data-URL footprint), so they
+  // are intentionally not revoked here — revoking a shared URL would break any
+  // avatar or open lightbox still pointing at it.
+  return URL.createObjectURL(blob);
 }
 
 export async function loadAvatarProfile({

@@ -439,7 +439,11 @@ type CachedAvatarProfile = AvatarProfile & {
   requestKey: string;
 };
 
-type AvatarProfilesByAddress = Record<string, CachedAvatarProfile | undefined>;
+// Keyed by the (untrusted) account address. A Map rather than a plain object so
+// that the address — which originates from chat-message data — is never used as
+// a computed object property name; that keeps the looked-up profile (and the
+// avatar URL it carries) from being treated as attacker-controlled downstream.
+type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
 
 type AvatarLightboxImage = {
   name: string | null;
@@ -448,9 +452,20 @@ type AvatarLightboxImage = {
 
 type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
 
+// Avatar URLs are produced by fetchAvatarImage as `blob:` URLs (via
+// URL.createObjectURL) or null. They are cached keyed by the untrusted
+// message-sender address, which static analysis treats as tainting every field
+// read back from that cache. Confirm the value is one of the schemes we actually
+// emit before it reaches an `<img src>` — defense-in-depth, and it makes the
+// safety explicit at the one place every avatar source funnels through.
+function isSafeAvatarUrl(value: string) {
+  return value.startsWith('blob:') || value.startsWith('data:image/');
+}
+
 function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
   const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
-  const avatarSrc = profile?.name === name ? profile.avatarSrc : null;
+  const candidateSrc = profile?.name === name ? profile.avatarSrc : null;
+  const avatarSrc = typeof candidateSrc === 'string' && isSafeAvatarUrl(candidateSrc) ? candidateSrc : null;
 
   return { avatarSrc, name };
 }
@@ -820,7 +835,7 @@ function GroupApprovalDialog({
             {transactions.map((transaction) => {
               const busy = actionSignature === transaction.signature;
               const creatorAddress = transaction.creatorAddress ?? '';
-              const creatorProfile = creatorAddress ? avatarProfiles[creatorAddress] : undefined;
+              const creatorProfile = creatorAddress ? avatarProfiles.get(creatorAddress) : undefined;
               const { avatarSrc, name } = getAvatarView(creatorProfile, knownNames.get(creatorAddress) ?? null);
               const creatorLabel = name ?? (creatorAddress ? getShortAddress(creatorAddress) : '-');
 
@@ -1044,7 +1059,7 @@ function useAvatarProfiles(
   actions: QdnAction[],
   actionsKey: string,
 ) {
-  const [profiles, setProfiles] = useState<AvatarProfilesByAddress>({});
+  const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
   const addressKey = JSON.stringify(addresses);
   const knownNamesKey = JSON.stringify(Array.from(knownNamesByAddress.entries()));
@@ -1058,7 +1073,7 @@ function useAvatarProfiles(
 
       latestRequestKeysRef.current.set(address, requestKey);
 
-      if (profiles[address]?.requestKey === requestKey) {
+      if (profiles.get(address)?.requestKey === requestKey) {
         continue;
       }
 
@@ -1068,13 +1083,11 @@ function useAvatarProfiles(
             return;
           }
 
-          setProfiles((current) => ({
-            ...current,
-            [address]: {
-              ...profile,
-              requestKey,
-            },
-          }));
+          setProfiles((current) => {
+            const next = new Map(current);
+            next.set(address, { ...profile, requestKey });
+            return next;
+          });
         });
     }
 
@@ -1551,7 +1564,7 @@ function MessageReactionDetails({
       </header>
       <ol className="message__reaction-reactors">
         {reaction.reactors.map((reactor) => {
-          const profile = avatarProfiles[reactor.sender];
+          const profile = avatarProfiles.get(reactor.sender);
           const label = getMessageSenderLabel({ sender: reactor.sender, senderName: null }, profile);
 
           return (
@@ -2196,7 +2209,7 @@ function MessageList({
         const canReact = canReplyOrEdit;
         const isReactionPickerOpen = openReactionPickerKey === threadKey;
         const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
-        const senderProfile = avatarProfiles[original.sender];
+        const senderProfile = avatarProfiles.get(original.sender);
         const actionButtons =
           canReplyOrEdit || canReact || hasImagePreviews || hasMediaActions ? (
             <div className="message__actions">
@@ -2282,7 +2295,7 @@ function MessageList({
                   <strong>
                     {getMessageSenderLabel(
                       repliedThread.original,
-                      avatarProfiles[repliedThread.original.sender],
+                      avatarProfiles.get(repliedThread.original.sender),
                     )}
                   </strong>
                   <span>{getMessageSnippet(repliedThread.latest, t)}</span>
@@ -2434,7 +2447,7 @@ function GroupMemberList({
       {orderedMembers.map((member) => {
         const address = getGroupMemberAddress(member);
         const registeredName = getGroupMemberRegisteredName(member);
-        const profile = address ? avatarProfiles[address] : undefined;
+        const profile = address ? avatarProfiles.get(address) : undefined;
         const { avatarSrc, name } = getAvatarView(profile, registeredName);
         const label = getGroupMemberDisplayName(member, t('member.label'), getShortAddress, profile?.name);
         const shortAddress = address ? getShortAddress(address) : '';
@@ -4046,7 +4059,7 @@ export default function App() {
   }
 
   function mentionAccount(target: AccountInfoTarget) {
-    const label = getMessageSenderLabel(target, avatarProfiles[target.sender]);
+    const label = getMessageSenderLabel(target, avatarProfiles.get(target.sender));
     const mention = `@${label} `;
 
     setAccountInfoTarget(null);
@@ -4950,7 +4963,7 @@ export default function App() {
             isHomeBridge={bridge.value.isHomeBridge}
             onConnect={() => void connectSelectedAccount()}
             onOpenAvatar={setAvatarLightboxImage}
-            profile={account ? avatarProfiles[account.address] : undefined}
+            profile={account ? avatarProfiles.get(account.address) : undefined}
             t={t}
           />
         </div>
@@ -5275,7 +5288,7 @@ export default function App() {
                         : t('label.composer.replyingTo', {
                             name: getMessageSenderLabel(
                               composeContext.message,
-                              avatarProfiles[composeContext.message.sender],
+                              avatarProfiles.get(composeContext.message.sender),
                             ),
                           })}
                     </strong>
@@ -5419,7 +5432,7 @@ export default function App() {
             setAvatarLightboxImage(image);
           }}
           onOpenDirect={openDirectFromAccount}
-          profile={avatarProfiles[accountInfoTarget.sender]}
+          profile={avatarProfiles.get(accountInfoTarget.sender)}
           target={accountInfoTarget}
           t={t}
         />

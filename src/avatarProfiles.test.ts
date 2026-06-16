@@ -14,9 +14,15 @@ vi.mock('./qdnRequest', () => ({
 
 describe('avatar profile helpers', () => {
   const qdnRequestMock = vi.mocked(qdnRequest);
+  // The runtime serves avatars as opaque blob: URLs; node has no
+  // URL.createObjectURL, so provide one that echoes the blob's type back.
+  const createObjectURLMock = vi.fn((blob: Blob) => `blob:mock/${blob.type}`);
 
   beforeEach(() => {
     qdnRequestMock.mockReset();
+    createObjectURLMock.mockClear();
+    (URL as unknown as { createObjectURL: typeof createObjectURLMock }).createObjectURL =
+      createObjectURLMock;
   });
 
   it('normalizes registered names without changing their first character', () => {
@@ -39,7 +45,10 @@ describe('avatar profile helpers', () => {
       .mockResolvedValueOnce({ filename: 'avatar.png', mimeType: 'image/png', size: 128 })
       .mockResolvedValueOnce('iVBORw0KGgo=');
 
-    await expect(fetchAvatarImage('alice')).resolves.toBe('data:image/png;base64,iVBORw0KGgo=');
+    await expect(fetchAvatarImage('alice')).resolves.toBe('blob:mock/image/png');
+    const blob = createObjectURLMock.mock.calls[0]?.[0];
+    expect(blob?.type).toBe('image/png');
+    expect(blob?.size).toBe(8);
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
       action: 'GET_QDN_RESOURCE_PROPERTIES',
       service: 'THUMBNAIL',
@@ -60,6 +69,35 @@ describe('avatar profile helpers', () => {
     expect(JSON.stringify(qdnRequestMock.mock.calls)).not.toContain('qortium_avatar');
   });
 
+  it('downgrades non-raster image types so script-bearing avatars cannot reach an img src', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ mimeType: 'image/svg+xml', size: 128 })
+      .mockResolvedValueOnce('PHN2Zy8+');
+
+    await expect(fetchAvatarImage('alice')).resolves.toBe('blob:mock/image/png');
+    expect(createObjectURLMock.mock.calls[0]?.[0]?.type).toBe('image/png');
+  });
+
+  it('rejects payloads that fall outside the base64 alphabet', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
+      .mockResolvedValueOnce('not base64!');
+
+    await expect(fetchAvatarImage('alice')).rejects.toThrow(/malformed image data/);
+  });
+
+  it('falls back to a placeholder profile when avatar data is malformed', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
+      .mockResolvedValueOnce('<script>alert(1)</script>');
+
+    await expect(loadAvatarProfile({ address: 'Qabc', preferredName: 'alice' })).resolves.toEqual({
+      address: 'Qabc',
+      avatarSrc: null,
+      name: 'alice',
+    });
+  });
+
   it('uses a preferred message or account name before looking up address names', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
@@ -73,7 +111,7 @@ describe('avatar profile helpers', () => {
       }),
     ).resolves.toEqual({
       address: 'Qabc',
-      avatarSrc: 'data:image/png;base64,iVBORw0KGgo=',
+      avatarSrc: 'blob:mock/image/png',
       name: 'alice',
     });
     expect(qdnRequestMock).not.toHaveBeenCalledWith({
@@ -95,7 +133,7 @@ describe('avatar profile helpers', () => {
       }),
     ).resolves.toEqual({
       address: 'Qabc',
-      avatarSrc: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+      avatarSrc: 'blob:mock/image/jpeg',
       name: 'bob',
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
@@ -119,7 +157,7 @@ describe('avatar profile helpers', () => {
 
     await expect(loadAvatarProfile({ address: 'Qabc', actions: [] })).resolves.toEqual({
       address: 'Qabc',
-      avatarSrc: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+      avatarSrc: 'blob:mock/image/gif',
       name: 'carol',
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
