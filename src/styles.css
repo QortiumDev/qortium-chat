@@ -977,6 +977,42 @@ samp,
   white-space: nowrap;
 }
 
+.direct-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.group-row__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Unread indicators: a dot on the sidebar rows and section headers. */
+.panel__unread-dot,
+.group-row__unread,
+.direct-row__unread {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  overflow: visible;
+  border-radius: var(--qc-radius-pill);
+  background: var(--qc-color-accent);
+}
+
+.panel__unread-dot {
+  box-shadow: 0 0 0 3px var(--qc-color-accent-soft);
+}
+
+.group-row--unread .group-row__name,
+.direct-row--unread .direct-row__title {
+  color: var(--qc-color-text);
+  font-weight: 700;
+}
+
 .chat-pane {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -1019,6 +1055,46 @@ samp,
   white-space: nowrap;
 }
 
+.chat-pane__heading {
+  min-width: 0;
+}
+
+/* The back control only exists in the narrow single-view layout; hidden while
+   the sidebar and chat show side by side. */
+.chat-pane__back {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--qc-color-text-secondary);
+  background: var(--qc-color-surface-raised);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+  cursor: pointer;
+}
+
+.chat-pane__back svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-pane__back:hover,
+.chat-pane__back:focus-visible {
+  color: var(--qc-color-text);
+  background: var(--qc-color-control-hover);
+  border-color: var(--qc-color-border-strong);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--qc-color-accent-ring);
+}
+
 .chat-pane__actions {
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -1035,6 +1111,36 @@ samp,
   overscroll-behavior: contain;
   background: var(--qc-color-frame-surface);
   border-inline-start: 1px solid var(--qc-color-border);
+}
+
+/* The scrim and in-drawer close button only exist when the members panel is an
+   off-canvas overlay (narrow screens); the desktop column hides both. */
+.members-drawer__scrim {
+  display: none;
+}
+
+.members-drawer__close {
+  display: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--qc-color-text-secondary);
+  font-weight: 700;
+  background: var(--qc-color-control-bg);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-sm);
+  cursor: pointer;
+}
+
+.members-drawer__close:hover,
+.members-drawer__close:focus-visible {
+  color: var(--qc-color-text);
+  background: var(--qc-color-control-hover);
+  border-color: var(--qc-color-border-strong);
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
 }
 
 .members-drawer__header {
@@ -1109,6 +1215,33 @@ samp,
 .member-chip__name {
   color: var(--qc-color-text);
   font-weight: 650;
+}
+
+button.member-chip__name-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  font-weight: 650;
+  text-align: start;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+button.member-chip__name-button:hover,
+button.member-chip__name-button:focus-visible {
+  color: var(--qc-color-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+  outline: none;
+}
+
+button.member-chip__name-button:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .member-chip__address {
@@ -1206,6 +1339,35 @@ samp,
   gap: 8px;
   padding: 2px 0 6px;
   text-align: center;
+}
+
+/* "New messages" boundary drawn above the first unread message in the feed. */
+.message-list__unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  color: var(--qc-color-accent);
+  font-size: var(--qc-text-tiny);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.message-list__unread-divider::before,
+.message-list__unread-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--qc-color-accent-ring);
+}
+
+.message-list__unread-divider span {
+  flex: 0 0 auto;
+  padding: 2px 12px;
+  background: var(--qc-color-accent-soft);
+  border: 1px solid var(--qc-color-accent-ring);
+  border-radius: var(--qc-radius-pill);
 }
 
 .message {
@@ -2120,6 +2282,28 @@ button.message__reply-preview:focus-visible {
   }
 }
 
+@keyframes qortium-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+/* The drawer pins to the inline-end edge, which is the left under RTL, so the
+   slide-in offset is mirrored to match. */
+@keyframes qortium-drawer-in-rtl {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+@keyframes qortium-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .group-row,
 .direct-row,
 .join-request,
@@ -2127,37 +2311,100 @@ button.message__reply-preview:focus-visible {
   animation: qortium-pop-in 150ms var(--qc-ease-pop);
 }
 
-@media (max-width: 920px) {
+@media (max-width: 860px) {
+  /* Single-view navigation: the sidebar and conversation share one grid cell and
+     only one shows at a time — toggled by selecting a chat or the back button —
+     so each gets the full height instead of collapsing into a stacked scroller. */
   .layout,
   .layout--members-open {
     grid-template-columns: minmax(0, 1fr);
-    overflow: auto;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .sidebar,
+  .chat-pane {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
   }
 
   .sidebar {
-    border-right: 0;
     border-inline-end: 0;
   }
 
+  /* List view (default): the sidebar fills the pane, the conversation is hidden. */
   .chat-pane {
-    min-height: 65vh;
+    display: none;
   }
 
+  /* Chat view: hide the list, reveal the conversation and its back button. */
+  .layout--mobile-chat .sidebar {
+    display: none;
+  }
+
+  .layout--mobile-chat .chat-pane {
+    display: grid;
+  }
+
+  .chat-pane__back {
+    display: inline-flex;
+  }
+
+  .chat-pane__header {
+    flex-wrap: wrap;
+  }
+
+  .chat-pane__heading {
+    flex: 1 1 200px;
+  }
+
+  /* Action buttons drop to their own full-width row below the title. */
+  .chat-pane__actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  /* Members become an off-canvas overlay over the conversation, dismissible by
+     tapping the scrim or its close button. */
   .members-drawer {
-    border-top: 1px solid var(--qc-color-border);
-    border-left: 0;
-    border-inline-start: 0;
+    position: fixed;
+    z-index: 80;
+    inset-block: 0;
+    inset-inline-end: 0;
+    width: min(330px, 86vw);
+    border-inline-start: 1px solid var(--qc-color-border);
+    box-shadow: var(--qc-shadow-pop);
+    animation: qortium-drawer-in 200ms var(--qc-ease-pop);
+  }
+
+  [dir='rtl'] .members-drawer {
+    animation-name: qortium-drawer-in-rtl;
+  }
+
+  .members-drawer__scrim {
+    display: block;
+    position: fixed;
+    z-index: 79;
+    inset: 0;
+    padding: 0;
+    background: rgb(8 12 11 / 52%);
+    border: 0;
+    cursor: pointer;
+    animation: qortium-fade-in 180ms ease;
+  }
+
+  .members-drawer__close {
+    display: inline-grid;
   }
 }
 
-@media (max-width: 720px) {
-  .topbar,
-  .chat-pane__header {
+@media (max-width: 600px) {
+  .topbar {
     display: block;
   }
 
-  .topbar__account,
-  .chat-pane__actions {
+  .topbar__account {
     justify-content: flex-start;
     margin-top: 12px;
   }
@@ -2224,6 +2471,8 @@ button.message__reply-preview:focus-visible {
   .join-request,
   .tx-status,
   .message,
+  .members-drawer,
+  .members-drawer__scrim,
   .skeleton::after {
     animation: none;
   }
