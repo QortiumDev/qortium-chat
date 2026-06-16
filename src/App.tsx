@@ -1673,6 +1673,9 @@ function MessageList({
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottomRef = useRef(true);
+  // Set when the user sends, so the message that lands a moment later scrolls into
+  // view even if their scroll position was not at the bottom.
+  const forceBottomRef = useRef(false);
   // Restores the reading position when returning to a chat: false until the saved
   // (or default-bottom) scroll position has been applied for the current chat.
   const didRestoreScrollRef = useRef(false);
@@ -1750,6 +1753,29 @@ function MessageList({
     }
   }
 
+  // Pin the feed to the bottom now, then again after the next frame so a layout
+  // settling pass (the composer reflowing on a narrow screen, a late image or
+  // font measurement) cannot leave the newest message just out of view.
+  function scrollToBottom() {
+    const list = listRef.current;
+
+    if (!list) {
+      return;
+    }
+
+    list.scrollTop = list.scrollHeight;
+
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        const nextList = listRef.current;
+
+        if (nextList) {
+          nextList.scrollTop = nextList.scrollHeight;
+        }
+      });
+    }
+  }
+
   // Manual retry after an error — bypasses the auto-trigger's error guard.
   function handleLoadOlder() {
     captureScrollAnchor();
@@ -1801,35 +1827,36 @@ function MessageList({
     }
   }, [initialScrollTop, messages.length, scrollChatKey]);
 
-  // Keep the newest content in view only when the user is already reading at the
-  // bottom; if they have scrolled up, their position is left untouched. Runs as a
-  // layout effect so it measures the committed DOM (incl. a new message's height)
-  // before paint, avoiding a flash of unscrolled content.
+  // Keep the newest content in view when the user is reading at the bottom (or a
+  // send just landed); if they have scrolled up, their position is left untouched.
+  // A layout effect so it measures the committed DOM (incl. the new message's
+  // height) before paint, avoiding a flash of unscrolled content.
   useLayoutEffect(() => {
-    const list = listRef.current;
+    if (!didRestoreScrollRef.current) {
+      return;
+    }
 
-    if (list && didRestoreScrollRef.current && stickToBottomRef.current) {
-      list.scrollTop = list.scrollHeight;
+    if (forceBottomRef.current || stickToBottomRef.current) {
+      forceBottomRef.current = false;
+      scrollToBottom();
     }
   }, [lastMessageKey, systemMessagesKey]);
 
   // Sending a message always returns the user to the bottom so their own message
-  // is in view, regardless of where they had scrolled. Pinning stickToBottom also
-  // keeps the feed at the bottom once the sent message lands a moment later.
-  const didMountSendRef = useRef(false);
-
+  // is in view, regardless of where they had scrolled. forceBottomRef survives
+  // until the sent message lands (it arrives a tick after the nonce bumps), so the
+  // landing scroll fires even if an intervening scroll cleared stickToBottom.
+  // Guarding on the nonce value (not a mount ref) keeps this firing on every send.
   useLayoutEffect(() => {
-    if (!didMountSendRef.current) {
-      didMountSendRef.current = true;
+    if (sentMessageNonce === 0) {
       return;
     }
 
-    const list = listRef.current;
-
     stickToBottomRef.current = true;
+    forceBottomRef.current = true;
 
-    if (list && didRestoreScrollRef.current) {
-      list.scrollTop = list.scrollHeight;
+    if (didRestoreScrollRef.current) {
+      scrollToBottom();
     }
   }, [sentMessageNonce]);
 
