@@ -1,0 +1,183 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  lastChatStorageKey,
+  mergePersistedDirect,
+  persistedDirectsStorageKey,
+  readLastChat,
+  readPersistedDirects,
+  toStoredSelectedChat,
+  writeLastChat,
+  writePersistedDirects,
+  type PersistedDirect,
+} from './chatStorage';
+import type { GroupData } from './types';
+
+class MemoryStorage {
+  private store = new Map<string, string>();
+
+  get length() {
+    return this.store.size;
+  }
+
+  clear() {
+    this.store.clear();
+  }
+
+  getItem(key: string) {
+    return this.store.has(key) ? this.store.get(key)! : null;
+  }
+
+  key(index: number) {
+    return [...this.store.keys()][index] ?? null;
+  }
+
+  removeItem(key: string) {
+    this.store.delete(key);
+  }
+
+  setItem(key: string, value: string) {
+    this.store.set(key, String(value));
+  }
+}
+
+// Mimics a browser that exposes localStorage but throws on use (private mode,
+// quota exhaustion, sandboxed QDN webview).
+class ThrowingStorage {
+  get length(): number {
+    throw new Error('blocked');
+  }
+
+  clear() {
+    throw new Error('blocked');
+  }
+
+  getItem(): string | null {
+    throw new Error('blocked');
+  }
+
+  key(): string | null {
+    throw new Error('blocked');
+  }
+
+  removeItem() {
+    throw new Error('blocked');
+  }
+
+  setItem() {
+    throw new DOMException('QuotaExceededError');
+  }
+}
+
+const ADDRESS = 'QtestAccountAddress';
+const group: GroupData = { groupId: 42, groupName: 'Builders', owner: 'Qowner', isOpen: true } as GroupData;
+
+function installStorage() {
+  (globalThis as { window?: unknown }).window = { localStorage: new MemoryStorage() };
+}
+
+function removeStorage() {
+  delete (globalThis as { window?: unknown }).window;
+}
+
+describe('mergePersistedDirect', () => {
+  it('appends a new direct', () => {
+    const next = mergePersistedDirect([], 'Qalice', 'alice');
+
+    expect(next).toEqual([{ address: 'Qalice', name: 'alice' }]);
+  });
+
+  it('returns the same reference when nothing changes', () => {
+    const list: PersistedDirect[] = [{ address: 'Qalice', name: 'alice' }];
+
+    expect(mergePersistedDirect(list, 'Qalice', 'alice')).toBe(list);
+  });
+
+  it('refreshes a newly-seen name and keeps an existing one when none is provided', () => {
+    const list: PersistedDirect[] = [{ address: 'Qalice', name: 'alice' }];
+
+    expect(mergePersistedDirect(list, 'Qalice', 'alice2')).toEqual([{ address: 'Qalice', name: 'alice2' }]);
+    expect(mergePersistedDirect(list, 'Qalice')).toBe(list);
+  });
+
+  it('stores an address with no name', () => {
+    expect(mergePersistedDirect([], 'Qbob')).toEqual([{ address: 'Qbob' }]);
+  });
+});
+
+describe('toStoredSelectedChat', () => {
+  it('stores a group as-is', () => {
+    expect(toStoredSelectedChat({ kind: 'group', group })).toEqual({ kind: 'group', group });
+  });
+
+  it('stores a direct address and name, dropping the name when absent', () => {
+    expect(toStoredSelectedChat({ kind: 'direct', direct: { address: 'Qalice', name: 'alice' } })).toEqual({
+      kind: 'direct',
+      direct: { address: 'Qalice', name: 'alice' },
+    });
+    expect(toStoredSelectedChat({ kind: 'direct', direct: { address: 'Qbob' } })).toEqual({
+      kind: 'direct',
+      direct: { address: 'Qbob' },
+    });
+  });
+});
+
+describe('storage round-trips', () => {
+  beforeEach(installStorage);
+  afterEach(removeStorage);
+
+  it('persists and reads back the last chat', () => {
+    writeLastChat(ADDRESS, { kind: 'group', group });
+    expect(readLastChat(ADDRESS)).toEqual({ kind: 'group', group });
+
+    writeLastChat(ADDRESS, { kind: 'direct', direct: { address: 'Qalice', name: 'alice' } });
+    expect(readLastChat(ADDRESS)).toEqual({ kind: 'direct', direct: { address: 'Qalice', name: 'alice' } });
+  });
+
+  it('rejects malformed last-chat values', () => {
+    window.localStorage.setItem(lastChatStorageKey(ADDRESS), JSON.stringify({ kind: 'group', group: {} }));
+    expect(readLastChat(ADDRESS)).toBeNull();
+
+    // A group id with no name is treated as corrupt (real groups always have one).
+    window.localStorage.setItem(lastChatStorageKey(ADDRESS), JSON.stringify({ kind: 'group', group: { groupId: 7 } }));
+    expect(readLastChat(ADDRESS)).toBeNull();
+
+    window.localStorage.setItem(lastChatStorageKey(ADDRESS), 'not json');
+    expect(readLastChat(ADDRESS)).toBeNull();
+  });
+
+  it('persists directs and filters malformed entries', () => {
+    writePersistedDirects(ADDRESS, [{ address: 'Qalice', name: 'alice' }, { address: 'Qbob' }]);
+    expect(readPersistedDirects(ADDRESS)).toEqual([{ address: 'Qalice', name: 'alice' }, { address: 'Qbob' }]);
+
+    window.localStorage.setItem(
+      persistedDirectsStorageKey(ADDRESS),
+      JSON.stringify([{ address: 'Qok' }, { name: 'no-address' }, null, 7]),
+    );
+    expect(readPersistedDirects(ADDRESS)).toEqual([{ address: 'Qok' }]);
+  });
+});
+
+describe('without storage', () => {
+  beforeEach(removeStorage);
+
+  it('degrades to empty reads and silent writes', () => {
+    expect(readLastChat(ADDRESS)).toBeNull();
+    expect(readPersistedDirects(ADDRESS)).toEqual([]);
+    expect(() => writeLastChat(ADDRESS, { kind: 'group', group })).not.toThrow();
+    expect(() => writePersistedDirects(ADDRESS, [{ address: 'Qalice' }])).not.toThrow();
+  });
+});
+
+describe('with storage that throws on use', () => {
+  beforeEach(() => {
+    (globalThis as { window?: unknown }).window = { localStorage: new ThrowingStorage() };
+  });
+  afterEach(removeStorage);
+
+  it('degrades to empty reads and silent writes when storage access throws', () => {
+    expect(readLastChat(ADDRESS)).toBeNull();
+    expect(readPersistedDirects(ADDRESS)).toEqual([]);
+    expect(() => writeLastChat(ADDRESS, { kind: 'group', group })).not.toThrow();
+    expect(() => writePersistedDirects(ADDRESS, [{ address: 'Qalice' }])).not.toThrow();
+  });
+});

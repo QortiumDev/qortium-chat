@@ -964,6 +964,62 @@ samp,
   text-align: start;
 }
 
+/* A removable direct sits in a relative wrapper with the remove control floated
+   over its (otherwise empty) trailing edge, so the row stays a single button. */
+.direct-row-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.direct-row-wrap--removable .direct-row {
+  padding-inline-end: 40px;
+}
+
+/* The remove button is a sibling, so hovering/focusing it would otherwise drop
+   the row's own :hover background — keep the row highlighted from the wrapper. */
+.direct-row-wrap:hover .direct-row:not(:disabled),
+.direct-row-wrap:focus-within .direct-row:not(:disabled) {
+  background: var(--qc-color-row-hover);
+  border-color: var(--qc-color-row-hover-border);
+}
+
+.direct-row__remove {
+  transition: var(--qc-transition-control);
+  position: absolute;
+  inset-inline-end: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--qc-color-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--qc-radius-sm);
+  cursor: pointer;
+}
+
+.direct-row__remove svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.direct-row__remove:hover,
+.direct-row__remove:focus-visible {
+  color: var(--qc-color-error);
+  background: var(--qc-color-surface-raised);
+  border-color: var(--qc-color-border);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--qc-color-accent-ring);
+}
+
 .direct-row:disabled {
   cursor: not-allowed;
   opacity: 0.65;
