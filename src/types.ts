@@ -3,6 +3,7 @@ export type QdnAction = string;
 export type BridgeState = {
   actions: QdnAction[];
   isHomeBridge: boolean;
+  isUsingPublicNode: boolean;
   ui: string;
 };
 

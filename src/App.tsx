@@ -96,7 +96,7 @@ import {
   getGroupMemberRole,
   getOrderedGroupMembers,
 } from './groupMembers';
-import { shouldDecryptGroupMessages } from './groupAccess';
+import { isPublicNodeSendUnsupported, shouldDecryptGroupMessages } from './groupAccess';
 import {
   getAvatarFallbackCharacter,
   loadAvatarProfile,
@@ -2527,7 +2527,7 @@ function useMediaQuery(query: string) {
 }
 
 export default function App() {
-  const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({ actions: [], isHomeBridge: false, ui: 'BROWSER_DEV' }));
+  const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({ actions: [], isHomeBridge: false, isUsingPublicNode: false, ui: 'BROWSER_DEV' }));
   const [account, setAccount] = useState<QdnSelectedAccount | null>(null);
   const [accountError, setAccountError] = useState('');
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
@@ -3009,12 +3009,23 @@ export default function App() {
     accountMintingStatus?.keyOnNode === false &&
     !hasPendingRewardShareTransaction &&
     !startMintingPending;
+  // On a public/network node Home only accepts the keyless broadcast for open
+  // groups; direct and closed-group sends are rejected there. Block them in the
+  // UI so we never present an unsupported send. Trusted nodes are unaffected.
+  const isPublicNodeSendBlocked =
+    !!selectedChat &&
+    isPublicNodeSendUnsupported(
+      bridge.value.isUsingPublicNode,
+      selectedChat.kind === 'group' ? { group: selectedChat.group, kind: 'group' } : { kind: 'direct' },
+    );
   const canComposeMessage =
     canUseSelectedAccount &&
     !!selectedChat &&
+    !isPublicNodeSendBlocked &&
     (selectedChat.kind === 'group' ? canSendGroupChat && canPostInSelectedGroup : canSendDirectChat);
   const canSubmitMessage =
     canComposeMessage && draft.trim().length > 0 && !sendPending;
+  const publicNodeSendNotice = isPublicNodeSendBlocked ? t('action.publicNodeSendUnavailable') : '';
   const showGroupComposerNotice =
     canUseSelectedAccount &&
     canSendGroupChat &&
@@ -5272,7 +5283,11 @@ export default function App() {
             />
           )}
 
-          {showGroupComposerNotice ? (
+          {publicNodeSendNotice ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{publicNodeSendNotice}</p>
+            </div>
+          ) : showGroupComposerNotice ? (
             <div aria-live="polite" className="composer composer--notice">
               <p>{groupComposerNotice}</p>
               {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}

@@ -135,6 +135,7 @@ export const EN_STRINGS = {
   'action.mintingUnavailable': 'Start minting is not available in this Home build.',
   'action.mintingUnavailableHint': 'Open in Qortium Home to start minting.',
   'action.groupMessagesUnavailable': 'Open in Qortium Home to send group chat messages.',
+  'action.publicNodeSendUnavailable': 'Private and direct chat requires a local Core or a trusted custom node.',
   'action.approveUnavailable': 'Update Qortium Home to approve join requests',
   'action.openAvatarImage': 'Open avatar image',
   'action.openMediaPlayer': 'Open media player',

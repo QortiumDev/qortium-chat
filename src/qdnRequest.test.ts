@@ -10,14 +10,33 @@ describe('qdnRequest bridge adapter', () => {
     const qdnRequestMock = vi
       .fn()
       .mockResolvedValueOnce(['FETCH_NODE_API', 'GET_SELECTED_ACCOUNT'])
-      .mockResolvedValueOnce('QORTIUM_HOME_ELECTRON');
+      .mockResolvedValueOnce('QORTIUM_HOME_ELECTRON')
+      .mockResolvedValueOnce(true);
 
     vi.stubGlobal('window', { qdnRequest: qdnRequestMock });
 
     await expect(getBridgeState()).resolves.toEqual({
       actions: ['FETCH_NODE_API', 'GET_SELECTED_ACCOUNT'],
       isHomeBridge: true,
+      isUsingPublicNode: true,
       ui: 'QORTIUM_HOME_ELECTRON',
+    });
+  });
+
+  it('defaults to a trusted node when the public-node probe fails', async () => {
+    const qdnRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce(['FETCH_NODE_API'])
+      .mockResolvedValueOnce('QORTIUM_HOME')
+      .mockRejectedValueOnce(new Error('unsupported'));
+
+    vi.stubGlobal('window', { qdnRequest: qdnRequestMock });
+
+    await expect(getBridgeState()).resolves.toEqual({
+      actions: ['FETCH_NODE_API'],
+      isHomeBridge: true,
+      isUsingPublicNode: false,
+      ui: 'QORTIUM_HOME',
     });
   });
 

@@ -156,6 +156,7 @@ export async function qdnRequest<T = unknown>(request: QdnRequest): Promise<T> {
 export async function getBridgeState(): Promise<BridgeState> {
   let actions: QdnAction[] = [];
   let ui = hasHomeBridge() ? 'QORTIUM_HOME' : 'BROWSER_DEV';
+  let isUsingPublicNode = false;
 
   try {
     const requestedActions = await qdnRequest<unknown>({ action: 'SHOW_ACTIONS' });
@@ -177,9 +178,19 @@ export async function getBridgeState(): Promise<BridgeState> {
     // Keep the inferred UI label.
   }
 
+  try {
+    // Home reports whether chat is bound to a public/network node. There, sends
+    // are keyless and only open groups are accepted; direct and closed-group
+    // sends must be gated off. Default to false (trusted local/custom node).
+    isUsingPublicNode = (await qdnRequest<unknown>({ action: 'IS_USING_PUBLIC_NODE' })) === true;
+  } catch {
+    isUsingPublicNode = false;
+  }
+
   return {
     actions,
     isHomeBridge: hasHomeBridge(),
+    isUsingPublicNode,
     ui,
   };
 }
