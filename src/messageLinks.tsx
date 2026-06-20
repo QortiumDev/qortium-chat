@@ -220,8 +220,93 @@ export function getMessageTextParts(text: string): MessageTextPart[] {
   return parts.length > 0 ? parts : [{ kind: 'text', text }];
 }
 
+const CODE_FENCE = '```';
+
+export type MessageSegment =
+  | {
+      kind: 'text';
+      text: string;
+    }
+  | {
+      content: string;
+      kind: 'code';
+      lang: string;
+    };
+
+function parseFencedContent(raw: string): { content: string; lang: string } {
+  const newlineIndex = raw.indexOf('\n');
+
+  // A single-line block (```code```) carries no info string, so keep it all as
+  // code. Otherwise the first line is the (optional) language hint and the rest
+  // is the body; drop the newline that precedes the closing fence.
+  if (newlineIndex === -1) {
+    return { content: raw, lang: '' };
+  }
+
+  return {
+    content: raw.slice(newlineIndex + 1).replace(/\n$/, ''),
+    lang: raw.slice(0, newlineIndex).trim(),
+  };
+}
+
+// Splits a message into plain-text runs and ```-fenced code blocks. Text runs
+// adjacent to a fence shed the single newline that ends/starts the fence line so
+// the rendered block sits flush against the surrounding text. An unterminated
+// fence is left as plain text.
+export function getMessageSegments(text: string): MessageSegment[] {
+  const segments: MessageSegment[] = [];
+  let index = 0;
+
+  while (index < text.length) {
+    const open = text.indexOf(CODE_FENCE, index);
+
+    if (open === -1) {
+      break;
+    }
+
+    const close = text.indexOf(CODE_FENCE, open + CODE_FENCE.length);
+
+    if (close === -1) {
+      break;
+    }
+
+    if (open > index) {
+      segments.push({ kind: 'text', text: text.slice(index, open) });
+    }
+
+    segments.push({ kind: 'code', ...parseFencedContent(text.slice(open + CODE_FENCE.length, close)) });
+    index = close + CODE_FENCE.length;
+  }
+
+  if (index < text.length) {
+    segments.push({ kind: 'text', text: text.slice(index) });
+  }
+
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i];
+
+    if (segment.kind !== 'text') {
+      continue;
+    }
+
+    if (segments[i - 1]?.kind === 'code') {
+      segment.text = segment.text.replace(/^\n/, '');
+    }
+
+    if (segments[i + 1]?.kind === 'code') {
+      segment.text = segment.text.replace(/\n$/, '');
+    }
+  }
+
+  const meaningful = segments.filter((segment) => segment.kind !== 'text' || segment.text.length > 0);
+
+  return meaningful.length > 0 ? meaningful : [{ kind: 'text', text }];
+}
+
 function getQdnResources<T>(text: string, parseResource: (qdnUrl: string) => T | null): T[] {
-  return getMessageTextParts(text)
+  return getMessageSegments(text)
+    .filter((segment): segment is Extract<MessageSegment, { kind: 'text' }> => segment.kind === 'text')
+    .flatMap((segment) => getMessageTextParts(segment.text))
     .filter((part): part is Extract<MessageTextPart, { kind: 'app-link' }> => part.kind === 'app-link')
     .map((part) => parseResource(part.address))
     .filter((resource): resource is T => resource !== null);
@@ -441,29 +526,43 @@ export async function fetchQdnImagePreviews(resource: QdnImageResource): Promise
   return Promise.all(previewResources.map(fetchQdnImagePreview));
 }
 
+function renderTextPart(part: MessageTextPart, key: string): ReactNode {
+  if (part.kind === 'text') {
+    return part.text;
+  }
+
+  return (
+    <a
+      className="message__app-link"
+      href={part.address}
+      key={key}
+      onClick={(event) => {
+        event.preventDefault();
+
+        void openAppLinkInHomeTab(part.address).catch((error) => {
+          console.warn('Unable to open app link.', error);
+        });
+      }}
+      rel="noopener noreferrer"
+      target="_blank"
+    >
+      {part.text}
+    </a>
+  );
+}
+
 export function renderMessageTextWithAppLinks(text: string): ReactNode {
-  return getMessageTextParts(text).map((part, index) => {
-    if (part.kind === 'text') {
-      return part.text;
+  return getMessageSegments(text).map((segment, segmentIndex) => {
+    if (segment.kind === 'code') {
+      return (
+        <pre className="message__code-block" key={`code-${segmentIndex}`}>
+          <code data-lang={segment.lang || undefined}>{segment.content}</code>
+        </pre>
+      );
     }
 
-    return (
-      <a
-        className="message__app-link"
-        href={part.address}
-        key={`${part.address}-${index}`}
-        onClick={(event) => {
-          event.preventDefault();
-
-          void openAppLinkInHomeTab(part.address).catch((error) => {
-            console.warn('Unable to open app link.', error);
-          });
-        }}
-        rel="noopener noreferrer"
-        target="_blank"
-      >
-        {part.text}
-      </a>
+    return getMessageTextParts(segment.text).map((part, partIndex) =>
+      renderTextPart(part, `${segmentIndex}-${partIndex}`),
     );
   });
 }
