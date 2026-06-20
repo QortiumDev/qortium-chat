@@ -4,6 +4,7 @@ import {
   fetchQdnImagePreviews,
   getImageQdnResources,
   getMediaQdnResources,
+  getMessageSegments,
   getMessageTextParts,
   openAppLinkInHomeTab,
   openQdnMediaPlayer,
@@ -62,6 +63,56 @@ describe('message link helpers', () => {
   it('requires app links to use scheme slashes', () => {
     expect(getMessageTextParts('Open home:settings or core:names')).toEqual([
       { kind: 'text', text: 'Open home:settings or core:names' },
+    ]);
+  });
+
+  it('returns a single text segment when there is no fenced code', () => {
+    expect(getMessageSegments('just some text')).toEqual([{ kind: 'text', text: 'just some text' }]);
+  });
+
+  it('splits a fenced code block with a language hint from surrounding text', () => {
+    expect(getMessageSegments('Try this:\n```ts\nconst x = 1;\n```\nDone')).toEqual([
+      { kind: 'text', text: 'Try this:' },
+      { content: 'const x = 1;', kind: 'code', lang: 'ts' },
+      { kind: 'text', text: 'Done' },
+    ]);
+  });
+
+  it('preserves blank lines and indentation inside a code block', () => {
+    expect(getMessageSegments('```\nline 1\n\n  indented\n```')).toEqual([
+      { content: 'line 1\n\n  indented', kind: 'code', lang: '' },
+    ]);
+  });
+
+  it('treats a single-line fence as code with no language hint', () => {
+    expect(getMessageSegments('inline ```code``` here')).toEqual([
+      { kind: 'text', text: 'inline ' },
+      { content: 'code', kind: 'code', lang: '' },
+      { kind: 'text', text: ' here' },
+    ]);
+  });
+
+  it('handles multiple code blocks in one message', () => {
+    expect(getMessageSegments('```a```\nand\n```b```')).toEqual([
+      { content: 'a', kind: 'code', lang: '' },
+      { kind: 'text', text: 'and' },
+      { content: 'b', kind: 'code', lang: '' },
+    ]);
+  });
+
+  it('leaves an unterminated fence as plain text', () => {
+    expect(getMessageSegments('start ```not closed')).toEqual([{ kind: 'text', text: 'start ```not closed' }]);
+  });
+
+  it('ignores app links inside fenced code blocks when extracting resources', () => {
+    expect(getImageQdnResources('See qdn://IMAGE/Alice/photo-1\n```\nqdn://IMAGE/Bob/photo-2\n```')).toEqual([
+      {
+        identifier: 'photo-1',
+        name: 'Alice',
+        path: '',
+        qdnUrl: 'qdn://IMAGE/Alice/photo-1',
+        service: 'IMAGE',
+      },
     ]);
   });
 
