@@ -155,7 +155,7 @@ export async function qdnRequest<T = unknown>(request: QdnRequest): Promise<T> {
 
 export async function getBridgeState(): Promise<BridgeState> {
   let actions: QdnAction[] = [];
-  let ui = hasHomeBridge() ? 'QORTIUM_HOME' : 'BROWSER_DEV';
+  let ui = hasHomeBridge() ? 'QORTIUM_HOME_ELECTRON' : 'BROWSER_DEV';
   let isUsingPublicNode = false;
 
   try {
