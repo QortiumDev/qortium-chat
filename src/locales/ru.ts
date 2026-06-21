@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'Изображение аватара',
   'aria.navigation': 'Навигация',
   'aria.selectedChat': 'Выбранный чат',
+  'aria.scrollToBottom': 'Прокрутить к последним сообщениям',
   'aria.transactionStatus': 'Статус транзакции',
   'label.account.summary.locked': 'Заблокировано',
   'label.account.summary.unlocked': 'Разблокировано',

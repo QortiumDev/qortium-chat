@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'תמונת אווטאר',
   'aria.navigation': 'ניווט',
   'aria.selectedChat': 'השיחה שנבחרה',
+  'aria.scrollToBottom': 'גלול להודעות האחרונות',
   'aria.transactionStatus': 'סטטוס עסקה',
   'label.account.summary.locked': 'נעול',
   'label.account.summary.unlocked': 'לא נעול',

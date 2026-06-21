@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'Obraz awatara',
   'aria.navigation': 'Nawigacja',
   'aria.selectedChat': 'Wybrany czat',
+  'aria.scrollToBottom': 'Przewiń do najnowszych wiadomości',
   'aria.transactionStatus': 'Status transakcji',
   'label.account.summary.locked': 'Zablokowane',
   'label.account.summary.unlocked': 'Odblokowane',

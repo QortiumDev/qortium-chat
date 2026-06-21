@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'Avatarkép',
   'aria.navigation': 'Navigáció',
   'aria.selectedChat': 'Kijelölt csevegés',
+  'aria.scrollToBottom': 'Görgetés a legújabb üzenetekhez',
   'aria.transactionStatus': 'Tranzakció állapota',
   'label.account.summary.locked': 'Zárolt',
   'label.account.summary.unlocked': 'Feloldott',

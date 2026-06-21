@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'アバター画像',
   'aria.navigation': 'ナビゲーション',
   'aria.selectedChat': '選択されたチャット',
+  'aria.scrollToBottom': '最新のメッセージにスクロール',
   'aria.transactionStatus': 'トランザクションの状態',
   'label.account.summary.locked': 'ロック中',
   'label.account.summary.unlocked': 'ロック解除済み',

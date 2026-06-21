@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': '头像图片',
   'aria.navigation': '导航',
   'aria.selectedChat': '已选聊天',
+  'aria.scrollToBottom': '滚动到最新消息',
   'aria.transactionStatus': '交易状态',
   'label.account.summary.locked': '已锁定',
   'label.account.summary.unlocked': '已解锁',

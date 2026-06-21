@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'Imagen de avatar',
   'aria.navigation': 'Navegación',
   'aria.selectedChat': 'Chat seleccionado',
+  'aria.scrollToBottom': 'Desplazarse a los mensajes más recientes',
   'aria.transactionStatus': 'Estado de la transacción',
   'label.account.summary.locked': 'Bloqueado',
   'label.account.summary.unlocked': 'Desbloqueado',

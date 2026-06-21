@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'صورة الصورة الرمزية',
   'aria.navigation': 'التنقل',
   'aria.selectedChat': 'المحادثة المحددة',
+  'aria.scrollToBottom': 'التمرير إلى أحدث الرسائل',
   'aria.transactionStatus': 'حالة المعاملة',
   'label.account.summary.locked': 'مقفل',
   'label.account.summary.unlocked': 'مفتوح',
