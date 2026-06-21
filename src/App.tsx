@@ -2208,180 +2208,180 @@ function MessageList({
             </li>
           ) : null}
           {threads.map((thread, index) => {
-        const { latest, original, revisions } = thread;
-        const decoded = decodeChatMessage(latest, t);
-        const threadKey = getMessageKey(original, index);
-        const isOwn = selfAddress !== null && original.sender === selfAddress;
-        const isEdited = revisions.length > 0;
-        const isHistoryOpen = isEdited && openHistories.has(threadKey);
-        const previousVersions = isHistoryOpen ? [original, ...revisions.slice(0, -1)] : [];
-        const repliedThread = decoded.repliedTo ? threadsBySignature.get(decoded.repliedTo) : undefined;
-        const isHighlighted = highlightedKey === threadKey;
-        const isContinuation = isThreadContinuation(threads[index - 1], thread);
-        const canEdit = isOwn && decoded.kind === 'text';
-        const isTimeExpanded = expandedTimeKey === threadKey;
-        const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
-        const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
-        const hasImagePreviews = imageResources.length > 0;
-        const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
-        const areImagePreviewsOpen = openImagePreviews.has(threadKey);
-        const canReplyOrEdit = canCompose && !!original.signature;
-        const canReact = canReplyOrEdit;
-        const isReactionPickerOpen = openReactionPickerKey === threadKey;
-        const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
-        const senderProfile = avatarProfiles.get(original.sender);
-        const actionButtons =
-          canReplyOrEdit || canReact || hasImagePreviews || hasMediaActions ? (
-            <div className="message__actions">
-              {hasImagePreviews ? (
-                <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
-                  {areImagePreviewsOpen ? t('button.hideImagePreview') : t('button.viewImagePreview')}
-                </button>
-              ) : null}
-              {hasMediaActions
-                ? mediaResources.map((resource, resourceIndex) => (
+            const { latest, original, revisions } = thread;
+            const decoded = decodeChatMessage(latest, t);
+            const threadKey = getMessageKey(original, index);
+            const isOwn = selfAddress !== null && original.sender === selfAddress;
+            const isEdited = revisions.length > 0;
+            const isHistoryOpen = isEdited && openHistories.has(threadKey);
+            const previousVersions = isHistoryOpen ? [original, ...revisions.slice(0, -1)] : [];
+            const repliedThread = decoded.repliedTo ? threadsBySignature.get(decoded.repliedTo) : undefined;
+            const isHighlighted = highlightedKey === threadKey;
+            const isContinuation = isThreadContinuation(threads[index - 1], thread);
+            const canEdit = isOwn && decoded.kind === 'text';
+            const isTimeExpanded = expandedTimeKey === threadKey;
+            const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
+            const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
+            const hasImagePreviews = imageResources.length > 0;
+            const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
+            const areImagePreviewsOpen = openImagePreviews.has(threadKey);
+            const canReplyOrEdit = canCompose && !!original.signature;
+            const canReact = canReplyOrEdit;
+            const isReactionPickerOpen = openReactionPickerKey === threadKey;
+            const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
+            const senderProfile = avatarProfiles.get(original.sender);
+            const actionButtons =
+              canReplyOrEdit || canReact || hasImagePreviews || hasMediaActions ? (
+                <div className="message__actions">
+                  {hasImagePreviews ? (
+                    <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
+                      {areImagePreviewsOpen ? t('button.hideImagePreview') : t('button.viewImagePreview')}
+                    </button>
+                  ) : null}
+                  {hasMediaActions
+                    ? mediaResources.map((resource, resourceIndex) => (
+                        <button
+                          aria-label={t('action.openMediaPlayer')}
+                          key={`${resource.qdnUrl}-${resourceIndex}`}
+                          onClick={() => playMedia(resource)}
+                          title={resource.qdnUrl}
+                          type="button"
+                        >
+                          {t('button.playMedia')}
+                        </button>
+                      ))
+                    : null}
+                  {canReplyOrEdit ? (
+                    <button onClick={() => onReply(original)} type="button">
+                      {t('button.reply')}
+                    </button>
+                  ) : null}
+                  {canReact ? (
                     <button
-                      aria-label={t('action.openMediaPlayer')}
-                      key={`${resource.qdnUrl}-${resourceIndex}`}
-                      onClick={() => playMedia(resource)}
-                      title={resource.qdnUrl}
+                      aria-expanded={isReactionPickerOpen}
+                      aria-haspopup="dialog"
+                      onClick={(event) => toggleReactionPicker(threadKey, event.currentTarget)}
                       type="button"
                     >
-                      {t('button.playMedia')}
+                      {t('button.react')}
                     </button>
-                  ))
-                : null}
-              {canReplyOrEdit ? (
-                <button onClick={() => onReply(original)} type="button">
-                  {t('button.reply')}
-                </button>
-              ) : null}
-              {canReact ? (
-                <button
-                  aria-expanded={isReactionPickerOpen}
-                  aria-haspopup="dialog"
-                  onClick={(event) => toggleReactionPicker(threadKey, event.currentTarget)}
-                  type="button"
-                >
-                  {t('button.react')}
-                </button>
-              ) : null}
-              {canReplyOrEdit && canEdit ? (
-                <button onClick={() => onEdit(thread)} type="button">
-                  {t('button.edit')}
-                </button>
-              ) : null}
-            </div>
-          ) : null;
+                  ) : null}
+                  {canReplyOrEdit && canEdit ? (
+                    <button onClick={() => onEdit(thread)} type="button">
+                      {t('button.edit')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null;
 
-        return (
-          <Fragment key={threadKey}>
-            {unreadDividerIndex === index ? (
-              <li className="message-list__unread-divider" role="separator">
-                <span>{t('label.newMessages')}</span>
-              </li>
-            ) : null}
-          <li
-            className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}`}
-            ref={(element) => {
-              if (element) {
-                itemsRef.current.set(threadKey, element);
-              } else {
-                itemsRef.current.delete(threadKey);
-              }
-            }}
-          >
-            {isContinuation ? null : (
-              <div className="message__meta">
-                <MessageIdentity
-                  message={original}
-                  onOpenAccount={onOpenAccount}
-                  onOpenAvatar={onOpenAvatar}
-                  openAvatarLabel={t('action.openAvatarImage')}
-                  profile={senderProfile}
+            return (
+              <Fragment key={threadKey}>
+                {unreadDividerIndex === index ? (
+                  <li className="message-list__unread-divider" role="separator">
+                    <span>{t('label.newMessages')}</span>
+                  </li>
+                ) : null}
+              <li
+                className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}`}
+                ref={(element) => {
+                  if (element) {
+                    itemsRef.current.set(threadKey, element);
+                  } else {
+                    itemsRef.current.delete(threadKey);
+                  }
+                }}
+              >
+                {isContinuation ? null : (
+                  <div className="message__meta">
+                    <MessageIdentity
+                      message={original}
+                      onOpenAccount={onOpenAccount}
+                      onOpenAvatar={onOpenAvatar}
+                      openAvatarLabel={t('action.openAvatarImage')}
+                      profile={senderProfile}
+                      t={t}
+                    />
+                    {actionButtons}
+                  </div>
+                )}
+                {decoded.repliedTo ? (
+                  repliedThread ? (
+                    <button
+                      className="message__reply-preview"
+                      onClick={() => scrollToThread(decoded.repliedTo ?? '')}
+                      title={t('action.goToOriginal')}
+                      type="button"
+                    >
+                      <strong>
+                        {getMessageSenderLabel(
+                          repliedThread.original,
+                          avatarProfiles.get(repliedThread.original.sender),
+                        )}
+                      </strong>
+                      <span>{getMessageSnippet(repliedThread.latest, t)}</span>
+                    </button>
+                  ) : (
+                    <span className="message__reply-preview message__reply-preview--missing">
+                      {t('message.replyUnavailable')}
+                    </span>
+                  )
+                ) : null}
+                <div className="message__body">
+                  {decoded.body ? renderMessageTextWithAppLinks(decoded.body) : t('message.empty')}
+                </div>
+                {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
+                <MessageReactionChips
+                  onToggleReactionDetails={toggleReactionDetails}
+                  openReactionDetailsKey={openReactionDetailsKey}
+                  original={original}
+                  pendingReactionKey={pendingReactionKey}
+                  reactions={reactions}
                   t={t}
                 />
-                {actionButtons}
-              </div>
-            )}
-            {decoded.repliedTo ? (
-              repliedThread ? (
-                <button
-                  className="message__reply-preview"
-                  onClick={() => scrollToThread(decoded.repliedTo ?? '')}
-                  title={t('action.goToOriginal')}
-                  type="button"
-                >
-                  <strong>
-                    {getMessageSenderLabel(
-                      repliedThread.original,
-                      avatarProfiles.get(repliedThread.original.sender),
-                    )}
-                  </strong>
-                  <span>{getMessageSnippet(repliedThread.latest, t)}</span>
-                </button>
-              ) : (
-                <span className="message__reply-preview message__reply-preview--missing">
-                  {t('message.replyUnavailable')}
-                </span>
-              )
-            ) : null}
-            <div className="message__body">
-              {decoded.body ? renderMessageTextWithAppLinks(decoded.body) : t('message.empty')}
-            </div>
-            {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
-            <MessageReactionChips
-              onToggleReactionDetails={toggleReactionDetails}
-              openReactionDetailsKey={openReactionDetailsKey}
-              original={original}
-              pendingReactionKey={pendingReactionKey}
-              reactions={reactions}
-              t={t}
-            />
-            <div className="message__footer">
-              <button
-                className="message__time"
-                onClick={() => toggleTimeDisplay(threadKey)}
-                title={formatTimestamp(original.timestamp)}
-                type="button"
-              >
-                {isTimeExpanded ? formatTimestamp(original.timestamp) : formatTimeAgo(original.timestamp, now)}
-              </button>
-              {isEdited ? (
-                <button
-                  aria-expanded={isHistoryOpen}
-                  className="message__edited"
-                  onClick={() => toggleHistory(threadKey)}
-                  title={t('action.toggleEditHistory')}
-                  type="button"
-                >
-                  {t('label.message.edited')} · {formatTimeAgo(latest.timestamp, now)}
-                </button>
-              ) : null}
-              {isContinuation ? actionButtons : null}
-            </div>
-            {isHistoryOpen ? (
-              <ol className="message__history" aria-label={t('label.editHistory')}>
-                {previousVersions.map((version, versionIndex) => {
-                  const versionBody = decodeChatMessage(version, t).body;
+                <div className="message__footer">
+                  <button
+                    className="message__time"
+                    onClick={() => toggleTimeDisplay(threadKey)}
+                    title={formatTimestamp(original.timestamp)}
+                    type="button"
+                  >
+                    {isTimeExpanded ? formatTimestamp(original.timestamp) : formatTimeAgo(original.timestamp, now)}
+                  </button>
+                  {isEdited ? (
+                    <button
+                      aria-expanded={isHistoryOpen}
+                      className="message__edited"
+                      onClick={() => toggleHistory(threadKey)}
+                      title={t('action.toggleEditHistory')}
+                      type="button"
+                    >
+                      {t('label.message.edited')} · {formatTimeAgo(latest.timestamp, now)}
+                    </button>
+                  ) : null}
+                  {isContinuation ? actionButtons : null}
+                </div>
+                {isHistoryOpen ? (
+                  <ol className="message__history" aria-label={t('label.editHistory')}>
+                    {previousVersions.map((version, versionIndex) => {
+                      const versionBody = decodeChatMessage(version, t).body;
 
-                  return (
-                    <li key={getMessageKey(version, versionIndex)}>
-                      <span className="message__history-meta">
-                        {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
-                        {formatTimestamp(version.timestamp)}
-                      </span>
-                      <span className="message__history-body">
-                        {versionBody ? renderMessageTextWithAppLinks(versionBody) : t('message.empty')}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ol>
-            ) : null}
-          </li>
-          </Fragment>
-        );
+                      return (
+                        <li key={getMessageKey(version, versionIndex)}>
+                          <span className="message__history-meta">
+                            {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
+                            {formatTimestamp(version.timestamp)}
+                          </span>
+                          <span className="message__history-body">
+                            {versionBody ? renderMessageTextWithAppLinks(versionBody) : t('message.empty')}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                ) : null}
+              </li>
+              </Fragment>
+            );
           })}
           {systemMessages.map((transaction) => (
             <li className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
@@ -2398,7 +2398,7 @@ function MessageList({
           ))}
         </ol>
         {showScrollToBottom ? (
-          <button aria-label="↓" className="message-feed__scroll-bottom" onClick={scrollToBottom} type="button">
+          <button aria-label={t('aria.scrollToBottom')} className="message-feed__scroll-bottom" onClick={scrollToBottom} type="button">
             <DownIcon />
           </button>
         ) : null}

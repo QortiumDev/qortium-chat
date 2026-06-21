@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'Avatarikuva',
   'aria.navigation': 'Navigointi',
   'aria.selectedChat': 'Valittu keskustelu',
+  'aria.scrollToBottom': 'Vieritä uusimpiin viesteihin',
   'aria.transactionStatus': 'Tapahtuman tila',
   'label.account.summary.locked': 'Lukittu',
   'label.account.summary.unlocked': 'Avoinna',

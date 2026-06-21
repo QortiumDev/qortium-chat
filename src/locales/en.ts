@@ -4,6 +4,7 @@ export const EN_STRINGS = {
   'aria.avatarLightbox': 'Avatar image',
   'aria.navigation': 'Navigation',
   'aria.selectedChat': 'Selected chat',
+  'aria.scrollToBottom': 'Scroll to latest messages',
   'aria.transactionStatus': 'Transaction status',
   'label.account.summary.locked': 'Locked',
   'label.account.summary.unlocked': 'Unlocked',

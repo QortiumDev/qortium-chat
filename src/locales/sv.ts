@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': 'Avatarbild',
   'aria.navigation': 'Navigering',
   'aria.selectedChat': 'Vald chatt',
+  'aria.scrollToBottom': 'Bläddra till de senaste meddelandena',
   'aria.transactionStatus': 'Transaktionsstatus',
   'label.account.summary.locked': 'Låst',
   'label.account.summary.unlocked': 'Upplåst',

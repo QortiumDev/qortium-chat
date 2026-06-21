@@ -4,6 +4,7 @@ export const STRINGS = {
   'aria.avatarLightbox': '아바타 이미지',
   'aria.navigation': '탐색',
   'aria.selectedChat': '선택된 채팅',
+  'aria.scrollToBottom': '최신 메시지로 스크롤',
   'aria.transactionStatus': '거래 상태',
   'label.account.summary.locked': '잠김',
   'label.account.summary.unlocked': '잠금 해제됨',
