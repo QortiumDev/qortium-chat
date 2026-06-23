@@ -64,7 +64,7 @@
   --qc-color-text-secondary: #44504e;
   --qc-color-text-soft: #44504e;
   --qc-color-muted: #67716f;
-  --qc-color-text-faint: #89918e;
+  --qc-color-text-faint: #677067;
   --qc-color-avatar: #446b5a;
   --qc-color-avatar-text: #ffffff;
   --qc-color-accent: #21824a;
@@ -147,7 +147,7 @@
   --qc-color-text-secondary: #cbd5d5;
   --qc-color-text-soft: #cbd5d5;
   --qc-color-muted: #a9b6b6;
-  --qc-color-text-faint: #7f8d8d;
+  --qc-color-text-faint: #8b9a9a;
   --qc-color-avatar: #79a98f;
   --qc-color-avatar-text: #08120d;
   --qc-color-accent: #87d99b;
@@ -900,6 +900,14 @@ samp,
   background: var(--qc-color-row-hover);
   border-color: var(--qc-color-row-hover-border);
   outline: none;
+}
+
+/* Keyboard focus needs an indicator distinct from hover; a real outline layers
+   over the selected row's inset box-shadow instead of replacing it. */
+.group-row:focus-visible,
+.direct-row:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: -2px;
 }
 
 .group-row--selected,
@@ -1873,6 +1881,22 @@ button.message__reply-preview:focus-visible {
 
 .reaction-popover:focus {
   outline: none;
+}
+
+/* Inline message controls otherwise show only a hover-identical state on focus.
+   Give keyboard focus a distinct ring (matching the member-chip pattern) so the
+   focused control is always identifiable. Placed after their base rules so it
+   overrides the `outline: none` there. */
+button.message__reply-preview:focus-visible,
+.message__time:focus-visible,
+.message__edited:focus-visible,
+.message__actions button:focus-visible,
+.message__reaction-quick-row button:focus-visible,
+.message__reaction-chip:focus-visible,
+.message__reaction-details-close:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 /* Inside the popover the picker/details fill it and drop their own card chrome. */
