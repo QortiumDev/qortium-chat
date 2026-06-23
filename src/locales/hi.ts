@@ -34,6 +34,7 @@ export const STRINGS = {
   'label.common.direct': 'प्रत्यक्ष',
   'label.common.members': 'सदस्य',
   'label.common.members.short': 'सदस्य',
+  'label.common.active': 'सक्रिय',
   'label.common.navigation': 'नेविगेशन',
   'label.common.message': 'संदेश',
   'label.common.transactionStatus': 'लेन-देन स्थिति',

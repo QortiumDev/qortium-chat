@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': 'ダイレクト',
   'label.common.members': 'メンバー',
   'label.common.members.short': 'メンバー',
+  'label.common.active': 'アクティブ',
   'label.common.navigation': 'ナビゲーション',
   'label.common.message': 'メッセージ',
   'label.common.transactionStatus': 'トランザクションの状態',

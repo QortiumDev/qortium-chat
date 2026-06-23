@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': '私聊',
   'label.common.members': '成员',
   'label.common.members.short': '成员',
+  'label.common.active': '活跃',
   'label.common.navigation': '导航',
   'label.common.message': '消息',
   'label.common.transactionStatus': '交易状态',

@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': 'Közvetlen',
   'label.common.members': 'Tagok',
   'label.common.members.short': 'Tagok',
+  'label.common.active': 'Aktív',
   'label.common.navigation': 'Navigáció',
   'label.common.message': 'Üzenet',
   'label.common.transactionStatus': 'Tranzakció állapota',

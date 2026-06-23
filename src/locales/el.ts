@@ -34,6 +34,7 @@ export const STRINGS = {
   'label.common.direct': 'Απευθείας',
   'label.common.members': 'Μέλη',
   'label.common.members.short': 'Μέλη',
+  'label.common.active': 'Ενεργοί',
   'label.common.navigation': 'Πλοήγηση',
   'label.common.message': 'Μήνυμα',
   'label.common.transactionStatus': 'Κατάσταση συναλλαγής',

@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': 'ישיר',
   'label.common.members': 'חברים',
   'label.common.members.short': 'חברים',
+  'label.common.active': 'פעילים',
   'label.common.navigation': 'ניווט',
   'label.common.message': 'הודעה',
   'label.common.transactionStatus': 'סטטוס עסקה',

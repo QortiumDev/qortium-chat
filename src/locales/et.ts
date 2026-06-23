@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': 'Otse',
   'label.common.members': 'Liikmed',
   'label.common.members.short': 'Liikmed',
+  'label.common.active': 'Aktiivsed',
   'label.common.navigation': 'Navigeerimine',
   'label.common.message': 'Sõnum',
   'label.common.transactionStatus': 'Tehingu olek',

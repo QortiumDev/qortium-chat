@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': 'Suora',
   'label.common.members': 'Jäsenet',
   'label.common.members.short': 'Jäsenet',
+  'label.common.active': 'Aktiiviset',
   'label.common.navigation': 'Navigointi',
   'label.common.message': 'Viesti',
   'label.common.transactionStatus': 'Tapahtuman tila',

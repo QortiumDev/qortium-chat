@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': '직접',
   'label.common.members': '멤버',
   'label.common.members.short': '멤버',
+  'label.common.active': '활성',
   'label.common.navigation': '탐색',
   'label.common.message': '메시지',
   'label.common.transactionStatus': '거래 상태',

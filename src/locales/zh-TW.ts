@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': '直接',
   'label.common.members': '成員',
   'label.common.members.short': '成員',
+  'label.common.active': '活躍',
   'label.common.navigation': '導覽',
   'label.common.message': '訊息',
   'label.common.transactionStatus': '交易狀態',

@@ -34,6 +34,7 @@ export const EN_STRINGS = {
   'label.common.direct': 'Direct',
   'label.common.members': 'Members',
   'label.common.members.short': 'Members',
+  'label.common.active': 'Active',
   'label.common.navigation': 'Navigation',
   'label.common.message': 'Message',
   'label.common.transactionStatus': 'Transaction status',

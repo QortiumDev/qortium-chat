@@ -2869,6 +2869,7 @@ export default function App() {
   const hasUnreadGroups = unreadGroupIds.size > 0;
   const hasUnreadDirect = unreadDirectAddresses.size > 0;
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
+  const selectedGroupMembersLabel = isSelectedGeneralChat ? t('label.common.active') : t('label.common.members');
   const hasSelectedMessages = selectedChatKey !== '' && messagesChatKey === selectedChatKey;
   const selectedGeneralChatMembers = useMemo(
     () =>
@@ -5307,7 +5308,7 @@ export default function App() {
                 >
                   {membersOpen
                     ? t('button.hideMembers')
-                    : `${t('label.common.members')} (${selectedGroupMembers.length})`}
+                    : `${selectedGroupMembersLabel} (${selectedGroupMembers.length})`}
                 </button>
               ) : null}
               {selectedChat?.kind === 'direct' &&
@@ -5511,7 +5512,7 @@ export default function App() {
           >
             <div className="members-drawer__header">
               <div>
-                <h2>{t('label.common.members')}</h2>
+                <h2>{selectedGroupMembersLabel}</h2>
                 <p>{getGroupTitle(selectedGroup, t)}</p>
               </div>
               <span>{selectedGroupMembers.length}</span>

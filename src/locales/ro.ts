@@ -32,6 +32,7 @@ export const STRINGS = {
   'label.common.direct': 'Direct',
   'label.common.members': 'Membri',
   'label.common.members.short': 'Membri',
+  'label.common.active': 'Activi',
   'label.common.navigation': 'Navigare',
   'label.common.message': 'Mesaj',
   'label.common.transactionStatus': 'Starea tranzacției',
