@@ -406,11 +406,13 @@ export async function getMintingStatus(address: string, actions?: QdnAction[]): 
   );
 
   try {
-    const mintingAccounts = await fetchNodeApiData<NodeMintingAccount[]>('/admin/mintingaccounts', 'Minting accounts');
+    const [mintingAccounts, nodeStatus] = await Promise.all([
+      fetchNodeApiData<NodeMintingAccount[]>('/admin/mintingaccounts', 'Minting accounts'),
+      fetchNodeApiData<NodeStatus>('/admin/status', 'Node status'),
+    ]);
     const keyOnNode = mintingAccounts.some(
       (mintingAccount) => mintingAccount.mintingAccount === address && mintingAccount.recipientAccount === address,
     );
-    const nodeStatus = await fetchNodeApiData<NodeStatus>('/admin/status', 'Node status');
 
     return {
       address,

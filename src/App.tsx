@@ -3677,6 +3677,11 @@ export default function App() {
       return;
     }
 
+    // `before` is exclusive, so query one millisecond past the oldest message to
+    // include any siblings sharing its exact timestamp; mergeMessages dedupes the
+    // boundary message back out by signature.
+    const olderBefore = oldest.timestamp + 1;
+
     loadingOlderRef.current = true;
     setOlderMessagesState((current) => ({ ...current, error: '', loading: true }));
 
@@ -3684,10 +3689,10 @@ export default function App() {
       const olderWindow =
         chat.kind === 'group'
           ? await getGroupMessages(chat.group, actions, {
-              before: oldest.timestamp,
+              before: olderBefore,
               decryptPrivate: shouldDecryptPrivateGroup,
             })
-          : await getDirectMessages(chat.direct.address, actions, { before: oldest.timestamp });
+          : await getDirectMessages(chat.direct.address, actions, { before: olderBefore });
 
       const merged = mergeMessages(olderWindow, loadedMessages, Infinity);
 
