@@ -303,12 +303,42 @@ export function getMessageSegments(text: string): MessageSegment[] {
   return meaningful.length > 0 ? meaningful : [{ kind: 'text', text }];
 }
 
-function getQdnResources<T>(text: string, parseResource: (qdnUrl: string) => T | null): T[] {
-  return getMessageSegments(text)
+// Segment + text-part parsing is the expensive scan; both the image and media
+// extractors run it for every message on every render. Cache the app-link
+// addresses per message body so each unique body is scanned once, with a simple
+// FIFO cap so the map can't grow without bound across a long session.
+const appLinkAddressCache = new Map<string, string[]>();
+const APP_LINK_ADDRESS_CACHE_LIMIT = 2000;
+
+function getAppLinkAddresses(text: string): string[] {
+  const cached = appLinkAddressCache.get(text);
+
+  if (cached) {
+    return cached;
+  }
+
+  const addresses = getMessageSegments(text)
     .filter((segment): segment is Extract<MessageSegment, { kind: 'text' }> => segment.kind === 'text')
     .flatMap((segment) => getMessageTextParts(segment.text))
     .filter((part): part is Extract<MessageTextPart, { kind: 'app-link' }> => part.kind === 'app-link')
-    .map((part) => parseResource(part.address))
+    .map((part) => part.address);
+
+  if (appLinkAddressCache.size >= APP_LINK_ADDRESS_CACHE_LIMIT) {
+    const oldest = appLinkAddressCache.keys().next().value;
+
+    if (oldest !== undefined) {
+      appLinkAddressCache.delete(oldest);
+    }
+  }
+
+  appLinkAddressCache.set(text, addresses);
+
+  return addresses;
+}
+
+function getQdnResources<T>(text: string, parseResource: (qdnUrl: string) => T | null): T[] {
+  return getAppLinkAddresses(text)
+    .map((address) => parseResource(address))
     .filter((resource): resource is T => resource !== null);
 }
 
