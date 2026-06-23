@@ -1549,6 +1549,12 @@ button.member-chip__name-button:focus-visible {
   border-radius: var(--qc-radius-md);
   box-shadow: var(--qc-shadow-card);
   animation: qortium-message-in 170ms var(--qc-ease-pop);
+  /* Skip layout/paint for rows scrolled out of view in long histories. The
+     `auto` keyword remembers each row's real size once rendered, so the scroll
+     height stays accurate (the 56px fallback only applies to never-yet-seen
+     offscreen rows, which correct themselves as they scroll in). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 56px;
 }
 
 .message--encrypted,
