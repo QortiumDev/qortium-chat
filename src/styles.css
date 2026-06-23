@@ -870,6 +870,15 @@ samp,
   display: grid;
   gap: 8px;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.group-list > li,
+.direct-list > li {
+  display: grid;
+  min-width: 0;
 }
 
 .group-row,
@@ -1225,6 +1234,9 @@ samp,
   display: grid;
   gap: 8px;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .members-drawer .member-list {
@@ -2894,4 +2906,20 @@ button.message__reply-preview:focus-visible,
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* On touch devices, raise the small icon/close controls to the ~44px minimum
+   touch target (WCAG 2.5.8). Desktop pointer sizing is left unchanged so the
+   layout stays compact. */
+@media (pointer: coarse) {
+  .icon-button,
+  .direct-row__remove,
+  .members-drawer__close,
+  .account-dialog__close,
+  .avatar-lightbox__close,
+  .message__reaction-details-close,
+  .message__reaction-quick-row button {
+    width: 44px;
+    height: 44px;
+  }
 }

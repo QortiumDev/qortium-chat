@@ -1334,7 +1334,7 @@ const GroupList = memo(function GroupList({
   }
 
   return (
-    <div className="group-list">
+    <ul className="group-list">
       {groups.map((group) => {
         const lastMessageTimestamp = activityByGroupId.get(group.groupId);
         const isUnread = unreadGroupIds.has(group.groupId);
@@ -1342,9 +1342,9 @@ const GroupList = memo(function GroupList({
           memberCountsByGroupId?.get(group.groupId) ?? (isGeneralChatGroup(group) ? undefined : group.memberCount);
 
         return (
+          <li key={group.groupId}>
           <button
             className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}${isUnread ? ' group-row--unread' : ''}`}
-            key={group.groupId}
             onClick={() => onSelect(group)}
             type="button"
           >
@@ -1385,9 +1385,10 @@ const GroupList = memo(function GroupList({
               ) : null}
             </span>
           </button>
+          </li>
         );
       })}
-      </div>
+      </ul>
     );
 });
 
@@ -1440,7 +1441,7 @@ const DirectList = memo(function DirectList({
   }
 
   return (
-    <div className="direct-list">
+    <ul className="direct-list">
       {directs.map((direct) => {
         const lastMessageTimestamp = activityByAddress.get(direct.address);
         const isUnread = unreadAddresses.has(direct.address);
@@ -1448,7 +1449,7 @@ const DirectList = memo(function DirectList({
         const title = getDirectTitle(direct);
 
         return (
-          <div
+          <li
             className={`direct-row-wrap${isRemovable ? ' direct-row-wrap--removable' : ''}`}
             key={direct.address}
           >
@@ -1487,10 +1488,10 @@ const DirectList = memo(function DirectList({
                 <CloseIcon />
               </button>
             ) : null}
-          </div>
+          </li>
         );
       })}
-      </div>
+      </ul>
     );
 });
 
@@ -1607,7 +1608,7 @@ function MessageReactionPicker({
 
   return (
     <div className="message__reaction-picker" aria-label={t('label.reactions')}>
-      <div className="message__reaction-quick-row" role="toolbar">
+      <div className="message__reaction-quick-row" role="toolbar" aria-label={t('label.reactions')}>
         {DEFAULT_REACTION_OPTIONS.map((reaction) => {
           const existingReaction = reactions.find((summary) => summary.content === reaction);
           const contentState = !existingReaction?.reactedBySelf;
@@ -1644,7 +1645,7 @@ function MessageReactionPicker({
             allowExpandReactions
             autoFocusSearch={false}
             emojiStyle={EmojiStyle.NATIVE}
-            height={360}
+            height="min(360px, 60dvh)"
             lazyLoadEmojis
             onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
             onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
@@ -2720,7 +2721,7 @@ function GroupMemberList({
   }
 
   return (
-    <div className="member-list">
+    <ul className="member-list">
       {orderedMembers.map((member) => {
         const address = getGroupMemberAddress(member);
         const registeredName = getGroupMemberRegisteredName(member);
@@ -2733,7 +2734,7 @@ function GroupMemberList({
           role === 'owner' ? t('label.group.owner') : role === 'admin' ? t('label.group.admin') : '';
 
         return (
-          <span
+          <li
             className={`member-chip member-chip--${role}`}
             key={address || label}
             title={address}
@@ -2772,10 +2773,10 @@ function GroupMemberList({
                 {role === 'owner' ? <OwnerIcon /> : <AdminIcon />}
               </span>
             ) : null}
-          </span>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
