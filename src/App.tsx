@@ -2496,7 +2496,7 @@ const MessageList = memo(function MessageList({
                   )
                 ) : null}
                 <div className="message__body">
-                  {decoded.body ? renderMessageTextWithAppLinks(decoded.body) : t('message.empty')}
+                  {decoded.body ? renderMessageTextWithAppLinks(decoded.body, t) : t('message.empty')}
                 </div>
                 {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
                 <MessageReactionChips
@@ -2541,7 +2541,7 @@ const MessageList = memo(function MessageList({
                             {formatTimestamp(version.timestamp)}
                           </span>
                           <span className="message__history-body">
-                            {versionBody ? renderMessageTextWithAppLinks(versionBody) : t('message.empty')}
+                            {versionBody ? renderMessageTextWithAppLinks(versionBody, t) : t('message.empty')}
                           </span>
                         </li>
                       );

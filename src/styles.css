@@ -2059,6 +2059,38 @@ button.message__reply-preview:focus-visible,
   border-radius: 2px;
 }
 
+.message__web-link {
+  color: var(--qc-color-link);
+  cursor: copy;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
+.message__web-link:hover,
+.message__web-link:focus-visible {
+  color: var(--qc-color-accent-hover);
+}
+
+.message__web-link:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.message__web-link-copied {
+  margin-left: 0.4em;
+  padding: 0 0.4em;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--qc-color-accent);
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-sm);
+  white-space: nowrap;
+}
+
 .message__code-block {
   margin: 6px 0;
   padding: 8px 10px;

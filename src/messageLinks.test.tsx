@@ -36,6 +36,24 @@ describe('message link helpers', () => {
     ]);
   });
 
+  it('splits http and https web links as copyable parts', () => {
+    expect(getMessageTextParts('See http://example.com and https://qortium.org/docs now')).toEqual([
+      { kind: 'text', text: 'See ' },
+      { kind: 'web-link', text: 'http://example.com', url: 'http://example.com' },
+      { kind: 'text', text: ' and ' },
+      { kind: 'web-link', text: 'https://qortium.org/docs', url: 'https://qortium.org/docs' },
+      { kind: 'text', text: ' now' },
+    ]);
+  });
+
+  it('keeps trailing punctuation outside web links', () => {
+    expect(getMessageTextParts('Visit (https://qortium.org/path).')).toEqual([
+      { kind: 'text', text: 'Visit (' },
+      { kind: 'web-link', text: 'https://qortium.org/path', url: 'https://qortium.org/path' },
+      { kind: 'text', text: ').' },
+    ]);
+  });
+
   it('keeps common trailing punctuation outside app links', () => {
     expect(getMessageTextParts('Look at (home://settings).')).toEqual([
       { kind: 'text', text: 'Look at (' },
