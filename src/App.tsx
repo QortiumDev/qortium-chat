@@ -1,4 +1,14 @@
-import { Fragment, type ReactNode, type SubmitEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  memo,
+  type ReactNode,
+  type SubmitEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
@@ -1231,7 +1241,7 @@ function AccountSummary({
   );
 }
 
-function GroupList({
+const GroupList = memo(function GroupList({
   activityByGroupId,
   groups,
   memberCountsByGroupId,
@@ -1239,6 +1249,7 @@ function GroupList({
   selectedGroupId,
   t,
   unreadGroupIds,
+  now,
 }: {
   activityByGroupId: ReadonlyMap<number, number>;
   groups: GroupData[];
@@ -1247,15 +1258,8 @@ function GroupList({
   selectedGroupId: number | null;
   t: TranslateFunction;
   unreadGroupIds: ReadonlySet<number>;
+  now: number;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30000);
-
-    return () => window.clearInterval(interval);
-  }, []);
-
   if (groups.length === 0) {
     return <p className="empty">{t('hint.noGroups')}</p>;
   }
@@ -1314,11 +1318,11 @@ function GroupList({
           </button>
         );
       })}
-    </div>
-  );
-}
+      </div>
+    );
+});
 
-function DirectList({
+const DirectList = memo(function DirectList({
   activityByAddress,
   canOpen,
   directs: directEntries,
@@ -1328,6 +1332,7 @@ function DirectList({
   selectedAddress,
   t,
   unreadAddresses,
+  now,
 }: {
   activityByAddress: ReadonlyMap<string, number>;
   canOpen: boolean;
@@ -1338,8 +1343,8 @@ function DirectList({
   selectedAddress: string | null;
   t: TranslateFunction;
   unreadAddresses: ReadonlySet<string>;
+  now: number;
 }) {
-  const [now, setNow] = useState(() => Date.now());
   const directs = useMemo(() => {
     return [...directEntries].sort((first, second) => {
       const firstActivity = activityByAddress.get(first.address);
@@ -1360,12 +1365,6 @@ function DirectList({
       return getDirectTitle(first).localeCompare(getDirectTitle(second));
     });
   }, [directEntries, activityByAddress]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30000);
-
-    return () => window.clearInterval(interval);
-  }, []);
 
   if (directs.length === 0) {
     return <p className="empty">{t('hint.noDirectChats')}</p>;
@@ -1422,9 +1421,9 @@ function DirectList({
           </div>
         );
       })}
-    </div>
-  );
-}
+      </div>
+    );
+});
 
 function getMessageSnippet(message: ChatMessage, t: TranslateFunction, maxLength = 140) {
   const body = decodeChatMessage(message, t).body || t('message.empty');
@@ -1820,7 +1819,7 @@ function MessageReactionChips({
   );
 }
 
-function MessageList({
+const MessageList = memo(function MessageList({
   avatarProfiles,
   canCompose,
   canOpenMediaPlayer,
@@ -1844,6 +1843,7 @@ function MessageList({
   t,
   unreadDividerCeiling,
   unreadDividerTimestamp,
+  now,
 }: {
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
@@ -1868,6 +1868,7 @@ function MessageList({
   t: TranslateFunction;
   unreadDividerCeiling: number | null;
   unreadDividerTimestamp: number | null;
+  now: number;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottomRef = useRef(true);
@@ -1893,7 +1894,6 @@ function MessageList({
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
-  const [now, setNow] = useState(() => Date.now());
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
   // Index of the first thread newer than the user's read watermark; the "new
   // messages" divider is drawn just above it. Only shown when at least one read
@@ -2137,10 +2137,7 @@ function MessageList({
   }, [firstMessageKey]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30000);
-
     return () => {
-      window.clearInterval(interval);
       window.clearTimeout(highlightTimeoutRef.current);
       window.clearTimeout(expandedTimeTimeoutRef.current);
     };
@@ -2511,7 +2508,7 @@ function MessageList({
     ) : null}
     </>
   );
-}
+});
 
 function GroupMemberList({
   avatarProfiles,
@@ -2739,6 +2736,15 @@ export default function App() {
   const [accountInfoTarget, setAccountInfoTarget] = useState<AccountInfoTarget | null>(null);
   const [avatarLightboxImage, setAvatarLightboxImage] = useState<AvatarLightboxImage | null>(null);
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const joinedIds = useMemo(
     () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
@@ -5179,6 +5185,7 @@ export default function App() {
                 selectedGroupId={selectedGroupId}
                 t={t}
                 unreadGroupIds={unreadGroupIds}
+                now={now}
               />
             )}
           </section>
@@ -5248,6 +5255,7 @@ export default function App() {
                 selectedAddress={selectedDirectAddress}
                 t={t}
                 unreadAddresses={unreadDirectAddresses}
+                now={now}
               />
             )}
           </section>
@@ -5411,6 +5419,7 @@ export default function App() {
               onScrollPositionChange={(chatKey, scrollTop) => {
                 scrollPositionsRef.current.set(chatKey, scrollTop);
               }}
+              now={now}
               pendingReactionKey={reactionPendingKey}
               scrollChatKey={selectedChatKey}
               selfAddress={account?.address ?? null}
