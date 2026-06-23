@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchQdnImagePreview,
   fetchQdnImagePreviews,
+  getDocumentQdnResources,
   getImageQdnResources,
   getMediaQdnResources,
   getMessageSegments,
   getMessageTextParts,
   openAppLinkInHomeTab,
+  openQdnDocumentViewer,
   openQdnMediaPlayer,
+  saveQdnResource,
 } from './messageLinks';
 import { qdnRequest } from './qdnRequest';
 
@@ -219,6 +222,71 @@ describe('message link helpers', () => {
         service: 'VIDEO',
       },
     ]);
+  });
+
+  it('extracts document qdn resources from message text', () => {
+    expect(
+      getDocumentQdnResources(
+        'Read qdn://DOCUMENT/Alice/whitepaper.pdf, qdn://FILE/Bob/notes, and ignore qdn://IMAGE/Alice/photo.',
+      ),
+    ).toEqual([
+      {
+        identifier: 'whitepaper.pdf',
+        name: 'Alice',
+        path: '',
+        qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
+        service: 'DOCUMENT',
+      },
+      {
+        identifier: 'notes',
+        name: 'Bob',
+        path: '',
+        qdnUrl: 'qdn://FILE/Bob/notes',
+        service: 'FILE',
+      },
+    ]);
+  });
+
+  it('opens documents through the Home document viewer bridge action', async () => {
+    qdnRequestMock.mockResolvedValueOnce(true);
+
+    await expect(
+      openQdnDocumentViewer({
+        identifier: 'whitepaper.pdf',
+        name: 'Alice',
+        path: '',
+        qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
+        service: 'DOCUMENT',
+      }),
+    ).resolves.toBe(true);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'OPEN_QDN_DOCUMENT_VIEWER',
+      service: 'DOCUMENT',
+      name: 'Alice',
+      identifier: 'whitepaper.pdf',
+      path: '',
+    });
+  });
+
+  it('saves a resource through the Home save bridge action', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ canceled: false });
+
+    await expect(
+      saveQdnResource({
+        identifier: 'whitepaper.pdf',
+        name: 'Alice',
+        path: '',
+        qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
+        service: 'DOCUMENT',
+      }),
+    ).resolves.toEqual({ canceled: false });
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'SAVE_QDN_RESOURCE',
+      service: 'DOCUMENT',
+      name: 'Alice',
+      identifier: 'whitepaper.pdf',
+      path: '',
+    });
   });
 
   it('opens media resources through the Home media player bridge action', async () => {

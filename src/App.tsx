@@ -71,10 +71,14 @@ import {
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import {
   fetchQdnImagePreviews,
+  getDocumentQdnResources,
   getImageQdnResources,
   getMediaQdnResources,
+  openQdnDocumentViewer,
   openQdnMediaPlayer,
   renderMessageTextWithAppLinks,
+  saveQdnResource,
+  type QdnDocumentResource,
   type QdnImagePreview,
   type QdnImageResource,
   type QdnMediaResource,
@@ -1887,7 +1891,9 @@ function MessageReactionChips({
 const MessageList = memo(function MessageList({
   avatarProfiles,
   canCompose,
+  canOpenDocumentViewer,
   canOpenMediaPlayer,
+  canSaveQdnResource,
   initialScrollTop,
   messages,
   olderMessagesError,
@@ -1912,7 +1918,9 @@ const MessageList = memo(function MessageList({
 }: {
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
+  canOpenDocumentViewer: boolean;
   canOpenMediaPlayer: boolean;
+  canSaveQdnResource: boolean;
   initialScrollTop: number | undefined;
   messages: ChatMessage[];
   olderMessagesError: string;
@@ -2342,6 +2350,18 @@ const MessageList = memo(function MessageList({
     });
   }
 
+  function openDocument(resource: QdnDocumentResource) {
+    void openQdnDocumentViewer(resource).catch((error) => {
+      console.warn('Unable to open QDN document viewer.', error);
+    });
+  }
+
+  function saveResource(resource: QdnDocumentResource) {
+    void saveQdnResource(resource).catch((error) => {
+      console.warn('Unable to save QDN resource.', error);
+    });
+  }
+
   if (messages.length === 0 && systemMessages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
@@ -2409,8 +2429,12 @@ const MessageList = memo(function MessageList({
             const isTimeExpanded = expandedTimeKey === threadKey;
             const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
             const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
+            const documentResources = decoded.kind === 'text' ? getDocumentQdnResources(decoded.body) : [];
             const hasImagePreviews = imageResources.length > 0;
             const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
+            const hasDocumentResources = documentResources.length > 0;
+            const hasDocumentViewerActions = canOpenDocumentViewer && hasDocumentResources;
+            const hasDocumentSaveActions = canSaveQdnResource && hasDocumentResources;
             const areImagePreviewsOpen = openImagePreviews.has(threadKey);
             const canReplyOrEdit = canCompose && !!original.signature;
             const canReact = canReplyOrEdit;
@@ -2418,7 +2442,12 @@ const MessageList = memo(function MessageList({
             const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
             const senderProfile = avatarProfiles.get(original.sender);
             const actionButtons =
-              canReplyOrEdit || canReact || hasImagePreviews || hasMediaActions ? (
+              canReplyOrEdit ||
+              canReact ||
+              hasImagePreviews ||
+              hasMediaActions ||
+              hasDocumentViewerActions ||
+              hasDocumentSaveActions ? (
                 <div className="message__actions">
                   {hasImagePreviews ? (
                     <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
@@ -2435,6 +2464,30 @@ const MessageList = memo(function MessageList({
                           type="button"
                         >
                           {t('button.playMedia')}
+                        </button>
+                      ))
+                    : null}
+                  {hasDocumentViewerActions
+                    ? documentResources.map((resource, resourceIndex) => (
+                        <button
+                          key={`view-${resource.qdnUrl}-${resourceIndex}`}
+                          onClick={() => openDocument(resource)}
+                          title={resource.qdnUrl}
+                          type="button"
+                        >
+                          {t('button.open')}
+                        </button>
+                      ))
+                    : null}
+                  {hasDocumentSaveActions
+                    ? documentResources.map((resource, resourceIndex) => (
+                        <button
+                          key={`save-${resource.qdnUrl}-${resourceIndex}`}
+                          onClick={() => saveResource(resource)}
+                          title={resource.qdnUrl}
+                          type="button"
+                        >
+                          {t('button.save')}
                         </button>
                       ))
                     : null}
@@ -3195,6 +3248,8 @@ export default function App() {
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canOpenMediaPlayer = hasAction(actions, 'OPEN_QDN_MEDIA_PLAYER');
+  const canOpenDocumentViewer = hasAction(actions, 'OPEN_QDN_DOCUMENT_VIEWER');
+  const canSaveQdnResource = hasAction(actions, 'SAVE_QDN_RESOURCE');
   const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
   const canSendDirectChat = canSendGroupChat;
   const isAccountUnlocked = account?.isUnlocked === true;
@@ -5588,7 +5643,9 @@ export default function App() {
             <MessageList
               avatarProfiles={avatarProfiles}
               canCompose={canComposeMessage}
+              canOpenDocumentViewer={canOpenDocumentViewer}
               canOpenMediaPlayer={canOpenMediaPlayer}
+              canSaveQdnResource={canSaveQdnResource}
               initialScrollTop={scrollPositionsRef.current.get(selectedChatKey)}
               messages={combinedMessages}
               olderMessagesError={olderMessagesState.error}

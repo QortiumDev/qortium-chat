@@ -88,6 +88,7 @@ export const STRINGS = {
   'member.label': '멤버',
   'button.search': '검색',
   'button.open': '열기',
+  'button.save': '저장',
   'button.join': '가입',
   'button.joining': '가입 중',
   'button.join.pending': '가입 대기',

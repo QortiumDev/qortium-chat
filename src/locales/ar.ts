@@ -88,6 +88,7 @@ export const STRINGS = {
   'member.label': 'عضو',
   'button.search': 'بحث',
   'button.open': 'فتح',
+  'button.save': 'حفظ',
   'button.join': 'انضمام',
   'button.joining': 'جاري الانضمام',
   'button.join.pending': 'الانضمام معلق',

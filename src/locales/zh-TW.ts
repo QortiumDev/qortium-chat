@@ -88,6 +88,7 @@ export const STRINGS = {
   'member.label': '成員',
   'button.search': '搜尋',
   'button.open': '開啟',
+  'button.save': '儲存',
   'button.join': '加入',
   'button.joining': '加入中',
   'button.join.pending': '加入待處理',

@@ -88,6 +88,7 @@ export const STRINGS = {
   'member.label': 'Tag',
   'button.search': 'Keresés',
   'button.open': 'Megnyitás',
+  'button.save': 'Mentés',
   'button.join': 'Csatlakozás',
   'button.joining': 'Csatlakozás',
   'button.join.pending': 'Csatlakozás függőben',

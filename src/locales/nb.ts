@@ -92,6 +92,7 @@ export const STRINGS = {
   'member.label': 'Medlem',
   'button.search': 'Søk',
   'button.open': 'Åpne',
+  'button.save': 'Lagre',
   'button.join': 'Bli med',
   'button.joining': 'Bli med',
   'button.join.pending': 'Bli med — venter',

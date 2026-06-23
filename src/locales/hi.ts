@@ -92,6 +92,7 @@ export const STRINGS = {
   'member.label': 'सदस्य',
   'button.search': 'खोजें',
   'button.open': 'खोलें',
+  'button.save': 'सहेजें',
   'button.join': 'शामिल हों',
   'button.joining': 'शामिल हो रहे हैं',
   'button.join.pending': 'शामिल होना लंबित',

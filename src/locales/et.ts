@@ -88,6 +88,7 @@ export const STRINGS = {
   'member.label': 'Liige',
   'button.search': 'Otsi',
   'button.open': 'Ava',
+  'button.save': 'Salvesta',
   'button.join': 'Liitu',
   'button.joining': 'Liitumine',
   'button.join.pending': 'Liitumine ootel',

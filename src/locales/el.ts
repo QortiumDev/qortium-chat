@@ -92,6 +92,7 @@ export const STRINGS = {
   'member.label': 'Μέλος',
   'button.search': 'Αναζήτηση',
   'button.open': 'Άνοιγμα',
+  'button.save': 'Αποθήκευση',
   'button.join': 'Συμμετοχή',
   'button.joining': 'Γίνεται συμμετοχή',
   'button.join.pending': 'Αναμονή συμμετοχής',

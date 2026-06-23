@@ -88,6 +88,7 @@ export const STRINGS = {
   'member.label': 'חבר',
   'button.search': 'חיפוש',
   'button.open': 'פתח',
+  'button.save': 'שמירה',
   'button.join': 'הצטרף',
   'button.joining': 'מצטרף',
   'button.join.pending': 'הצטרפות ממתינה',

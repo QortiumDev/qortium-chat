@@ -92,6 +92,7 @@ export const EN_STRINGS = {
   'member.label': 'Member',
   'button.search': 'Search',
   'button.open': 'Open',
+  'button.save': 'Save',
   'button.join': 'Join',
   'button.joining': 'Joining',
   'button.join.pending': 'Join pending',

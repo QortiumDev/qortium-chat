@@ -88,6 +88,7 @@ export const STRINGS = {
   'member.label': 'Membro',
   'button.search': 'Buscar',
   'button.open': 'Abrir',
+  'button.save': 'Salvar',
   'button.join': 'Entrar',
   'button.joining': 'Entrando',
   'button.join.pending': 'Entrada pendente',

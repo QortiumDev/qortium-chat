@@ -17,6 +17,8 @@ const CLOSING_PAIRS: Record<string, string> = {
 };
 const IMAGE_QDN_SERVICES = new Set<QdnImageService>(['GIF_REPOSITORY', 'IMAGE', 'THUMBNAIL', 'QCHAT_IMAGE']);
 const MEDIA_QDN_SERVICES = new Set<QdnMediaService>(['AUDIO', 'PODCAST', 'VIDEO', 'VOICE']);
+// Mirrors Home's QDN_DOCUMENT_VIEWER_SERVICES (PDF/EPUB/markdown/etc. ride these).
+const DOCUMENT_QDN_SERVICES = new Set<QdnDocumentService>(['ATTACHMENT', 'DOCUMENT', 'FILE', 'FILES']);
 
 export type MessageTextPart =
   | {
@@ -36,6 +38,7 @@ export type MessageTextPart =
 
 type QdnImageService = 'GIF_REPOSITORY' | 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
 type QdnMediaService = 'AUDIO' | 'PODCAST' | 'VIDEO' | 'VOICE';
+type QdnDocumentService = 'ATTACHMENT' | 'DOCUMENT' | 'FILE' | 'FILES';
 
 type QdnResourceBase<Service extends string> = {
   identifier?: string;
@@ -47,6 +50,7 @@ type QdnResourceBase<Service extends string> = {
 
 export type QdnImageResource = QdnResourceBase<QdnImageService>;
 export type QdnMediaResource = QdnResourceBase<QdnMediaService>;
+export type QdnDocumentResource = QdnResourceBase<QdnDocumentService>;
 
 type QdnResourceProperties = {
   filename?: string;
@@ -115,6 +119,10 @@ function isMediaQdnService(service: string): service is QdnMediaService {
   return MEDIA_QDN_SERVICES.has(service as QdnMediaService);
 }
 
+function isDocumentQdnService(service: string): service is QdnDocumentService {
+  return DOCUMENT_QDN_SERVICES.has(service as QdnDocumentService);
+}
+
 function parseQdnResource(qdnUrl: string): QdnResourceBase<string> | null {
   if (!/^qdn:\/\//i.test(qdnUrl)) {
     return null;
@@ -176,6 +184,19 @@ function parseQdnMediaResource(qdnUrl: string): QdnMediaResource | null {
   const resource = parseQdnResource(qdnUrl);
 
   if (!resource || !isMediaQdnService(resource.service)) {
+    return null;
+  }
+
+  return {
+    ...resource,
+    service: resource.service,
+  };
+}
+
+function parseQdnDocumentResource(qdnUrl: string): QdnDocumentResource | null {
+  const resource = parseQdnResource(qdnUrl);
+
+  if (!resource || !isDocumentQdnService(resource.service)) {
     return null;
   }
 
@@ -365,6 +386,10 @@ export function getMediaQdnResources(text: string): QdnMediaResource[] {
   return getQdnResources(text, parseQdnMediaResource);
 }
 
+export function getDocumentQdnResources(text: string): QdnDocumentResource[] {
+  return getQdnResources(text, parseQdnDocumentResource);
+}
+
 export async function openAppLinkInHomeTab(address: string) {
   return qdnRequest<boolean>({ action: 'OPEN_NEW_TAB', address });
 }
@@ -376,7 +401,23 @@ export async function openQdnMediaPlayer(resource: QdnMediaResource) {
   });
 }
 
-function getResourceRequest(resource: QdnImageResource | QdnMediaResource) {
+export async function openQdnDocumentViewer(resource: QdnDocumentResource) {
+  return qdnRequest<boolean>({
+    action: 'OPEN_QDN_DOCUMENT_VIEWER',
+    ...getResourceRequest(resource),
+  });
+}
+
+// Home fetches the raw bytes and shows a save dialog (desktop) or download path
+// (mobile/web), returning { canceled } once the user decides.
+export async function saveQdnResource(resource: QdnImageResource | QdnMediaResource | QdnDocumentResource) {
+  return qdnRequest<{ canceled?: boolean }>({
+    action: 'SAVE_QDN_RESOURCE',
+    ...getResourceRequest(resource),
+  });
+}
+
+function getResourceRequest(resource: QdnImageResource | QdnMediaResource | QdnDocumentResource) {
   return {
     service: resource.service,
     name: resource.name,
