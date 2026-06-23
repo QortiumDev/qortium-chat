@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'A közvetlen beszélgetésekben vannak olvasatlan üzenetek',
   'button.mention': 'Említés',
   'action.mention': 'Említsd meg a(z) {account} felhasználót az üzenetedben',
+  'aria.jumpToUnread': 'Ugrás az új üzenetekhez',
+  'label.newMessagesCount': '{count} új',
+  'hint.olderMessagesExpired': 'A régebbi üzenetek lejárhattak, és csomópontonként eltérhetnek.',
 } as const;

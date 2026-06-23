@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Czaty bezpośrednie mają nieprzeczytane wiadomości',
   'button.mention': 'Wspomnienie',
   'action.mention': 'Wspomnij {account} w wiadomości',
+  'aria.jumpToUnread': 'Przejdź do nowych wiadomości',
+  'label.newMessagesCount': '{count} nowych',
+  'hint.olderMessagesExpired': 'Starsze wiadomości mogły wygasnąć i mogą się różnić w zależności od węzła.',
 } as const;

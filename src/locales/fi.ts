@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Yksityisissä chatteissa on lukemattomia viestejä',
   'button.mention': 'Mainitse',
   'action.mention': 'Mainitse käyttäjä {account} viestissäsi',
+  'aria.jumpToUnread': 'Siirry uusiin viesteihin',
+  'label.newMessagesCount': '{count} uutta',
+  'hint.olderMessagesExpired': 'Vanhemmat viestit ovat voineet vanhentua ja voivat vaihdella solmukohtaisesti.',
 } as const;

@@ -277,4 +277,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'प्रत्यक्ष चैट में अपठित संदेश हैं',
   'button.mention': 'उल्लेख करें',
   'action.mention': 'संदेश में {account} का उल्लेख करें',
+  'aria.jumpToUnread': 'नए संदेशों पर जाएँ',
+  'label.newMessagesCount': '{count} नए',
+  'hint.olderMessagesExpired': 'पुराने संदेश समाप्त हो सकते हैं और नोड के अनुसार भिन्न हो सकते हैं।',
 } as const;

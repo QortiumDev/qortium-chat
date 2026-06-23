@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'לשיחות ישירות יש הודעות שלא נקראו',
   'button.mention': 'אזכור',
   'action.mention': 'ציין את {account} בהודעה שלך',
+  'aria.jumpToUnread': 'מעבר להודעות חדשות',
+  'label.newMessagesCount': '{count} חדשות',
+  'hint.olderMessagesExpired': 'ייתכן שהודעות ישנות יותר פג תוקפן והן עשויות להשתנות לפי הצומת.',
 } as const;

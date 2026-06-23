@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'ダイレクトチャットに未読メッセージがあります',
   'button.mention': 'メンション',
   'action.mention': 'メッセージで {account} をメンション',
+  'aria.jumpToUnread': '新着メッセージへ移動',
+  'label.newMessagesCount': '新着 {count} 件',
+  'hint.olderMessagesExpired': '古いメッセージは期限切れになっている場合があり、ノードによって異なります。',
 } as const;

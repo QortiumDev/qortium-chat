@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': '私聊有未读消息。',
   'button.mention': '提及',
   'action.mention': '在消息中提及 {account}',
+  'aria.jumpToUnread': '跳转到新消息',
+  'label.newMessagesCount': '{count} 条新消息',
+  'hint.olderMessagesExpired': '较早的消息可能已过期，并因节点而异。',
 } as const;

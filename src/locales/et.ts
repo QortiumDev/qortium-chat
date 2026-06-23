@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Otsevestlustel on lugemata sõnumeid',
   'button.mention': 'Maini',
   'action.mention': 'Maini kasutajat {account} oma sõnumis',
+  'aria.jumpToUnread': 'Hüppa uutele sõnumitele',
+  'label.newMessagesCount': '{count} uut',
+  'hint.olderMessagesExpired': 'Vanemad sõnumid võivad olla aegunud ja võivad sõlmiti erineda.',
 } as const;

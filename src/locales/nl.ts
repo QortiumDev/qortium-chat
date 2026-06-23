@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Er zijn ongelezen berichten in directe chats',
   'button.mention': 'Vermeldingen',
   'action.mention': 'Vermeld {account} in je bericht',
+  'aria.jumpToUnread': 'Ga naar nieuwe berichten',
+  'label.newMessagesCount': '{count} nieuw',
+  'hint.olderMessagesExpired': 'Oudere berichten zijn mogelijk verlopen en kunnen per node verschillen.',
 } as const;

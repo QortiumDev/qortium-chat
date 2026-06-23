@@ -341,6 +341,14 @@ function DownIcon() {
   );
 }
 
+function UpIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="m6 15 6-6 6 6" />
+    </svg>
+  );
+}
+
 function CloseIcon() {
   return (
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
@@ -1921,6 +1929,9 @@ const MessageList = memo(function MessageList({
   // the same message instead of jumping when scrollHeight grows.
   const olderScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
+  // The "new messages" divider element, so the jump-to-unread control can scroll
+  // it into view and so its viewport position drives whether that control shows.
+  const dividerRef = useRef<HTMLLIElement>(null);
   const highlightTimeoutRef = useRef(0);
   const expandedTimeTimeoutRef = useRef(0);
   const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
@@ -1931,6 +1942,9 @@ const MessageList = memo(function MessageList({
   // floating reaction popover, so it can be anchored above that element.
   const [reactionAnchorRect, setReactionAnchorRect] = useState<DOMRect | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  // Shown while the unread divider is scrolled above the viewport, offering a
+  // jump up to where reading left off (the chat opens pinned to the bottom).
+  const [unreadJumpVisible, setUnreadJumpVisible] = useState(false);
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
@@ -1961,6 +1975,23 @@ const MessageList = memo(function MessageList({
     // there is no read context to separate, so suppress it.
     return index === 0 && !olderMessagesReachedStart ? 0 : -1;
   }, [threads, unreadDividerTimestamp, unreadDividerCeiling, olderMessagesReachedStart]);
+  // Count of messages in the unread-on-open backlog (the contiguous run from the
+  // divider up to the open moment), shown on the jump-to-unread control.
+  const unreadCount = useMemo(() => {
+    if (unreadDividerIndex < 0 || unreadDividerCeiling === null) {
+      return 0;
+    }
+
+    let count = 0;
+
+    for (let index = unreadDividerIndex; index < threads.length; index += 1) {
+      if (threads[index].original.timestamp <= unreadDividerCeiling) {
+        count += 1;
+      }
+    }
+
+    return count;
+  }, [threads, unreadDividerIndex, unreadDividerCeiling]);
   const reactionsBySignature = useMemo(
     () => buildMessageReactionIndex(messages, selfAddress),
     [messages, selfAddress],
@@ -2048,6 +2079,36 @@ const MessageList = memo(function MessageList({
 
     stickToBottomRef.current = isAtBottom;
     setShowScrollToBottom(!isAtBottom);
+
+    const dividerEl = dividerRef.current;
+
+    if (dividerEl) {
+      // Offer the jump only while the divider is scrolled above the visible area;
+      // once the user reaches it (or scrolls past it) the prompt is dismissed.
+      const listRect = list.getBoundingClientRect();
+      const dividerRect = dividerEl.getBoundingClientRect();
+
+      setUnreadJumpVisible(dividerRect.bottom < listRect.top + 8);
+    } else {
+      setUnreadJumpVisible(false);
+    }
+  }
+
+  // Bring the unread divider just below the top edge so the last read message
+  // above it gives context for where new messages begin.
+  function scrollToUnread() {
+    const dividerEl = dividerRef.current;
+    const list = listRef.current;
+
+    if (!dividerEl || !list) {
+      return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const dividerRect = dividerEl.getBoundingClientRect();
+
+    list.scrollTop += dividerRect.top - listRect.top - 12;
+    updateBottomState(list);
   }
 
   // Pin the feed to the bottom now, then again after the next frame so a layout
@@ -2310,6 +2371,11 @@ const MessageList = memo(function MessageList({
               )}
             </li>
           ) : null}
+          {olderMessagesReachedStart && !olderMessagesLoading && !olderMessagesError && messages.length > 0 ? (
+            <li className="message-list__history-note">
+              <span className="muted">{t('hint.olderMessagesExpired')}</span>
+            </li>
+          ) : null}
           {threads.map((thread, index) => {
             const { latest, original, revisions } = thread;
             const decoded = decodeChatMessage(latest, t);
@@ -2380,7 +2446,7 @@ const MessageList = memo(function MessageList({
             return (
               <Fragment key={threadKey}>
                 {unreadDividerIndex === index ? (
-                  <li className="message-list__unread-divider" role="separator">
+                  <li className="message-list__unread-divider" ref={dividerRef} role="separator">
                     <span>{t('label.newMessages')}</span>
                   </li>
                 ) : null}
@@ -2500,6 +2566,17 @@ const MessageList = memo(function MessageList({
             </li>
           ))}
         </ol>
+        {unreadJumpVisible && unreadCount > 0 ? (
+          <button
+            aria-label={t('aria.jumpToUnread')}
+            className="message-feed__jump-unread"
+            onClick={scrollToUnread}
+            type="button"
+          >
+            <UpIcon />
+            <span>{t('label.newMessagesCount', { count: unreadCount })}</span>
+          </button>
+        ) : null}
         {showScrollToBottom ? (
           <button aria-label={t('aria.scrollToBottom')} className="message-feed__scroll-bottom" onClick={scrollToBottom} type="button">
             <DownIcon />

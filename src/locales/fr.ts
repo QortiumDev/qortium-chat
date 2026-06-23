@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Les chats directs ont des messages non lus',
   'button.mention': 'Mention',
   'action.mention': 'Mentionner {account} dans votre message',
+  'aria.jumpToUnread': 'Aller aux nouveaux messages',
+  'label.newMessagesCount': '{count} nouveaux',
+  'hint.olderMessagesExpired': 'Les messages plus anciens ont pu expirer et peuvent varier selon le nœud.',
 } as const;

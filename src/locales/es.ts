@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Los chats directos tienen mensajes sin leer',
   'button.mention': 'Mencionar',
   'action.mention': 'Menciona a {account} en tu mensaje',
+  'aria.jumpToUnread': 'Ir a los mensajes nuevos',
+  'label.newMessagesCount': '{count} nuevos',
+  'hint.olderMessagesExpired': 'Los mensajes más antiguos pueden haber caducado y varían según el nodo.',
 } as const;

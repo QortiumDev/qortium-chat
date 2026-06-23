@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Conversele directe au mesaje necitite',
   'button.mention': 'Menționează',
   'action.mention': 'Menționează pe {account} în mesaj',
+  'aria.jumpToUnread': 'Salt la mesajele noi',
+  'label.newMessagesCount': '{count} noi',
+  'hint.olderMessagesExpired': 'Mesajele mai vechi pot fi expirat și pot varia în funcție de nod.',
 } as const;

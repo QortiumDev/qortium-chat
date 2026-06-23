@@ -1445,6 +1445,53 @@ button.member-chip__name-button:focus-visible {
   transform: translateY(0);
 }
 
+/* Jump-to-unread pill; sits above the scroll-to-bottom button, same corner. */
+.message-feed__jump-unread {
+  position: absolute;
+  right: 16px;
+  bottom: 66px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px 0 10px;
+  color: var(--qc-color-accent-text);
+  font-size: var(--qc-text-tiny);
+  font-weight: 600;
+  background: var(--qc-gradient-primary);
+  border: 1px solid var(--qc-color-accent);
+  border-radius: var(--qc-radius-pill);
+  box-shadow: var(--qc-shadow-primary-button);
+  cursor: pointer;
+  transition: var(--qc-transition-control);
+}
+
+.message-feed__jump-unread svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.message-feed__jump-unread:hover,
+.message-feed__jump-unread:focus-visible {
+  background: var(--qc-gradient-primary-hover);
+  border-color: var(--qc-color-accent-hover);
+  outline: none;
+  box-shadow: var(--qc-shadow-primary-button-hover), 0 0 0 3px var(--qc-color-accent-ring);
+  transform: translateY(-1px);
+}
+
+.message-feed__jump-unread:active {
+  background: var(--qc-gradient-primary-active);
+  box-shadow: var(--qc-shadow-primary-button-active);
+  transform: translateY(0);
+}
+
 .message-list__history-control {
   display: flex;
   flex-wrap: wrap;
@@ -1453,6 +1500,14 @@ button.member-chip__name-button:focus-visible {
   gap: 8px;
   padding: 2px 0 6px;
   text-align: center;
+}
+
+/* Note shown once the earliest available history is loaded; older messages may
+   have aged out under the node's chat retention window. */
+.message-list__history-note {
+  padding: 2px 12px 8px;
+  text-align: center;
+  font-size: var(--qc-text-tiny);
 }
 
 /* "New messages" boundary drawn above the first unread message in the feed. */

@@ -277,4 +277,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Οι άμεσες συνομιλίες έχουν μη αναγνωσμένα μηνύματα',
   'button.mention': 'Αναφορά',
   'action.mention': 'Αναφέρετε τον/την {account} στο μήνυμά σας',
+  'aria.jumpToUnread': 'Μετάβαση στα νέα μηνύματα',
+  'label.newMessagesCount': '{count} νέα',
+  'hint.olderMessagesExpired': 'Τα παλαιότερα μηνύματα ίσως έχουν λήξει και ενδέχεται να διαφέρουν ανά κόμβο.',
 } as const;

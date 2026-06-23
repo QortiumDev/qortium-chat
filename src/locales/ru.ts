@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'В личных чатах есть непрочитанные сообщения',
   'button.mention': 'Упоминание',
   'action.mention': 'Упомяните {account} в сообщении',
+  'aria.jumpToUnread': 'Перейти к новым сообщениям',
+  'label.newMessagesCount': '{count} новых',
+  'hint.olderMessagesExpired': 'Старые сообщения могли устареть и могут различаться в зависимости от узла.',
 } as const;

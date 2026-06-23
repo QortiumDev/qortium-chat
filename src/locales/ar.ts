@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'الدردشات المباشرة بها رسائل غير مقروءة',
   'button.mention': 'ذكر',
   'action.mention': 'اذكر {account} في رسالتك',
+  'aria.jumpToUnread': 'الانتقال إلى الرسائل الجديدة',
+  'label.newMessagesCount': '{count} جديدة',
+  'hint.olderMessagesExpired': 'قد تكون الرسائل الأقدم قد انتهت صلاحيتها وتختلف حسب العقدة.',
 } as const;

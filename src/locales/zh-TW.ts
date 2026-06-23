@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': '直接聊天有未讀訊息。',
   'button.mention': '提及',
   'action.mention': '在訊息中提及 {account}',
+  'aria.jumpToUnread': '跳到新訊息',
+  'label.newMessagesCount': '{count} 則新訊息',
+  'hint.olderMessagesExpired': '較早的訊息可能已過期，並因節點而異。',
 } as const;

@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Direktchats haben ungelesene Nachrichten',
   'button.mention': 'Erwähnen',
   'action.mention': 'Erwähne {account} in deiner Nachricht',
+  'aria.jumpToUnread': 'Zu neuen Nachrichten springen',
+  'label.newMessagesCount': '{count} neue',
+  'hint.olderMessagesExpired': 'Ältere Nachrichten sind möglicherweise abgelaufen und können je nach Knoten variieren.',
 } as const;

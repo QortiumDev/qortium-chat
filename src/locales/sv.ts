@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Direktchattar har olästa meddelanden',
   'button.mention': 'Nämn',
   'action.mention': 'Nämn {account} i ditt meddelande',
+  'aria.jumpToUnread': 'Gå till nya meddelanden',
+  'label.newMessagesCount': '{count} nya',
+  'hint.olderMessagesExpired': 'Äldre meddelanden kan ha upphört att gälla och kan variera per nod.',
 } as const;

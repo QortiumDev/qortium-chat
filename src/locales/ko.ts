@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': '다이렉트 채팅에 읽지 않은 메시지가 있습니다',
   'button.mention': '멘션',
   'action.mention': '메시지에 {account} 멘션',
+  'aria.jumpToUnread': '새 메시지로 이동',
+  'label.newMessagesCount': '새 메시지 {count}개',
+  'hint.olderMessagesExpired': '오래된 메시지는 만료되었을 수 있으며 노드에 따라 다를 수 있습니다.',
 } as const;

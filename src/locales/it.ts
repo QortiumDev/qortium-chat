@@ -279,4 +279,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Le chat dirette hanno messaggi non letti',
   'button.mention': 'Menziona',
   'action.mention': 'Menziona {account} nel tuo messaggio',
+  'aria.jumpToUnread': 'Vai ai nuovi messaggi',
+  'label.newMessagesCount': '{count} nuovi',
+  'hint.olderMessagesExpired': 'I messaggi meno recenti potrebbero essere scaduti e variano a seconda del nodo.',
 } as const;

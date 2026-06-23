@@ -277,4 +277,7 @@ export const STRINGS = {
   'aria.unreadDirect': 'Direkte chatter har uleste meldinger',
   'button.mention': 'Nevn',
   'action.mention': 'Nevn {account} i meldingen din',
+  'aria.jumpToUnread': 'Gå til nye meldinger',
+  'label.newMessagesCount': '{count} nye',
+  'hint.olderMessagesExpired': 'Eldre meldinger kan ha utløpt og kan variere fra node til node.',
 } as const;

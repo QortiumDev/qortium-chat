@@ -281,4 +281,7 @@ export const EN_STRINGS = {
   'aria.unreadDirect': 'Direct chats have unread messages',
   'button.mention': 'Mention',
   'action.mention': 'Mention {account} in your message',
+  'aria.jumpToUnread': 'Jump to new messages',
+  'label.newMessagesCount': '{count} new',
+  'hint.olderMessagesExpired': 'Older messages may have expired and can vary by node.',
 } as const;
