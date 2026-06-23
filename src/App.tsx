@@ -587,6 +587,71 @@ function MessageIdentity({
   );
 }
 
+const DIALOG_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function getDialogFocusable(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE_SELECTOR)).filter(
+    (element) => element.offsetParent !== null || element === document.activeElement,
+  );
+}
+
+// Shared modal behavior for the overlay dialogs: move focus inside on open, keep
+// Tab cycling within the dialog, close on Escape, and restore focus to the
+// previously focused element on dismissal. Mirrors the members-drawer pattern so
+// the dialogs honor the aria-modal they already declare.
+function useModalDialog<T extends HTMLElement = HTMLElement>(onClose: () => void) {
+  const containerRef = useRef<T>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const container = containerRef.current;
+    const initialFocusables = container ? getDialogFocusable(container) : [];
+
+    (initialFocusables[0] ?? container)?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+
+      if (event.key !== 'Tab' || !container) {
+        return;
+      }
+
+      const items = getDialogFocusable(container);
+
+      if (items.length === 0) {
+        event.preventDefault();
+        container.focus();
+        return;
+      }
+
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+
+      if (event.shiftKey && (active === first || !container.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !container.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [onClose]);
+
+  return containerRef;
+}
+
 function AccountInfoDialog({
   canMention,
   canOpenDirect,
@@ -614,21 +679,11 @@ function AccountInfoDialog({
   const { avatarSrc, name } = getAvatarView(profile, target.senderName);
   const label = getMessageSenderLabel(target, profile);
 
+  const cardRef = useModalDialog<HTMLElement>(onClose);
+
   useEffect(() => {
     setCopyStatus('idle');
   }, [target.sender]);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
 
   async function copyAddress() {
     if (await copyTextToClipboard(target.sender)) {
@@ -647,7 +702,7 @@ function AccountInfoDialog({
       onClick={onClose}
       role="dialog"
     >
-      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()}>
+      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()} ref={cardRef} tabIndex={-1}>
         <header className="account-dialog__header">
           <UserAvatar
             className="account-dialog__avatar"
@@ -791,17 +846,7 @@ function GroupApprovalDialog({
   voteUnavailableLabel: string;
   votedSignatures: Record<string, { approval: boolean }>;
 }) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  const cardRef = useModalDialog<HTMLElement>(onClose);
 
   const [copiedSignature, setCopiedSignature] = useState<string | null>(null);
 
@@ -824,6 +869,8 @@ function GroupApprovalDialog({
       <section
         className="account-dialog__card account-dialog__card--approval"
         onClick={(event) => event.stopPropagation()}
+        ref={cardRef}
+        tabIndex={-1}
       >
         <header className="account-dialog__header">
           <div className="account-dialog__heading">
@@ -1032,17 +1079,7 @@ function AvatarLightbox({
   onClose: () => void;
   t: TranslateFunction;
 }) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  const containerRef = useModalDialog<HTMLDivElement>(onClose);
 
   return (
     <div
@@ -1050,7 +1087,9 @@ function AvatarLightbox({
       aria-modal="true"
       className="avatar-lightbox"
       onClick={onClose}
+      ref={containerRef}
       role="dialog"
+      tabIndex={-1}
     >
       <button
         aria-label={t('button.close')}
