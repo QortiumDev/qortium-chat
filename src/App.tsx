@@ -391,8 +391,24 @@ function mergeMessages(
     messages.set(getMessageKey(message, index), message);
   }
 
+  let addedMessage = false;
+
   for (const [index, message] of nextMessages.entries()) {
-    messages.set(getMessageKey(message, index), message);
+    const key = getMessageKey(message, index);
+
+    if (!messages.has(key)) {
+      addedMessage = true;
+    }
+
+    messages.set(key, message);
+  }
+
+  // The group websocket resends its whole window on every frame; when none of
+  // those messages are new, keep the same array reference so React bails out of
+  // the re-render instead of rebuilding and re-sorting an identical list. The
+  // existing tail is already sorted and capped, so it stays a valid result.
+  if (!addedMessage) {
+    return currentMessages;
   }
 
   const merged = sortMessagesByTimestamp([...messages.values()]);

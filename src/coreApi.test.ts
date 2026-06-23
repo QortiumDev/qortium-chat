@@ -30,6 +30,7 @@ import {
   getGroupMessages,
   getMemberGroups,
   getMissingPrivateGroupKeyRequests,
+  getGroupApprovalVotes,
   getMintingStatus,
   getNameOwnerAddress,
   getTransactionStatus,
@@ -110,6 +111,28 @@ describe('Core API path builders', () => {
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,
       path: '/transactions/pending?txGroupId=1&limit=100&reverse=false',
+    });
+  });
+
+  it('pages confirmed approval votes until a short page is returned', async () => {
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({ signature: `vote-${index}` }));
+    const tailPage = [{ signature: 'vote-100' }];
+
+    qdnRequestMock
+      .mockResolvedValueOnce({ data: fullPage, ok: true, status: 200, statusText: 'OK' })
+      .mockResolvedValueOnce({ data: tailPage, ok: true, status: 200, statusText: 'OK' });
+
+    await expect(getGroupApprovalVotes()).resolves.toHaveLength(101);
+    expect(qdnRequestMock).toHaveBeenCalledTimes(2);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/transactions/search?txType=GROUP_APPROVAL&confirmationStatus=CONFIRMED&limit=100&reverse=true',
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/transactions/search?txType=GROUP_APPROVAL&confirmationStatus=CONFIRMED&limit=100&reverse=true&offset=100',
     });
   });
 
