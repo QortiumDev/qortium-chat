@@ -2373,6 +2373,20 @@ button.message__reply-preview:focus-visible {
   line-height: var(--qc-line-small);
 }
 
+/* Visually hidden but available to assistive technology (e.g. live regions). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .empty {
   display: grid;
   gap: 8px;

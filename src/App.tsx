@@ -2572,6 +2572,12 @@ export default function App() {
   const restoredForAccountRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
   const [messagesChatKey, setMessagesChatKey] = useState('');
+  // Screen-reader announcement for newly-arrived chat messages. The visible feed
+  // is not a live region (announcing the whole transcript on load/switch would be
+  // unusable), so a dedicated polite live region mirrors only genuinely new
+  // incoming messages. See the announce effect below.
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
+  const lastAnnouncedRef = useRef<{ chatKey: string; signature: string }>({ chatKey: '', signature: '' });
   // History loaded on demand behind the live tail. The live `messages` state is
   // capped at the latest 100; this buffer accumulates older windows paged in as
   // the user scrolls toward the top, so the full group history can be read.
@@ -4318,6 +4324,34 @@ export default function App() {
     });
   }, [groupActivityById]);
 
+  // Announce only genuinely new incoming messages to screen readers: a message
+  // newer than the last seen tail, in the SAME chat already on screen (so chat
+  // switches and first loads are silent), not sent by the current account, and
+  // an actual text message (reactions/edits/system frames are skipped).
+  useEffect(() => {
+    if (messages.phase !== 'ready') {
+      return;
+    }
+
+    const list = messages.value;
+    const newest = list.length > 0 ? list[list.length - 1] : null;
+    const signature = newest ? newest.signature ?? `${newest.timestamp}-${newest.sender}` : '';
+    const previous = lastAnnouncedRef.current;
+
+    if (
+      newest &&
+      previous.chatKey === messagesChatKey &&
+      previous.signature &&
+      signature !== previous.signature &&
+      newest.sender !== account?.address &&
+      decodeChatMessage(newest, t).kind === 'text'
+    ) {
+      setLiveAnnouncement(`${getMessageSenderLabel(newest, undefined)}: ${getMessageSnippet(newest, t)}`);
+    }
+
+    lastAnnouncedRef.current = { chatKey: messagesChatKey, signature };
+  }, [messages, messagesChatKey, account?.address, t]);
+
   useEffect(() => {
     setLastReadByAddress((current) => {
       let next: Map<string, number> | null = null;
@@ -5285,6 +5319,9 @@ export default function App() {
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
           ) : null}
+          <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
+            {liveAnnouncement}
+          </div>
           {messages.phase === 'loading' ? (
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
