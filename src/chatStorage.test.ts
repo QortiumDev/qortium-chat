@@ -5,9 +5,12 @@ import {
   persistedDirectsStorageKey,
   readLastChat,
   readPersistedDirects,
+  readReadWatermarks,
+  readWatermarksStorageKey,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
+  writeReadWatermarks,
   type PersistedDirect,
 } from './chatStorage';
 import type { GroupData } from './types';
@@ -155,6 +158,32 @@ describe('storage round-trips', () => {
     );
     expect(readPersistedDirects(ADDRESS)).toEqual([{ address: 'Qok' }]);
   });
+
+  it('persists and reads back read watermarks', () => {
+    writeReadWatermarks(ADDRESS, {
+      directs: new Map([['Qalice', 1000]]),
+      groups: new Map([[42, 2000]]),
+    });
+
+    const restored = readReadWatermarks(ADDRESS);
+
+    expect([...restored.groups]).toEqual([[42, 2000]]);
+    expect([...restored.directs]).toEqual([['Qalice', 1000]]);
+  });
+
+  it('drops malformed watermark entries and defaults to empty maps', () => {
+    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), directs: new Map() });
+
+    window.localStorage.setItem(
+      readWatermarksStorageKey(ADDRESS),
+      JSON.stringify({ groups: { 42: 2000, bad: 5, 7: 'nope' }, directs: { Qalice: 1000, '': 9 } }),
+    );
+
+    const restored = readReadWatermarks(ADDRESS);
+
+    expect([...restored.groups]).toEqual([[42, 2000]]);
+    expect([...restored.directs]).toEqual([['Qalice', 1000]]);
+  });
 });
 
 describe('without storage', () => {
@@ -163,8 +192,12 @@ describe('without storage', () => {
   it('degrades to empty reads and silent writes', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
     expect(readPersistedDirects(ADDRESS)).toEqual([]);
+    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), directs: new Map() });
     expect(() => writeLastChat(ADDRESS, { kind: 'group', group })).not.toThrow();
     expect(() => writePersistedDirects(ADDRESS, [{ address: 'Qalice' }])).not.toThrow();
+    expect(() =>
+      writeReadWatermarks(ADDRESS, { directs: new Map(), groups: new Map([[1, 2]]) }),
+    ).not.toThrow();
   });
 });
 

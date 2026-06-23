@@ -93,9 +93,11 @@ import {
   mergePersistedDirect,
   readLastChat,
   readPersistedDirects,
+  readReadWatermarks,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
+  writeReadWatermarks,
   type PersistedDirect,
 } from './chatStorage';
 import {
@@ -2822,6 +2824,10 @@ export default function App() {
   // snapshot the divider position before the "mark read" effect advances them.
   const lastReadByGroupIdRef = useRef(lastReadByGroupId);
   const lastReadByAddressRef = useRef(lastReadByAddress);
+  // Skip the one render right after an account switch, where the watermark maps
+  // still hold the previous account's values, so we never persist them under the
+  // new account's key. The load effect raises this; the persist effect clears it.
+  const skipWatermarkPersistRef = useRef(true);
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
   const scrollPositionsRef = useRef(new Map<string, number>());
@@ -4694,8 +4700,12 @@ export default function App() {
 
   useEffect(() => {
     setLoadedDirectActivityByAddress(new Map());
-    setLastReadByGroupId(new Map());
-    setLastReadByAddress(new Map());
+    // Restore this account's read watermarks so unread state survives reloads;
+    // unseen groups/directs still get baselined to "read" by the effects below.
+    const watermarks = account ? readReadWatermarks(account.address) : null;
+    skipWatermarkPersistRef.current = true;
+    setLastReadByGroupId(watermarks?.groups ?? new Map());
+    setLastReadByAddress(watermarks?.directs ?? new Map());
     scrollPositionsRef.current.clear();
     requestedPrivateGroupKeysRef.current.clear();
     resolvedPrivateGroupKeyRequestsRef.current.clear();
@@ -4705,6 +4715,22 @@ export default function App() {
     // A new account restores its own last chat, regardless of the prior choice.
     userSelectedChatRef.current = false;
   }, [account?.address]);
+
+  // Persist read watermarks as they advance. Runs after the load effect above, so
+  // on an account switch it skips the transitional render (stale maps) once and
+  // then writes the freshly loaded/advanced watermarks under the current account.
+  useEffect(() => {
+    if (!account) {
+      return;
+    }
+
+    if (skipWatermarkPersistRef.current) {
+      skipWatermarkPersistRef.current = false;
+      return;
+    }
+
+    writeReadWatermarks(account.address, { directs: lastReadByAddress, groups: lastReadByGroupId });
+  }, [account, lastReadByGroupId, lastReadByAddress]);
 
   // Load this account's persisted direct chats from storage.
   useEffect(() => {
