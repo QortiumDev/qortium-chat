@@ -3386,18 +3386,19 @@ export default function App() {
     }
   }
 
-  async function loadAccountData(selectedAccount: QdnSelectedAccount, actionList = actions) {
-    setMemberGroups({ phase: 'loading', value: memberGroups.value });
-    setActiveChats({ phase: 'loading', value: activeChats.value });
-
-    try {
-      setMemberGroups({ phase: 'ready', value: await getMemberGroups(selectedAccount.address, actionList) });
-    } catch (error) {
-      setMemberGroups({
-        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
-        phase: 'error',
-        value: memberGroups.value,
-      });
+  // Refresh just the active-chats list (group + direct). Split out of
+  // loadAccountData so a write that only affects the conversation list — a
+  // direct send/reaction — can update it without re-fetching member groups,
+  // join requests, admin requests, and minting status. When `quiet`, skip the
+  // loading flip and (like the poll/WS path) the error transition, so a
+  // transient blip after a send never clobbers the working list.
+  async function loadActiveChats(
+    selectedAccount: QdnSelectedAccount,
+    actionList = actions,
+    options: { quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setActiveChats({ phase: 'loading', value: activeChats.value });
     }
 
     try {
@@ -3411,12 +3412,30 @@ export default function App() {
       // (not in an effect) so the write is tied to the account just loaded.
       persistDirects(selectedAccount.address, direct ?? []);
     } catch (error) {
-      setActiveChats({
-        error: getBridgeErrorMessage(error, t('status.loadingError.activeChats'), t),
+      if (!options.quiet) {
+        setActiveChats({
+          error: getBridgeErrorMessage(error, t('status.loadingError.activeChats'), t),
+          phase: 'error',
+          value: activeChats.value,
+        });
+      }
+    }
+  }
+
+  async function loadAccountData(selectedAccount: QdnSelectedAccount, actionList = actions) {
+    setMemberGroups({ phase: 'loading', value: memberGroups.value });
+
+    try {
+      setMemberGroups({ phase: 'ready', value: await getMemberGroups(selectedAccount.address, actionList) });
+    } catch (error) {
+      setMemberGroups({
+        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
         phase: 'error',
-        value: activeChats.value,
+        value: memberGroups.value,
       });
     }
+
+    await loadActiveChats(selectedAccount, actionList);
 
     void loadAccountJoinRequests(selectedAccount, actionList);
     void loadAdminJoinRequests(selectedAccount, actionList);
@@ -4012,7 +4031,9 @@ export default function App() {
       // Return the feed to the bottom so the just-sent message is in view.
       setSentMessageNonce((nonce) => nonce + 1);
       if (chat.kind === 'direct') {
-        await loadAccountData(selectedAccount);
+        // A direct send only touches the conversation list, not membership/
+        // minting; refresh just that (quietly) instead of the whole account.
+        await loadActiveChats(selectedAccount, actions, { quiet: true });
       }
 
       await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
@@ -4050,7 +4071,7 @@ export default function App() {
       }
 
       if (chat.kind === 'direct') {
-        await loadAccountData(selectedAccount);
+        await loadActiveChats(selectedAccount, actions, { quiet: true });
       }
 
       await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
