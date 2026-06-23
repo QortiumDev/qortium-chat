@@ -3418,14 +3418,22 @@ export default function App() {
         });
       }
     } catch (error) {
-      if (!options.quiet) {
-        setMessagesChatKey('');
+      // Quiet background polls (the 15s direct/closed-group poll) and the
+      // websocket REST-fallback must never replace a working chat with an
+      // error banner + stale value on a transient blip — keep the last good
+      // state and let the next poll recover.
+      if (options.quiet) {
+        return;
       }
-      setMessages({
+
+      setMessagesChatKey('');
+      // Functional update so the displayed value is the live state, never a
+      // stale value captured by this closure.
+      setMessages((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.messages'), t),
         phase: 'error',
-        value: messages.value,
-      });
+        value: current.value,
+      }));
     }
   }
 
