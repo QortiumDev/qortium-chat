@@ -34,6 +34,7 @@ export const EN_STRINGS = {
   'label.common.direct': 'Direct',
   'label.common.members': 'Members',
   'label.common.members.short': 'Members',
+  'label.common.active': 'Active',
   'label.common.navigation': 'Navigation',
   'label.common.message': 'Message',
   'label.common.transactionStatus': 'Transaction status',
@@ -91,6 +92,7 @@ export const EN_STRINGS = {
   'member.label': 'Member',
   'button.search': 'Search',
   'button.open': 'Open',
+  'button.save': 'Save',
   'button.join': 'Join',
   'button.joining': 'Joining',
   'button.join.pending': 'Join pending',
@@ -280,4 +282,7 @@ export const EN_STRINGS = {
   'aria.unreadDirect': 'Direct chats have unread messages',
   'button.mention': 'Mention',
   'action.mention': 'Mention {account} in your message',
+  'aria.jumpToUnread': 'Jump to new messages',
+  'label.newMessagesCount': '{count} new',
+  'hint.olderMessagesExpired': 'Older messages may have expired and can vary by node.',
 } as const;

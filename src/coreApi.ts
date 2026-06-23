@@ -255,6 +255,36 @@ export async function getNameOwnerAddress(name: string): Promise<string | null> 
   return data && typeof data.owner === 'string' && data.owner ? data.owner : null;
 }
 
+// Home's RESOLVE_IDENTITIES resolves a batch of addresses to their registered
+// name + avatar in a single read-only bridge call (deduped, capped at 500),
+// replacing one GET_ACCOUNT_NAMES round-trip per address.
+export type ResolvedIdentity = { address: string; name?: string | null; avatarSrc?: string | null };
+
+export const RESOLVE_IDENTITIES_LIMIT = 500;
+
+export async function resolveIdentities(addresses: string[], actions?: QdnAction[]): Promise<ResolvedIdentity[]> {
+  if (!hasBridgeAction(actions, 'RESOLVE_IDENTITIES')) {
+    throw new Error('RESOLVE_IDENTITIES is not available in this Home build.');
+  }
+
+  const unique = Array.from(new Set(addresses.filter((address) => address)));
+  const resolved: ResolvedIdentity[] = [];
+
+  for (let index = 0; index < unique.length; index += RESOLVE_IDENTITIES_LIMIT) {
+    const chunk = unique.slice(index, index + RESOLVE_IDENTITIES_LIMIT);
+    const batch = await qdnRequest<ResolvedIdentity[]>({
+      action: 'RESOLVE_IDENTITIES',
+      addresses: chunk,
+    });
+
+    if (Array.isArray(batch)) {
+      resolved.push(...batch);
+    }
+  }
+
+  return resolved;
+}
+
 export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_GROUP_MEMBERS')) {
     const response = await qdnRequest<GroupMember[] | GroupMembersResponse>({
@@ -317,7 +347,7 @@ export async function getPendingGroupApprovals(txGroupId: number) {
   );
 }
 
-export function buildGroupApprovalVotesPath(limit = DEFAULT_LIST_LIMIT) {
+export function buildGroupApprovalVotesPath(limit = DEFAULT_LIST_LIMIT, offset = 0) {
   // GROUP_APPROVAL votes always ride the root group; there is no pendingSignature
   // query param, so the caller filters by pendingSignature client-side.
   const query = new URLSearchParams({
@@ -327,13 +357,38 @@ export function buildGroupApprovalVotesPath(limit = DEFAULT_LIST_LIMIT) {
     reverse: 'true',
   });
 
+  if (offset > 0) {
+    query.set('offset', String(offset));
+  }
+
   return `/transactions/search?${query.toString()}`;
 }
 
-export async function getGroupApprovalVotes(limit = DEFAULT_LIST_LIMIT) {
+// A busy chain can push the votes relevant to a still-pending transaction past a
+// single latest-100 page, undercounting the tally. Page backward until a short
+// page (no more votes) or this safety cap, so the count stays correct without an
+// unbounded scan.
+const GROUP_APPROVAL_VOTES_MAX_PAGES = 20;
+
+export async function getGroupApprovalVotes() {
   // Keyless read of recent confirmed approval votes; the tally for a given pending
   // transaction is computed client-side (see computeApprovalProgress).
-  return fetchNodeApiData<GroupApprovalVote[]>(buildGroupApprovalVotesPath(limit), 'Approval votes');
+  const votes: GroupApprovalVote[] = [];
+
+  for (let page = 0; page < GROUP_APPROVAL_VOTES_MAX_PAGES; page += 1) {
+    const pageVotes = await fetchNodeApiData<GroupApprovalVote[]>(
+      buildGroupApprovalVotesPath(DEFAULT_LIST_LIMIT, page * DEFAULT_LIST_LIMIT),
+      'Approval votes',
+    );
+
+    votes.push(...pageVotes);
+
+    if (pageVotes.length < DEFAULT_LIST_LIMIT) {
+      break;
+    }
+  }
+
+  return votes;
 }
 
 export function buildBlockHeightPath() {
@@ -376,11 +431,13 @@ export async function getMintingStatus(address: string, actions?: QdnAction[]): 
   );
 
   try {
-    const mintingAccounts = await fetchNodeApiData<NodeMintingAccount[]>('/admin/mintingaccounts', 'Minting accounts');
+    const [mintingAccounts, nodeStatus] = await Promise.all([
+      fetchNodeApiData<NodeMintingAccount[]>('/admin/mintingaccounts', 'Minting accounts'),
+      fetchNodeApiData<NodeStatus>('/admin/status', 'Node status'),
+    ]);
     const keyOnNode = mintingAccounts.some(
       (mintingAccount) => mintingAccount.mintingAccount === address && mintingAccount.recipientAccount === address,
     );
-    const nodeStatus = await fetchNodeApiData<NodeStatus>('/admin/status', 'Node status');
 
     return {
       address,

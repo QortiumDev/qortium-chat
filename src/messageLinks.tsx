@@ -1,8 +1,14 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { copyTextToClipboard } from './clipboard';
+import { type TranslateFunction } from './i18n';
 import { qdnRequest } from './qdnRequest';
 
 const IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
-const APP_LINK_PATTERN = /\b(?:qdn|home|core):\/\/[^\s<>"'`]*/gi;
+// App links and plain web links share trailing-punctuation handling, so we scan
+// for both in one pass and split them apart by scheme afterwards.
+const LINK_PATTERN = /\b(?:qdn|home|core|https?):\/\/[^\s<>"'`]*/gi;
+const WEB_LINK_SCHEME = /^https?:\/\//i;
+const COPIED_LABEL_RESET_MS = 1500;
 const TRAILING_SIMPLE_PUNCTUATION = new Set(['.', ',', '!', '?', ';', ':']);
 const CLOSING_PAIRS: Record<string, string> = {
   ')': '(',
@@ -11,6 +17,8 @@ const CLOSING_PAIRS: Record<string, string> = {
 };
 const IMAGE_QDN_SERVICES = new Set<QdnImageService>(['GIF_REPOSITORY', 'IMAGE', 'THUMBNAIL', 'QCHAT_IMAGE']);
 const MEDIA_QDN_SERVICES = new Set<QdnMediaService>(['AUDIO', 'PODCAST', 'VIDEO', 'VOICE']);
+// Mirrors Home's QDN_DOCUMENT_VIEWER_SERVICES (PDF/EPUB/markdown/etc. ride these).
+const DOCUMENT_QDN_SERVICES = new Set<QdnDocumentService>(['ATTACHMENT', 'DOCUMENT', 'FILE', 'FILES']);
 
 export type MessageTextPart =
   | {
@@ -21,10 +29,16 @@ export type MessageTextPart =
       address: string;
       kind: 'app-link';
       text: string;
+    }
+  | {
+      kind: 'web-link';
+      text: string;
+      url: string;
     };
 
 type QdnImageService = 'GIF_REPOSITORY' | 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
 type QdnMediaService = 'AUDIO' | 'PODCAST' | 'VIDEO' | 'VOICE';
+type QdnDocumentService = 'ATTACHMENT' | 'DOCUMENT' | 'FILE' | 'FILES';
 
 type QdnResourceBase<Service extends string> = {
   identifier?: string;
@@ -36,6 +50,7 @@ type QdnResourceBase<Service extends string> = {
 
 export type QdnImageResource = QdnResourceBase<QdnImageService>;
 export type QdnMediaResource = QdnResourceBase<QdnMediaService>;
+export type QdnDocumentResource = QdnResourceBase<QdnDocumentService>;
 
 type QdnResourceProperties = {
   filename?: string;
@@ -102,6 +117,10 @@ function isImageQdnService(service: string): service is QdnImageService {
 
 function isMediaQdnService(service: string): service is QdnMediaService {
   return MEDIA_QDN_SERVICES.has(service as QdnMediaService);
+}
+
+function isDocumentQdnService(service: string): service is QdnDocumentService {
+  return DOCUMENT_QDN_SERVICES.has(service as QdnDocumentService);
 }
 
 function parseQdnResource(qdnUrl: string): QdnResourceBase<string> | null {
@@ -174,6 +193,19 @@ function parseQdnMediaResource(qdnUrl: string): QdnMediaResource | null {
   };
 }
 
+function parseQdnDocumentResource(qdnUrl: string): QdnDocumentResource | null {
+  const resource = parseQdnResource(qdnUrl);
+
+  if (!resource || !isDocumentQdnService(resource.service)) {
+    return null;
+  }
+
+  return {
+    ...resource,
+    service: resource.service,
+  };
+}
+
 export function getMessageTextParts(text: string): MessageTextPart[] {
   const parts: MessageTextPart[] = [];
   let previousIndex = 0;
@@ -191,7 +223,7 @@ export function getMessageTextParts(text: string): MessageTextPart[] {
     }
   };
 
-  for (const match of text.matchAll(APP_LINK_PATTERN)) {
+  for (const match of text.matchAll(LINK_PATTERN)) {
     const rawAddress = match[0];
     const matchIndex = match.index ?? 0;
     const { address, trailing } = splitTrailingPunctuation(rawAddress);
@@ -204,7 +236,11 @@ export function getMessageTextParts(text: string): MessageTextPart[] {
       appendText(text.slice(previousIndex, matchIndex));
     }
 
-    parts.push({ address, kind: 'app-link', text: address });
+    if (WEB_LINK_SCHEME.test(address)) {
+      parts.push({ kind: 'web-link', text: address, url: address });
+    } else {
+      parts.push({ address, kind: 'app-link', text: address });
+    }
 
     if (trailing) {
       appendText(trailing);
@@ -303,12 +339,42 @@ export function getMessageSegments(text: string): MessageSegment[] {
   return meaningful.length > 0 ? meaningful : [{ kind: 'text', text }];
 }
 
-function getQdnResources<T>(text: string, parseResource: (qdnUrl: string) => T | null): T[] {
-  return getMessageSegments(text)
+// Segment + text-part parsing is the expensive scan; both the image and media
+// extractors run it for every message on every render. Cache the app-link
+// addresses per message body so each unique body is scanned once, with a simple
+// FIFO cap so the map can't grow without bound across a long session.
+const appLinkAddressCache = new Map<string, string[]>();
+const APP_LINK_ADDRESS_CACHE_LIMIT = 2000;
+
+function getAppLinkAddresses(text: string): string[] {
+  const cached = appLinkAddressCache.get(text);
+
+  if (cached) {
+    return cached;
+  }
+
+  const addresses = getMessageSegments(text)
     .filter((segment): segment is Extract<MessageSegment, { kind: 'text' }> => segment.kind === 'text')
     .flatMap((segment) => getMessageTextParts(segment.text))
     .filter((part): part is Extract<MessageTextPart, { kind: 'app-link' }> => part.kind === 'app-link')
-    .map((part) => parseResource(part.address))
+    .map((part) => part.address);
+
+  if (appLinkAddressCache.size >= APP_LINK_ADDRESS_CACHE_LIMIT) {
+    const oldest = appLinkAddressCache.keys().next().value;
+
+    if (oldest !== undefined) {
+      appLinkAddressCache.delete(oldest);
+    }
+  }
+
+  appLinkAddressCache.set(text, addresses);
+
+  return addresses;
+}
+
+function getQdnResources<T>(text: string, parseResource: (qdnUrl: string) => T | null): T[] {
+  return getAppLinkAddresses(text)
+    .map((address) => parseResource(address))
     .filter((resource): resource is T => resource !== null);
 }
 
@@ -318,6 +384,10 @@ export function getImageQdnResources(text: string): QdnImageResource[] {
 
 export function getMediaQdnResources(text: string): QdnMediaResource[] {
   return getQdnResources(text, parseQdnMediaResource);
+}
+
+export function getDocumentQdnResources(text: string): QdnDocumentResource[] {
+  return getQdnResources(text, parseQdnDocumentResource);
 }
 
 export async function openAppLinkInHomeTab(address: string) {
@@ -331,7 +401,23 @@ export async function openQdnMediaPlayer(resource: QdnMediaResource) {
   });
 }
 
-function getResourceRequest(resource: QdnImageResource | QdnMediaResource) {
+export async function openQdnDocumentViewer(resource: QdnDocumentResource) {
+  return qdnRequest<boolean>({
+    action: 'OPEN_QDN_DOCUMENT_VIEWER',
+    ...getResourceRequest(resource),
+  });
+}
+
+// Home fetches the raw bytes and shows a save dialog (desktop) or download path
+// (mobile/web), returning { canceled } once the user decides.
+export async function saveQdnResource(resource: QdnImageResource | QdnMediaResource | QdnDocumentResource) {
+  return qdnRequest<{ canceled?: boolean }>({
+    action: 'SAVE_QDN_RESOURCE',
+    ...getResourceRequest(resource),
+  });
+}
+
+function getResourceRequest(resource: QdnImageResource | QdnMediaResource | QdnDocumentResource) {
   return {
     service: resource.service,
     name: resource.name,
@@ -526,9 +612,67 @@ export async function fetchQdnImagePreviews(resource: QdnImageResource): Promise
   return Promise.all(previewResources.map(fetchQdnImagePreview));
 }
 
-function renderTextPart(part: MessageTextPart, key: string): ReactNode {
+// Web links are not opened (the app holds no browser-navigation bridge and we
+// don't want messages to drive arbitrary navigation); clicking copies the URL
+// to the clipboard instead, with a brief "copied" confirmation.
+function WebLink({ url, text, copiedLabel }: { url: string; text: string; copiedLabel: string }): ReactNode {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current) {
+        clearTimeout(resetTimer.current);
+      }
+    },
+    [],
+  );
+
+  return (
+    <a
+      className={`message__web-link${copied ? ' message__web-link--copied' : ''}`}
+      href={url}
+      onClick={(event) => {
+        event.preventDefault();
+
+        void copyTextToClipboard(url)
+          .then((didCopy) => {
+            if (!didCopy) {
+              return;
+            }
+
+            setCopied(true);
+
+            if (resetTimer.current) {
+              clearTimeout(resetTimer.current);
+            }
+
+            resetTimer.current = setTimeout(() => setCopied(false), COPIED_LABEL_RESET_MS);
+          })
+          .catch((error) => {
+            console.warn('Unable to copy link.', error);
+          });
+      }}
+      rel="noopener noreferrer"
+      title={copied ? copiedLabel : url}
+    >
+      {text}
+      {copied ? (
+        <span aria-live="polite" className="message__web-link-copied">
+          {copiedLabel}
+        </span>
+      ) : null}
+    </a>
+  );
+}
+
+function renderTextPart(part: MessageTextPart, key: string, copiedLabel: string): ReactNode {
   if (part.kind === 'text') {
     return part.text;
+  }
+
+  if (part.kind === 'web-link') {
+    return <WebLink copiedLabel={copiedLabel} key={key} text={part.text} url={part.url} />;
   }
 
   return (
@@ -551,7 +695,9 @@ function renderTextPart(part: MessageTextPart, key: string): ReactNode {
   );
 }
 
-export function renderMessageTextWithAppLinks(text: string): ReactNode {
+export function renderMessageTextWithAppLinks(text: string, translate?: TranslateFunction): ReactNode {
+  const copiedLabel = translate ? translate('button.copied') : 'Copied';
+
   return getMessageSegments(text).map((segment, segmentIndex) => {
     if (segment.kind === 'code') {
       return (
@@ -562,7 +708,7 @@ export function renderMessageTextWithAppLinks(text: string): ReactNode {
     }
 
     return getMessageTextParts(segment.text).map((part, partIndex) =>
-      renderTextPart(part, `${segmentIndex}-${partIndex}`),
+      renderTextPart(part, `${segmentIndex}-${partIndex}`, copiedLabel),
     );
   });
 }

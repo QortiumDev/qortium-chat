@@ -1,15 +1,18 @@
 import { EN_STRINGS } from './locales/en';
 import { STRINGS as AR_STRINGS } from './locales/ar';
 import { STRINGS as DE_STRINGS } from './locales/de';
+import { STRINGS as EL_STRINGS } from './locales/el';
 import { STRINGS as ES_STRINGS } from './locales/es';
 import { STRINGS as ET_STRINGS } from './locales/et';
 import { STRINGS as FI_STRINGS } from './locales/fi';
 import { STRINGS as FR_STRINGS } from './locales/fr';
 import { STRINGS as HE_STRINGS } from './locales/he';
+import { STRINGS as HI_STRINGS } from './locales/hi';
 import { STRINGS as HU_STRINGS } from './locales/hu';
 import { STRINGS as IT_STRINGS } from './locales/it';
 import { STRINGS as JA_STRINGS } from './locales/ja';
 import { STRINGS as KO_STRINGS } from './locales/ko';
+import { STRINGS as NB_STRINGS } from './locales/nb';
 import { STRINGS as NL_STRINGS } from './locales/nl';
 import { STRINGS as PL_STRINGS } from './locales/pl';
 import { STRINGS as PT_STRINGS } from './locales/pt';
@@ -24,16 +27,19 @@ export type MessageValues = Record<string, string | number>;
 export const SUPPORTED_LANGUAGES = [
   'ar',
   'de',
+  'el',
   'en',
   'es',
   'et',
   'fi',
   'fr',
   'he',
+  'hi',
   'hu',
   'it',
   'ja',
   'ko',
+  'nb',
   'nl',
   'pl',
   'pt',
@@ -60,15 +66,18 @@ type Catalogs = {
 export const OTHER_STRINGS: Catalogs = {
   ar: AR_STRINGS,
   de: DE_STRINGS,
+  el: EL_STRINGS,
   es: ES_STRINGS,
   et: ET_STRINGS,
   fi: FI_STRINGS,
   fr: FR_STRINGS,
   he: HE_STRINGS,
+  hi: HI_STRINGS,
   hu: HU_STRINGS,
   it: IT_STRINGS,
   ja: JA_STRINGS,
   ko: KO_STRINGS,
+  nb: NB_STRINGS,
   nl: NL_STRINGS,
   pl: PL_STRINGS,
   pt: PT_STRINGS,

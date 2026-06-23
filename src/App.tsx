@@ -1,4 +1,14 @@
-import { Fragment, type ReactNode, type SubmitEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  memo,
+  type ReactNode,
+  type SubmitEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildActiveChatsWebSocketUrl,
@@ -61,10 +71,14 @@ import {
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import {
   fetchQdnImagePreviews,
+  getDocumentQdnResources,
   getImageQdnResources,
   getMediaQdnResources,
+  openQdnDocumentViewer,
   openQdnMediaPlayer,
   renderMessageTextWithAppLinks,
+  saveQdnResource,
+  type QdnDocumentResource,
   type QdnImagePreview,
   type QdnImageResource,
   type QdnMediaResource,
@@ -79,13 +93,29 @@ import {
   withGeneralChatGroup,
 } from './generalChat';
 import { copyTextToClipboard } from './clipboard';
+import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
+import { useModalDialog } from './useModalDialog';
+import {
+  AdminIcon,
+  BackIcon,
+  BrandMark,
+  CloseIcon,
+  DownIcon,
+  LockIcon,
+  OwnerIcon,
+  PlusIcon,
+  SearchIcon,
+  UpIcon,
+} from './icons';
 import {
   mergePersistedDirect,
   readLastChat,
   readPersistedDirects,
+  readReadWatermarks,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
+  writeReadWatermarks,
   type PersistedDirect,
 } from './chatStorage';
 import {
@@ -98,9 +128,11 @@ import {
 } from './groupMembers';
 import { isPublicNodeSendUnsupported, shouldDecryptGroupMessages } from './groupAccess';
 import {
+  fetchAvatarImage,
   getAvatarFallbackCharacter,
   loadAvatarProfile,
   normalizeRegisteredName,
+  resolveAvatarIdentities,
   type AvatarProfile,
 } from './avatarProfiles';
 import type {
@@ -268,94 +300,6 @@ function getDirectTitle(direct: ActiveDirectChat) {
   return direct.name || getShortAddress(direct.address);
 }
 
-function SearchIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <path d="m21 21-4.35-4.35" />
-      <circle cx="11" cy="11" r="7" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
-  );
-}
-
-function OwnerIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <path d="M4 18h16" />
-      <path d="m5 8 4 4 3-6 3 6 4-4-1.5 10h-11z" />
-    </svg>
-  );
-}
-
-function AdminIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <path d="M12 3 5.5 6v5.5c0 4.25 2.7 7.25 6.5 9.5 3.8-2.25 6.5-5.25 6.5-9.5V6z" />
-      <path d="m9 12 2 2 4-5" />
-    </svg>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <rect height="11" rx="2" width="14" x="5" y="10" />
-      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
-    </svg>
-  );
-}
-
-function BackIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <path d="m15 5-7 7 7 7" />
-    </svg>
-  );
-}
-
-function DownIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-      <path d="M6 6l12 12" />
-      <path d="M18 6 6 18" />
-    </svg>
-  );
-}
-
-function BrandMark() {
-  return (
-    <svg
-      className="topbar__brand-mark"
-      viewBox="0 0 683 685"
-      fill="none"
-      stroke="currentColor"
-      strokeLinejoin="miter"
-      strokeMiterlimit={10}
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path strokeWidth={6} d="M341,29.5 69,186.7 69,503.3 341,659.5 478.5,580.5 613,657.8 613,186.7Z" />
-      <path strokeWidth={37} d="M341,208.3 223.5,275.7 223.5,412.3 341,479.7 409,440.7 458.5,469.1 458.5,275.7Z" />
-    </svg>
-  );
-}
-
 function getMessageKey(message: ChatMessage, index = 0) {
   return message.signature || `${message.timestamp}-${message.sender}-${index}`;
 }
@@ -371,8 +315,24 @@ function mergeMessages(
     messages.set(getMessageKey(message, index), message);
   }
 
+  let addedMessage = false;
+
   for (const [index, message] of nextMessages.entries()) {
-    messages.set(getMessageKey(message, index), message);
+    const key = getMessageKey(message, index);
+
+    if (!messages.has(key)) {
+      addedMessage = true;
+    }
+
+    messages.set(key, message);
+  }
+
+  // The group websocket resends its whole window on every frame; when none of
+  // those messages are new, keep the same array reference so React bails out of
+  // the re-render instead of rebuilding and re-sorting an identical list. The
+  // existing tail is already sorted and capped, so it stays a valid result.
+  if (!addedMessage) {
+    return currentMessages;
   }
 
   const merged = sortMessagesByTimestamp([...messages.values()]);
@@ -452,11 +412,6 @@ type CachedAvatarProfile = AvatarProfile & {
 // a computed object property name; that keeps the looked-up profile (and the
 // avatar URL it carries) from being treated as attacker-controlled downstream.
 type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
-
-type AvatarLightboxImage = {
-  name: string | null;
-  src: string;
-};
 
 type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
 
@@ -602,21 +557,11 @@ function AccountInfoDialog({
   const { avatarSrc, name } = getAvatarView(profile, target.senderName);
   const label = getMessageSenderLabel(target, profile);
 
+  const cardRef = useModalDialog<HTMLElement>(onClose);
+
   useEffect(() => {
     setCopyStatus('idle');
   }, [target.sender]);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
 
   async function copyAddress() {
     if (await copyTextToClipboard(target.sender)) {
@@ -635,7 +580,7 @@ function AccountInfoDialog({
       onClick={onClose}
       role="dialog"
     >
-      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()}>
+      <section className="account-dialog__card" onClick={(event) => event.stopPropagation()} ref={cardRef} tabIndex={-1}>
         <header className="account-dialog__header">
           <UserAvatar
             className="account-dialog__avatar"
@@ -779,17 +724,7 @@ function GroupApprovalDialog({
   voteUnavailableLabel: string;
   votedSignatures: Record<string, { approval: boolean }>;
 }) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  const cardRef = useModalDialog<HTMLElement>(onClose);
 
   const [copiedSignature, setCopiedSignature] = useState<string | null>(null);
 
@@ -812,6 +747,8 @@ function GroupApprovalDialog({
       <section
         className="account-dialog__card account-dialog__card--approval"
         onClick={(event) => event.stopPropagation()}
+        ref={cardRef}
+        tabIndex={-1}
       >
         <header className="account-dialog__header">
           <div className="account-dialog__heading">
@@ -1011,52 +948,6 @@ function GroupApprovalDialog({
   );
 }
 
-function AvatarLightbox({
-  image,
-  onClose,
-  t,
-}: {
-  image: AvatarLightboxImage;
-  onClose: () => void;
-  t: TranslateFunction;
-}) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
-  return (
-    <div
-      aria-label={t('aria.avatarLightbox')}
-      aria-modal="true"
-      className="avatar-lightbox"
-      onClick={onClose}
-      role="dialog"
-    >
-      <button
-        aria-label={t('button.close')}
-        className="avatar-lightbox__close"
-        onClick={onClose}
-        title={t('button.close')}
-        type="button"
-      >
-        X
-      </button>
-      <figure className="avatar-lightbox__stage" onClick={(event) => event.stopPropagation()}>
-        <img alt={image.name ? t('label.avatarImageForName', { name: image.name }) : t('label.avatarImage')} src={image.src} />
-        {image.name ? <figcaption>{image.name}</figcaption> : null}
-      </figure>
-    </div>
-  );
-}
-
 function getAvatarRequestKey(address: string, preferredName: string | null | undefined, actionsKey: string) {
   return JSON.stringify([address, normalizeRegisteredName(preferredName) ?? '', actionsKey]);
 }
@@ -1074,29 +965,94 @@ function useAvatarProfiles(
 
   useEffect(() => {
     let isDisposed = false;
+    const requestKeyByAddress = new Map<string, string>();
+    const needed: string[] = [];
 
     for (const address of addresses) {
       const preferredName = knownNamesByAddress.get(address) ?? null;
       const requestKey = getAvatarRequestKey(address, preferredName, actionsKey);
 
       latestRequestKeysRef.current.set(address, requestKey);
+      requestKeyByAddress.set(address, requestKey);
 
-      if (profiles.get(address)?.requestKey === requestKey) {
-        continue;
+      if (profiles.get(address)?.requestKey !== requestKey) {
+        needed.push(address);
+      }
+    }
+
+    const isCurrent = (address: string) =>
+      !isDisposed && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
+
+    const commit = (profile: AvatarProfile) => {
+      if (!isCurrent(profile.address)) {
+        return;
       }
 
-      void loadAvatarProfile({ actions, address, preferredName })
-        .then((profile) => {
-          if (isDisposed || latestRequestKeysRef.current.get(address) !== requestKey) {
-            return;
+      setProfiles((current) => {
+        const next = new Map(current);
+        next.set(profile.address, { ...profile, requestKey: requestKeyByAddress.get(profile.address) as string });
+        return next;
+      });
+    };
+
+    const commitMany = (batch: AvatarProfile[]) => {
+      if (isDisposed) {
+        return;
+      }
+
+      setProfiles((current) => {
+        let next: Map<string, CachedAvatarProfile> | null = null;
+
+        for (const profile of batch) {
+          if (!isCurrent(profile.address)) {
+            continue;
           }
 
-          setProfiles((current) => {
-            const next = new Map(current);
-            next.set(address, { ...profile, requestKey });
-            return next;
+          next ??= new Map(current);
+          next.set(profile.address, { ...profile, requestKey: requestKeyByAddress.get(profile.address) as string });
+        }
+
+        return next ?? current;
+      });
+    };
+
+    const loadIndividually = (targets: string[]) => {
+      for (const address of targets) {
+        const preferredName = knownNamesByAddress.get(address) ?? null;
+        void loadAvatarProfile({ actions, address, preferredName }).then(commit);
+      }
+    };
+
+    if (needed.length > 0) {
+      if (hasAction(actions, 'RESOLVE_IDENTITIES')) {
+        // One batched name + avatar-presence resolution for the whole visible set
+        // (instead of a GET_ACCOUNT_NAMES per address), then fetch only the
+        // avatars that actually exist through the hardened blob path.
+        void resolveAvatarIdentities({ actions, addresses: needed, knownNamesByAddress })
+          .then((resolved) => {
+            // Commit names first in a single update so labels are not gated on images.
+            commitMany(needed.map((address) => ({ address, avatarSrc: null, name: resolved.get(address)?.name ?? null })));
+
+            for (const address of needed) {
+              const identity = resolved.get(address);
+              const name = identity?.name ?? null;
+
+              if (name && identity?.hasAvatar) {
+                void fetchAvatarImage(name)
+                  .then((avatarSrc) => commit({ address, avatarSrc, name }))
+                  .catch(() => {
+                    // Keep the name-only profile if the avatar image fails to load.
+                  });
+              }
+            }
+          })
+          .catch(() => {
+            // Batch resolution failed unexpectedly — fall back to per-address loads.
+            loadIndividually(needed);
           });
-        });
+      } else {
+        loadIndividually(needed);
+      }
     }
 
     return () => {
@@ -1164,7 +1120,7 @@ function AccountSummary({
   );
 }
 
-function GroupList({
+const GroupList = memo(function GroupList({
   activityByGroupId,
   groups,
   memberCountsByGroupId,
@@ -1172,6 +1128,7 @@ function GroupList({
   selectedGroupId,
   t,
   unreadGroupIds,
+  now,
 }: {
   activityByGroupId: ReadonlyMap<number, number>;
   groups: GroupData[];
@@ -1180,21 +1137,14 @@ function GroupList({
   selectedGroupId: number | null;
   t: TranslateFunction;
   unreadGroupIds: ReadonlySet<number>;
+  now: number;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30000);
-
-    return () => window.clearInterval(interval);
-  }, []);
-
   if (groups.length === 0) {
     return <p className="empty">{t('hint.noGroups')}</p>;
   }
 
   return (
-    <div className="group-list">
+    <ul className="group-list">
       {groups.map((group) => {
         const lastMessageTimestamp = activityByGroupId.get(group.groupId);
         const isUnread = unreadGroupIds.has(group.groupId);
@@ -1202,9 +1152,9 @@ function GroupList({
           memberCountsByGroupId?.get(group.groupId) ?? (isGeneralChatGroup(group) ? undefined : group.memberCount);
 
         return (
+          <li key={group.groupId}>
           <button
             className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}${isUnread ? ' group-row--unread' : ''}`}
-            key={group.groupId}
             onClick={() => onSelect(group)}
             type="button"
           >
@@ -1245,13 +1195,14 @@ function GroupList({
               ) : null}
             </span>
           </button>
+          </li>
         );
       })}
-    </div>
-  );
-}
+      </ul>
+    );
+});
 
-function DirectList({
+const DirectList = memo(function DirectList({
   activityByAddress,
   canOpen,
   directs: directEntries,
@@ -1261,6 +1212,7 @@ function DirectList({
   selectedAddress,
   t,
   unreadAddresses,
+  now,
 }: {
   activityByAddress: ReadonlyMap<string, number>;
   canOpen: boolean;
@@ -1271,8 +1223,8 @@ function DirectList({
   selectedAddress: string | null;
   t: TranslateFunction;
   unreadAddresses: ReadonlySet<string>;
+  now: number;
 }) {
-  const [now, setNow] = useState(() => Date.now());
   const directs = useMemo(() => {
     return [...directEntries].sort((first, second) => {
       const firstActivity = activityByAddress.get(first.address);
@@ -1294,18 +1246,12 @@ function DirectList({
     });
   }, [directEntries, activityByAddress]);
 
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30000);
-
-    return () => window.clearInterval(interval);
-  }, []);
-
   if (directs.length === 0) {
     return <p className="empty">{t('hint.noDirectChats')}</p>;
   }
 
   return (
-    <div className="direct-list">
+    <ul className="direct-list">
       {directs.map((direct) => {
         const lastMessageTimestamp = activityByAddress.get(direct.address);
         const isUnread = unreadAddresses.has(direct.address);
@@ -1313,7 +1259,7 @@ function DirectList({
         const title = getDirectTitle(direct);
 
         return (
-          <div
+          <li
             className={`direct-row-wrap${isRemovable ? ' direct-row-wrap--removable' : ''}`}
             key={direct.address}
           >
@@ -1352,12 +1298,12 @@ function DirectList({
                 <CloseIcon />
               </button>
             ) : null}
-          </div>
+          </li>
         );
       })}
-    </div>
-  );
-}
+      </ul>
+    );
+});
 
 function getMessageSnippet(message: ChatMessage, t: TranslateFunction, maxLength = 140) {
   const body = decodeChatMessage(message, t).body || t('message.empty');
@@ -1472,7 +1418,7 @@ function MessageReactionPicker({
 
   return (
     <div className="message__reaction-picker" aria-label={t('label.reactions')}>
-      <div className="message__reaction-quick-row" role="toolbar">
+      <div className="message__reaction-quick-row" role="toolbar" aria-label={t('label.reactions')}>
         {DEFAULT_REACTION_OPTIONS.map((reaction) => {
           const existingReaction = reactions.find((summary) => summary.content === reaction);
           const contentState = !existingReaction?.reactedBySelf;
@@ -1509,7 +1455,7 @@ function MessageReactionPicker({
             allowExpandReactions
             autoFocusSearch={false}
             emojiStyle={EmojiStyle.NATIVE}
-            height={360}
+            height="min(360px, 60dvh)"
             lazyLoadEmojis
             onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
             onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
@@ -1753,10 +1699,12 @@ function MessageReactionChips({
   );
 }
 
-function MessageList({
+const MessageList = memo(function MessageList({
   avatarProfiles,
   canCompose,
+  canOpenDocumentViewer,
   canOpenMediaPlayer,
+  canSaveQdnResource,
   initialScrollTop,
   messages,
   olderMessagesError,
@@ -1777,10 +1725,13 @@ function MessageList({
   t,
   unreadDividerCeiling,
   unreadDividerTimestamp,
+  now,
 }: {
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
+  canOpenDocumentViewer: boolean;
   canOpenMediaPlayer: boolean;
+  canSaveQdnResource: boolean;
   initialScrollTop: number | undefined;
   messages: ChatMessage[];
   olderMessagesError: string;
@@ -1801,6 +1752,7 @@ function MessageList({
   t: TranslateFunction;
   unreadDividerCeiling: number | null;
   unreadDividerTimestamp: number | null;
+  now: number;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottomRef = useRef(true);
@@ -1814,6 +1766,9 @@ function MessageList({
   // the same message instead of jumping when scrollHeight grows.
   const olderScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
+  // The "new messages" divider element, so the jump-to-unread control can scroll
+  // it into view and so its viewport position drives whether that control shows.
+  const dividerRef = useRef<HTMLLIElement>(null);
   const highlightTimeoutRef = useRef(0);
   const expandedTimeTimeoutRef = useRef(0);
   const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
@@ -1824,9 +1779,11 @@ function MessageList({
   // floating reaction popover, so it can be anchored above that element.
   const [reactionAnchorRect, setReactionAnchorRect] = useState<DOMRect | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  // Shown while the unread divider is scrolled above the viewport, offering a
+  // jump up to where reading left off (the chat opens pinned to the bottom).
+  const [unreadJumpVisible, setUnreadJumpVisible] = useState(false);
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
-  const [now, setNow] = useState(() => Date.now());
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
   // Index of the first thread newer than the user's read watermark; the "new
   // messages" divider is drawn just above it. Only shown when at least one read
@@ -1855,6 +1812,23 @@ function MessageList({
     // there is no read context to separate, so suppress it.
     return index === 0 && !olderMessagesReachedStart ? 0 : -1;
   }, [threads, unreadDividerTimestamp, unreadDividerCeiling, olderMessagesReachedStart]);
+  // Count of messages in the unread-on-open backlog (the contiguous run from the
+  // divider up to the open moment), shown on the jump-to-unread control.
+  const unreadCount = useMemo(() => {
+    if (unreadDividerIndex < 0 || unreadDividerCeiling === null) {
+      return 0;
+    }
+
+    let count = 0;
+
+    for (let index = unreadDividerIndex; index < threads.length; index += 1) {
+      if (threads[index].original.timestamp <= unreadDividerCeiling) {
+        count += 1;
+      }
+    }
+
+    return count;
+  }, [threads, unreadDividerIndex, unreadDividerCeiling]);
   const reactionsBySignature = useMemo(
     () => buildMessageReactionIndex(messages, selfAddress),
     [messages, selfAddress],
@@ -1942,6 +1916,36 @@ function MessageList({
 
     stickToBottomRef.current = isAtBottom;
     setShowScrollToBottom(!isAtBottom);
+
+    const dividerEl = dividerRef.current;
+
+    if (dividerEl) {
+      // Offer the jump only while the divider is scrolled above the visible area;
+      // once the user reaches it (or scrolls past it) the prompt is dismissed.
+      const listRect = list.getBoundingClientRect();
+      const dividerRect = dividerEl.getBoundingClientRect();
+
+      setUnreadJumpVisible(dividerRect.bottom < listRect.top + 8);
+    } else {
+      setUnreadJumpVisible(false);
+    }
+  }
+
+  // Bring the unread divider just below the top edge so the last read message
+  // above it gives context for where new messages begin.
+  function scrollToUnread() {
+    const dividerEl = dividerRef.current;
+    const list = listRef.current;
+
+    if (!dividerEl || !list) {
+      return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const dividerRect = dividerEl.getBoundingClientRect();
+
+    list.scrollTop += dividerRect.top - listRect.top - 12;
+    updateBottomState(list);
   }
 
   // Pin the feed to the bottom now, then again after the next frame so a layout
@@ -2070,10 +2074,7 @@ function MessageList({
   }, [firstMessageKey]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30000);
-
     return () => {
-      window.clearInterval(interval);
       window.clearTimeout(highlightTimeoutRef.current);
       window.clearTimeout(expandedTimeTimeoutRef.current);
     };
@@ -2160,6 +2161,18 @@ function MessageList({
     });
   }
 
+  function openDocument(resource: QdnDocumentResource) {
+    void openQdnDocumentViewer(resource).catch((error) => {
+      console.warn('Unable to open QDN document viewer.', error);
+    });
+  }
+
+  function saveResource(resource: QdnDocumentResource) {
+    void saveQdnResource(resource).catch((error) => {
+      console.warn('Unable to save QDN resource.', error);
+    });
+  }
+
   if (messages.length === 0 && systemMessages.length === 0) {
     return <p className="empty">{t('hint.noMessages')}</p>;
   }
@@ -2207,6 +2220,11 @@ function MessageList({
               )}
             </li>
           ) : null}
+          {olderMessagesReachedStart && !olderMessagesLoading && !olderMessagesError && messages.length > 0 ? (
+            <li className="message-list__history-note">
+              <span className="muted">{t('hint.olderMessagesExpired')}</span>
+            </li>
+          ) : null}
           {threads.map((thread, index) => {
             const { latest, original, revisions } = thread;
             const decoded = decodeChatMessage(latest, t);
@@ -2222,8 +2240,12 @@ function MessageList({
             const isTimeExpanded = expandedTimeKey === threadKey;
             const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
             const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
+            const documentResources = decoded.kind === 'text' ? getDocumentQdnResources(decoded.body) : [];
             const hasImagePreviews = imageResources.length > 0;
             const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
+            const hasDocumentResources = documentResources.length > 0;
+            const hasDocumentViewerActions = canOpenDocumentViewer && hasDocumentResources;
+            const hasDocumentSaveActions = canSaveQdnResource && hasDocumentResources;
             const areImagePreviewsOpen = openImagePreviews.has(threadKey);
             const canReplyOrEdit = canCompose && !!original.signature;
             const canReact = canReplyOrEdit;
@@ -2231,7 +2253,12 @@ function MessageList({
             const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
             const senderProfile = avatarProfiles.get(original.sender);
             const actionButtons =
-              canReplyOrEdit || canReact || hasImagePreviews || hasMediaActions ? (
+              canReplyOrEdit ||
+              canReact ||
+              hasImagePreviews ||
+              hasMediaActions ||
+              hasDocumentViewerActions ||
+              hasDocumentSaveActions ? (
                 <div className="message__actions">
                   {hasImagePreviews ? (
                     <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
@@ -2248,6 +2275,30 @@ function MessageList({
                           type="button"
                         >
                           {t('button.playMedia')}
+                        </button>
+                      ))
+                    : null}
+                  {hasDocumentViewerActions
+                    ? documentResources.map((resource, resourceIndex) => (
+                        <button
+                          key={`view-${resource.qdnUrl}-${resourceIndex}`}
+                          onClick={() => openDocument(resource)}
+                          title={resource.qdnUrl}
+                          type="button"
+                        >
+                          {t('button.open')}
+                        </button>
+                      ))
+                    : null}
+                  {hasDocumentSaveActions
+                    ? documentResources.map((resource, resourceIndex) => (
+                        <button
+                          key={`save-${resource.qdnUrl}-${resourceIndex}`}
+                          onClick={() => saveResource(resource)}
+                          title={resource.qdnUrl}
+                          type="button"
+                        >
+                          {t('button.save')}
                         </button>
                       ))
                     : null}
@@ -2277,7 +2328,7 @@ function MessageList({
             return (
               <Fragment key={threadKey}>
                 {unreadDividerIndex === index ? (
-                  <li className="message-list__unread-divider" role="separator">
+                  <li className="message-list__unread-divider" ref={dividerRef} role="separator">
                     <span>{t('label.newMessages')}</span>
                   </li>
                 ) : null}
@@ -2327,7 +2378,7 @@ function MessageList({
                   )
                 ) : null}
                 <div className="message__body">
-                  {decoded.body ? renderMessageTextWithAppLinks(decoded.body) : t('message.empty')}
+                  {decoded.body ? renderMessageTextWithAppLinks(decoded.body, t) : t('message.empty')}
                 </div>
                 {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
                 <MessageReactionChips
@@ -2372,7 +2423,7 @@ function MessageList({
                             {formatTimestamp(version.timestamp)}
                           </span>
                           <span className="message__history-body">
-                            {versionBody ? renderMessageTextWithAppLinks(versionBody) : t('message.empty')}
+                            {versionBody ? renderMessageTextWithAppLinks(versionBody, t) : t('message.empty')}
                           </span>
                         </li>
                       );
@@ -2397,6 +2448,17 @@ function MessageList({
             </li>
           ))}
         </ol>
+        {unreadJumpVisible && unreadCount > 0 ? (
+          <button
+            aria-label={t('aria.jumpToUnread')}
+            className="message-feed__jump-unread"
+            onClick={scrollToUnread}
+            type="button"
+          >
+            <UpIcon />
+            <span>{t('label.newMessagesCount', { count: unreadCount })}</span>
+          </button>
+        ) : null}
         {showScrollToBottom ? (
           <button aria-label={t('aria.scrollToBottom')} className="message-feed__scroll-bottom" onClick={scrollToBottom} type="button">
             <DownIcon />
@@ -2444,7 +2506,7 @@ function MessageList({
     ) : null}
     </>
   );
-}
+});
 
 function GroupMemberList({
   avatarProfiles,
@@ -2469,7 +2531,7 @@ function GroupMemberList({
   }
 
   return (
-    <div className="member-list">
+    <ul className="member-list">
       {orderedMembers.map((member) => {
         const address = getGroupMemberAddress(member);
         const registeredName = getGroupMemberRegisteredName(member);
@@ -2482,7 +2544,7 @@ function GroupMemberList({
           role === 'owner' ? t('label.group.owner') : role === 'admin' ? t('label.group.admin') : '';
 
         return (
-          <span
+          <li
             className={`member-chip member-chip--${role}`}
             key={address || label}
             title={address}
@@ -2521,10 +2583,10 @@ function GroupMemberList({
                 {role === 'owner' ? <OwnerIcon /> : <AdminIcon />}
               </span>
             ) : null}
-          </span>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -2572,6 +2634,12 @@ export default function App() {
   const restoredForAccountRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
   const [messagesChatKey, setMessagesChatKey] = useState('');
+  // Screen-reader announcement for newly-arrived chat messages. The visible feed
+  // is not a live region (announcing the whole transcript on load/switch would be
+  // unusable), so a dedicated polite live region mirrors only genuinely new
+  // incoming messages. See the announce effect below.
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
+  const lastAnnouncedRef = useRef<{ chatKey: string; signature: string }>({ chatKey: '', signature: '' });
   // History loaded on demand behind the live tail. The live `messages` state is
   // capped at the latest 100; this buffer accumulates older windows paged in as
   // the user scrolls toward the top, so the full group history can be read.
@@ -2620,6 +2688,10 @@ export default function App() {
   // snapshot the divider position before the "mark read" effect advances them.
   const lastReadByGroupIdRef = useRef(lastReadByGroupId);
   const lastReadByAddressRef = useRef(lastReadByAddress);
+  // Skip the one render right after an account switch, where the watermark maps
+  // still hold the previous account's values, so we never persist them under the
+  // new account's key. The load effect raises this; the persist effect clears it.
+  const skipWatermarkPersistRef = useRef(true);
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
   const scrollPositionsRef = useRef(new Map<string, number>());
@@ -2666,6 +2738,15 @@ export default function App() {
   const [accountInfoTarget, setAccountInfoTarget] = useState<AccountInfoTarget | null>(null);
   const [avatarLightboxImage, setAvatarLightboxImage] = useState<AvatarLightboxImage | null>(null);
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const joinedIds = useMemo(
     () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
@@ -2796,6 +2877,7 @@ export default function App() {
   const hasUnreadGroups = unreadGroupIds.size > 0;
   const hasUnreadDirect = unreadDirectAddresses.size > 0;
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
+  const selectedGroupMembersLabel = isSelectedGeneralChat ? t('label.common.active') : t('label.common.members');
   const hasSelectedMessages = selectedChatKey !== '' && messagesChatKey === selectedChatKey;
   const selectedGeneralChatMembers = useMemo(
     () =>
@@ -2977,6 +3059,8 @@ export default function App() {
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canOpenMediaPlayer = hasAction(actions, 'OPEN_QDN_MEDIA_PLAYER');
+  const canOpenDocumentViewer = hasAction(actions, 'OPEN_QDN_DOCUMENT_VIEWER');
+  const canSaveQdnResource = hasAction(actions, 'SAVE_QDN_RESOURCE');
   const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
   const canSendDirectChat = canSendGroupChat;
   const isAccountUnlocked = account?.isUnlocked === true;
@@ -3306,18 +3390,19 @@ export default function App() {
     }
   }
 
-  async function loadAccountData(selectedAccount: QdnSelectedAccount, actionList = actions) {
-    setMemberGroups({ phase: 'loading', value: memberGroups.value });
-    setActiveChats({ phase: 'loading', value: activeChats.value });
-
-    try {
-      setMemberGroups({ phase: 'ready', value: await getMemberGroups(selectedAccount.address, actionList) });
-    } catch (error) {
-      setMemberGroups({
-        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
-        phase: 'error',
-        value: memberGroups.value,
-      });
+  // Refresh just the active-chats list (group + direct). Split out of
+  // loadAccountData so a write that only affects the conversation list — a
+  // direct send/reaction — can update it without re-fetching member groups,
+  // join requests, admin requests, and minting status. When `quiet`, skip the
+  // loading flip and (like the poll/WS path) the error transition, so a
+  // transient blip after a send never clobbers the working list.
+  async function loadActiveChats(
+    selectedAccount: QdnSelectedAccount,
+    actionList = actions,
+    options: { quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setActiveChats({ phase: 'loading', value: activeChats.value });
     }
 
     try {
@@ -3331,12 +3416,30 @@ export default function App() {
       // (not in an effect) so the write is tied to the account just loaded.
       persistDirects(selectedAccount.address, direct ?? []);
     } catch (error) {
-      setActiveChats({
-        error: getBridgeErrorMessage(error, t('status.loadingError.activeChats'), t),
+      if (!options.quiet) {
+        setActiveChats({
+          error: getBridgeErrorMessage(error, t('status.loadingError.activeChats'), t),
+          phase: 'error',
+          value: activeChats.value,
+        });
+      }
+    }
+  }
+
+  async function loadAccountData(selectedAccount: QdnSelectedAccount, actionList = actions) {
+    setMemberGroups({ phase: 'loading', value: memberGroups.value });
+
+    try {
+      setMemberGroups({ phase: 'ready', value: await getMemberGroups(selectedAccount.address, actionList) });
+    } catch (error) {
+      setMemberGroups({
+        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
         phase: 'error',
-        value: activeChats.value,
+        value: memberGroups.value,
       });
     }
+
+    await loadActiveChats(selectedAccount, actionList);
 
     void loadAccountJoinRequests(selectedAccount, actionList);
     void loadAdminJoinRequests(selectedAccount, actionList);
@@ -3418,14 +3521,22 @@ export default function App() {
         });
       }
     } catch (error) {
-      if (!options.quiet) {
-        setMessagesChatKey('');
+      // Quiet background polls (the 15s direct/closed-group poll) and the
+      // websocket REST-fallback must never replace a working chat with an
+      // error banner + stale value on a transient blip — keep the last good
+      // state and let the next poll recover.
+      if (options.quiet) {
+        return;
       }
-      setMessages({
+
+      setMessagesChatKey('');
+      // Functional update so the displayed value is the live state, never a
+      // stale value captured by this closure.
+      setMessages((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.messages'), t),
         phase: 'error',
-        value: messages.value,
-      });
+        value: current.value,
+      }));
     }
   }
 
@@ -3454,6 +3565,11 @@ export default function App() {
       return;
     }
 
+    // `before` is exclusive, so query one millisecond past the oldest message to
+    // include any siblings sharing its exact timestamp; mergeMessages dedupes the
+    // boundary message back out by signature.
+    const olderBefore = oldest.timestamp + 1;
+
     loadingOlderRef.current = true;
     setOlderMessagesState((current) => ({ ...current, error: '', loading: true }));
 
@@ -3461,10 +3577,10 @@ export default function App() {
       const olderWindow =
         chat.kind === 'group'
           ? await getGroupMessages(chat.group, actions, {
-              before: oldest.timestamp,
+              before: olderBefore,
               decryptPrivate: shouldDecryptPrivateGroup,
             })
-          : await getDirectMessages(chat.direct.address, actions, { before: oldest.timestamp });
+          : await getDirectMessages(chat.direct.address, actions, { before: olderBefore });
 
       const merged = mergeMessages(olderWindow, loadedMessages, Infinity);
 
@@ -3924,7 +4040,9 @@ export default function App() {
       // Return the feed to the bottom so the just-sent message is in view.
       setSentMessageNonce((nonce) => nonce + 1);
       if (chat.kind === 'direct') {
-        await loadAccountData(selectedAccount);
+        // A direct send only touches the conversation list, not membership/
+        // minting; refresh just that (quietly) instead of the whole account.
+        await loadActiveChats(selectedAccount, actions, { quiet: true });
       }
 
       await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
@@ -3962,7 +4080,7 @@ export default function App() {
       }
 
       if (chat.kind === 'direct') {
-        await loadAccountData(selectedAccount);
+        await loadActiveChats(selectedAccount, actions, { quiet: true });
       }
 
       await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
@@ -4310,6 +4428,34 @@ export default function App() {
     });
   }, [groupActivityById]);
 
+  // Announce only genuinely new incoming messages to screen readers: a message
+  // newer than the last seen tail, in the SAME chat already on screen (so chat
+  // switches and first loads are silent), not sent by the current account, and
+  // an actual text message (reactions/edits/system frames are skipped).
+  useEffect(() => {
+    if (messages.phase !== 'ready') {
+      return;
+    }
+
+    const list = messages.value;
+    const newest = list.length > 0 ? list[list.length - 1] : null;
+    const signature = newest ? newest.signature ?? `${newest.timestamp}-${newest.sender}` : '';
+    const previous = lastAnnouncedRef.current;
+
+    if (
+      newest &&
+      previous.chatKey === messagesChatKey &&
+      previous.signature &&
+      signature !== previous.signature &&
+      newest.sender !== account?.address &&
+      decodeChatMessage(newest, t).kind === 'text'
+    ) {
+      setLiveAnnouncement(`${getMessageSenderLabel(newest, undefined)}: ${getMessageSnippet(newest, t)}`);
+    }
+
+    lastAnnouncedRef.current = { chatKey: messagesChatKey, signature };
+  }, [messages, messagesChatKey, account?.address, t]);
+
   useEffect(() => {
     setLastReadByAddress((current) => {
       let next: Map<string, number> | null = null;
@@ -4420,8 +4566,12 @@ export default function App() {
 
   useEffect(() => {
     setLoadedDirectActivityByAddress(new Map());
-    setLastReadByGroupId(new Map());
-    setLastReadByAddress(new Map());
+    // Restore this account's read watermarks so unread state survives reloads;
+    // unseen groups/directs still get baselined to "read" by the effects below.
+    const watermarks = account ? readReadWatermarks(account.address) : null;
+    skipWatermarkPersistRef.current = true;
+    setLastReadByGroupId(watermarks?.groups ?? new Map());
+    setLastReadByAddress(watermarks?.directs ?? new Map());
     scrollPositionsRef.current.clear();
     requestedPrivateGroupKeysRef.current.clear();
     resolvedPrivateGroupKeyRequestsRef.current.clear();
@@ -4431,6 +4581,22 @@ export default function App() {
     // A new account restores its own last chat, regardless of the prior choice.
     userSelectedChatRef.current = false;
   }, [account?.address]);
+
+  // Persist read watermarks as they advance. Runs after the load effect above, so
+  // on an account switch it skips the transitional render (stale maps) once and
+  // then writes the freshly loaded/advanced watermarks under the current account.
+  useEffect(() => {
+    if (!account) {
+      return;
+    }
+
+    if (skipWatermarkPersistRef.current) {
+      skipWatermarkPersistRef.current = false;
+      return;
+    }
+
+    writeReadWatermarks(account.address, { directs: lastReadByAddress, groups: lastReadByGroupId });
+  }, [account, lastReadByGroupId, lastReadByAddress]);
 
   // Load this account's persisted direct chats from storage.
   useEffect(() => {
@@ -5069,6 +5235,7 @@ export default function App() {
                 selectedGroupId={selectedGroupId}
                 t={t}
                 unreadGroupIds={unreadGroupIds}
+                now={now}
               />
             )}
           </section>
@@ -5138,6 +5305,7 @@ export default function App() {
                 selectedAddress={selectedDirectAddress}
                 t={t}
                 unreadAddresses={unreadDirectAddresses}
+                now={now}
               />
             )}
           </section>
@@ -5198,7 +5366,7 @@ export default function App() {
                 >
                   {membersOpen
                     ? t('button.hideMembers')
-                    : `${t('label.common.members')} (${selectedGroupMembers.length})`}
+                    : `${selectedGroupMembersLabel} (${selectedGroupMembers.length})`}
                 </button>
               ) : null}
               {selectedChat?.kind === 'direct' &&
@@ -5277,13 +5445,18 @@ export default function App() {
           {selectedClosedGroupHistoryUnavailable ? (
             <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
           ) : null}
+          <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
+            {liveAnnouncement}
+          </div>
           {messages.phase === 'loading' ? (
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
             <MessageList
               avatarProfiles={avatarProfiles}
               canCompose={canComposeMessage}
+              canOpenDocumentViewer={canOpenDocumentViewer}
               canOpenMediaPlayer={canOpenMediaPlayer}
+              canSaveQdnResource={canSaveQdnResource}
               initialScrollTop={scrollPositionsRef.current.get(selectedChatKey)}
               messages={combinedMessages}
               olderMessagesError={olderMessagesState.error}
@@ -5298,6 +5471,7 @@ export default function App() {
               onScrollPositionChange={(chatKey, scrollTop) => {
                 scrollPositionsRef.current.set(chatKey, scrollTop);
               }}
+              now={now}
               pendingReactionKey={reactionPendingKey}
               scrollChatKey={selectedChatKey}
               selfAddress={account?.address ?? null}
@@ -5399,7 +5573,7 @@ export default function App() {
           >
             <div className="members-drawer__header">
               <div>
-                <h2>{t('label.common.members')}</h2>
+                <h2>{selectedGroupMembersLabel}</h2>
                 <p>{getGroupTitle(selectedGroup, t)}</p>
               </div>
               <span>{selectedGroupMembers.length}</span>

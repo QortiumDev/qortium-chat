@@ -30,6 +30,7 @@ import {
   getGroupMessages,
   getMemberGroups,
   getMissingPrivateGroupKeyRequests,
+  getGroupApprovalVotes,
   getMintingStatus,
   getNameOwnerAddress,
   getTransactionStatus,
@@ -37,6 +38,8 @@ import {
   joinGroup,
   leaveGroup,
   requestPrivateGroupChatKey,
+  RESOLVE_IDENTITIES_LIMIT,
+  resolveIdentities,
   resolvePrivateGroupChatKeyRequests,
   searchGroups,
   sendChatMessage,
@@ -108,6 +111,28 @@ describe('Core API path builders', () => {
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,
       path: '/transactions/pending?txGroupId=1&limit=100&reverse=false',
+    });
+  });
+
+  it('pages confirmed approval votes until a short page is returned', async () => {
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({ signature: `vote-${index}` }));
+    const tailPage = [{ signature: 'vote-100' }];
+
+    qdnRequestMock
+      .mockResolvedValueOnce({ data: fullPage, ok: true, status: 200, statusText: 'OK' })
+      .mockResolvedValueOnce({ data: tailPage, ok: true, status: 200, statusText: 'OK' });
+
+    await expect(getGroupApprovalVotes()).resolves.toHaveLength(101);
+    expect(qdnRequestMock).toHaveBeenCalledTimes(2);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/transactions/search?txType=GROUP_APPROVAL&confirmationStatus=CONFIRMED&limit=100&reverse=true',
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/transactions/search?txType=GROUP_APPROVAL&confirmationStatus=CONFIRMED&limit=100&reverse=true&offset=100',
     });
   });
 
@@ -749,5 +774,52 @@ describe('Core API path builders', () => {
     expect(qdnRequestMock).toHaveBeenCalledWith({
       action: 'START_MINTING',
     });
+  });
+
+  it('resolves identities in chunked RESOLVE_IDENTITIES requests', async () => {
+    const addresses = Array.from({ length: RESOLVE_IDENTITIES_LIMIT + 1 }, (_value, index) => `Q${index}`);
+
+    const firstChunk = addresses.slice(0, RESOLVE_IDENTITIES_LIMIT).map((address, index) => ({
+      address,
+      name: `identity-${index}`,
+      avatarSrc: index % 2 === 0 ? `avatar-${index}.png` : null,
+    }));
+
+    const secondChunk = addresses
+      .slice(RESOLVE_IDENTITIES_LIMIT)
+      .map((address, index) => ({ address, name: `identity-${RESOLVE_IDENTITIES_LIMIT + index}` }));
+
+    qdnRequestMock.mockResolvedValueOnce(firstChunk).mockResolvedValueOnce(secondChunk);
+
+    await expect(resolveIdentities(addresses, ['RESOLVE_IDENTITIES'])).resolves.toHaveLength(addresses.length);
+    expect(qdnRequestMock).toHaveBeenCalledTimes(2);
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'RESOLVE_IDENTITIES',
+      addresses: addresses.slice(0, RESOLVE_IDENTITIES_LIMIT),
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'RESOLVE_IDENTITIES',
+      addresses: addresses.slice(RESOLVE_IDENTITIES_LIMIT),
+    });
+  });
+
+  it('deduplicates addresses before resolving identities', async () => {
+    qdnRequestMock.mockResolvedValueOnce([{ address: 'Qabc', name: 'alice' }]);
+
+    await expect(resolveIdentities(['Qabc', 'Qabc', 'Qabc'], ['RESOLVE_IDENTITIES'])).resolves.toEqual([
+      { address: 'Qabc', name: 'alice' },
+    ]);
+    expect(qdnRequestMock).toHaveBeenCalledTimes(1);
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'RESOLVE_IDENTITIES',
+      addresses: ['Qabc'],
+    });
+  });
+
+  it('requires RESOLVE_IDENTITIES to be offered by Home before resolving identities', async () => {
+    await expect(resolveIdentities(['Qabc'], [])).rejects.toThrow(
+      'RESOLVE_IDENTITIES is not available in this Home build.',
+    );
+    expect(qdnRequestMock).not.toHaveBeenCalled();
   });
 });

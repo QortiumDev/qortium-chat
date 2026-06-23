@@ -64,7 +64,7 @@
   --qc-color-text-secondary: #44504e;
   --qc-color-text-soft: #44504e;
   --qc-color-muted: #67716f;
-  --qc-color-text-faint: #89918e;
+  --qc-color-text-faint: #677067;
   --qc-color-avatar: #446b5a;
   --qc-color-avatar-text: #ffffff;
   --qc-color-accent: #21824a;
@@ -147,7 +147,7 @@
   --qc-color-text-secondary: #cbd5d5;
   --qc-color-text-soft: #cbd5d5;
   --qc-color-muted: #a9b6b6;
-  --qc-color-text-faint: #7f8d8d;
+  --qc-color-text-faint: #8b9a9a;
   --qc-color-avatar: #79a98f;
   --qc-color-avatar-text: #08120d;
   --qc-color-accent: #87d99b;
@@ -870,6 +870,15 @@ samp,
   display: grid;
   gap: 8px;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.group-list > li,
+.direct-list > li {
+  display: grid;
+  min-width: 0;
 }
 
 .group-row,
@@ -900,6 +909,14 @@ samp,
   background: var(--qc-color-row-hover);
   border-color: var(--qc-color-row-hover-border);
   outline: none;
+}
+
+/* Keyboard focus needs an indicator distinct from hover; a real outline layers
+   over the selected row's inset box-shadow instead of replacing it. */
+.group-row:focus-visible,
+.direct-row:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: -2px;
 }
 
 .group-row--selected,
@@ -1217,6 +1234,9 @@ samp,
   display: grid;
   gap: 8px;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .members-drawer .member-list {
@@ -1437,6 +1457,53 @@ button.member-chip__name-button:focus-visible {
   transform: translateY(0);
 }
 
+/* Jump-to-unread pill; sits above the scroll-to-bottom button, same corner. */
+.message-feed__jump-unread {
+  position: absolute;
+  right: 16px;
+  bottom: 66px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px 0 10px;
+  color: var(--qc-color-accent-text);
+  font-size: var(--qc-text-tiny);
+  font-weight: 600;
+  background: var(--qc-gradient-primary);
+  border: 1px solid var(--qc-color-accent);
+  border-radius: var(--qc-radius-pill);
+  box-shadow: var(--qc-shadow-primary-button);
+  cursor: pointer;
+  transition: var(--qc-transition-control);
+}
+
+.message-feed__jump-unread svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.message-feed__jump-unread:hover,
+.message-feed__jump-unread:focus-visible {
+  background: var(--qc-gradient-primary-hover);
+  border-color: var(--qc-color-accent-hover);
+  outline: none;
+  box-shadow: var(--qc-shadow-primary-button-hover), 0 0 0 3px var(--qc-color-accent-ring);
+  transform: translateY(-1px);
+}
+
+.message-feed__jump-unread:active {
+  background: var(--qc-gradient-primary-active);
+  box-shadow: var(--qc-shadow-primary-button-active);
+  transform: translateY(0);
+}
+
 .message-list__history-control {
   display: flex;
   flex-wrap: wrap;
@@ -1445,6 +1512,14 @@ button.member-chip__name-button:focus-visible {
   gap: 8px;
   padding: 2px 0 6px;
   text-align: center;
+}
+
+/* Note shown once the earliest available history is loaded; older messages may
+   have aged out under the node's chat retention window. */
+.message-list__history-note {
+  padding: 2px 12px 8px;
+  text-align: center;
+  font-size: var(--qc-text-tiny);
 }
 
 /* "New messages" boundary drawn above the first unread message in the feed. */
@@ -1486,6 +1561,12 @@ button.member-chip__name-button:focus-visible {
   border-radius: var(--qc-radius-md);
   box-shadow: var(--qc-shadow-card);
   animation: qortium-message-in 170ms var(--qc-ease-pop);
+  /* Skip layout/paint for rows scrolled out of view in long histories. The
+     `auto` keyword remembers each row's real size once rendered, so the scroll
+     height stays accurate (the 56px fallback only applies to never-yet-seen
+     offscreen rows, which correct themselves as they scroll in). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 56px;
 }
 
 .message--encrypted,
@@ -1875,6 +1956,22 @@ button.message__reply-preview:focus-visible {
   outline: none;
 }
 
+/* Inline message controls otherwise show only a hover-identical state on focus.
+   Give keyboard focus a distinct ring (matching the member-chip pattern) so the
+   focused control is always identifiable. Placed after their base rules so it
+   overrides the `outline: none` there. */
+button.message__reply-preview:focus-visible,
+.message__time:focus-visible,
+.message__edited:focus-visible,
+.message__actions button:focus-visible,
+.message__reaction-quick-row button:focus-visible,
+.message__reaction-chip:focus-visible,
+.message__reaction-details-close:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* Inside the popover the picker/details fill it and drop their own card chrome. */
 .reaction-popover .message__reaction-picker,
 .reaction-popover .message__reaction-details {
@@ -1978,6 +2075,38 @@ button.message__reply-preview:focus-visible {
   outline: 2px solid var(--qc-color-accent);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+.message__web-link {
+  color: var(--qc-color-link);
+  cursor: copy;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
+.message__web-link:hover,
+.message__web-link:focus-visible {
+  color: var(--qc-color-accent-hover);
+}
+
+.message__web-link:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.message__web-link-copied {
+  margin-left: 0.4em;
+  padding: 0 0.4em;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--qc-color-accent);
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-sm);
+  white-space: nowrap;
 }
 
 .message__code-block {
@@ -2373,6 +2502,20 @@ button.message__reply-preview:focus-visible {
   line-height: var(--qc-line-small);
 }
 
+/* Visually hidden but available to assistive technology (e.g. live regions). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .empty {
   display: grid;
   gap: 8px;
@@ -2763,4 +2906,20 @@ button.message__reply-preview:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* On touch devices, raise the small icon/close controls to the ~44px minimum
+   touch target (WCAG 2.5.8). Desktop pointer sizing is left unchanged so the
+   layout stays compact. */
+@media (pointer: coarse) {
+  .icon-button,
+  .direct-row__remove,
+  .members-drawer__close,
+  .account-dialog__close,
+  .avatar-lightbox__close,
+  .message__reaction-details-close,
+  .message__reaction-quick-row button {
+    width: 44px;
+    height: 44px;
+  }
 }

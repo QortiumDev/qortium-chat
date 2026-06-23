@@ -191,6 +191,23 @@ describe('chat text helpers', () => {
     });
   });
 
+  it('caches decode results per message object and recomputes on change', () => {
+    const message = { data: base64('cached body'), encoding: 'BASE64' as const, isEncrypted: false, isText: true };
+
+    const first = decodeChatMessage(message);
+    const second = decodeChatMessage(message);
+
+    // Same object reference + same fields → identical cached result.
+    expect(second).toBe(first);
+
+    // Mutating a decode-relevant field invalidates the cached entry.
+    message.data = base64('new body');
+    const third = decodeChatMessage(message);
+
+    expect(third).not.toBe(first);
+    expect(third.body).toBe('new body');
+  });
+
   it('formats elapsed time in minutes and hours only', () => {
     const now = 1_750_000_000_000;
     const minute = 60_000;

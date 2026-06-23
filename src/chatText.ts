@@ -144,7 +144,60 @@ export function isReactionChatMessage(message: DecodableChatMessage) {
   return decodeChatMessage(message).kind === 'reaction';
 }
 
+type DecodeCacheEntry = {
+  data: DecodableChatMessage['data'];
+  decryptionStatus: DecodableChatMessage['decryptionStatus'];
+  encoding: DecodableChatMessage['encoding'];
+  isEncrypted: DecodableChatMessage['isEncrypted'];
+  isText: DecodableChatMessage['isText'];
+  result: DisplayChatMessage;
+  status: DecodableChatMessage['status'];
+  t: TranslateFunction | undefined;
+};
+
+// Decoding (BASE64 + nested envelope JSON.parse) runs for every message on every
+// render, so memoize the result per message object. The cached entry is reused
+// only when every decode-relevant field is unchanged and the same translator is
+// supplied (localized placeholders differ by locale), so an edited/decrypted
+// message — or a language switch — recomputes rather than returning a stale body.
+const decodeCache = new WeakMap<DecodableChatMessage, DecodeCacheEntry>();
+
 export function decodeChatMessage(
+  message: DecodableChatMessage,
+  t?: TranslateFunction,
+): DisplayChatMessage {
+  const cached = decodeCache.get(message);
+
+  if (
+    cached &&
+    cached.data === message.data &&
+    cached.decryptionStatus === message.decryptionStatus &&
+    cached.encoding === message.encoding &&
+    cached.isEncrypted === message.isEncrypted &&
+    cached.isText === message.isText &&
+    cached.status === message.status &&
+    cached.t === t
+  ) {
+    return cached.result;
+  }
+
+  const result = computeDecodeChatMessage(message, t);
+
+  decodeCache.set(message, {
+    data: message.data,
+    decryptionStatus: message.decryptionStatus,
+    encoding: message.encoding,
+    isEncrypted: message.isEncrypted,
+    isText: message.isText,
+    result,
+    status: message.status,
+    t,
+  });
+
+  return result;
+}
+
+function computeDecodeChatMessage(
   message: DecodableChatMessage,
   t?: TranslateFunction,
 ): DisplayChatMessage {

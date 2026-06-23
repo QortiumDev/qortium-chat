@@ -16,6 +16,14 @@ export type StoredSelectedChat =
 
 export type PersistedDirect = StoredDirect;
 
+// Read watermarks: the newest-seen activity timestamp per group / direct that the
+// user has already read, so unread state survives a reload instead of re-baselining
+// everything to "read" on each open.
+export type StoredReadWatermarks = {
+  directs: ReadonlyMap<string, number>;
+  groups: ReadonlyMap<number, number>;
+};
+
 const PREFIX = 'qortium-chat';
 
 function getStorage(): Storage | null {
@@ -72,6 +80,51 @@ export function lastChatStorageKey(accountAddress: string) {
 
 export function persistedDirectsStorageKey(accountAddress: string) {
   return `${PREFIX}:directs:${accountAddress}`;
+}
+
+export function readWatermarksStorageKey(accountAddress: string) {
+  return `${PREFIX}:read:${accountAddress}`;
+}
+
+function toTimestampMap<K extends string | number>(
+  value: unknown,
+  parseKey: (key: string) => K | null,
+): Map<K, number> {
+  const map = new Map<K, number>();
+
+  if (!value || typeof value !== 'object') {
+    return map;
+  }
+
+  for (const [rawKey, rawTimestamp] of Object.entries(value as Record<string, unknown>)) {
+    const key = parseKey(rawKey);
+
+    if (key !== null && typeof rawTimestamp === 'number' && Number.isFinite(rawTimestamp)) {
+      map.set(key, rawTimestamp);
+    }
+  }
+
+  return map;
+}
+
+export function readReadWatermarks(accountAddress: string): StoredReadWatermarks {
+  const value = readJson<{ directs?: unknown; groups?: unknown }>(readWatermarksStorageKey(accountAddress));
+
+  return {
+    directs: toTimestampMap(value?.directs, (key) => (key.length > 0 ? key : null)),
+    groups: toTimestampMap(value?.groups, (key) => {
+      const groupId = Number(key);
+
+      return Number.isInteger(groupId) ? groupId : null;
+    }),
+  };
+}
+
+export function writeReadWatermarks(accountAddress: string, watermarks: StoredReadWatermarks): void {
+  writeJson(readWatermarksStorageKey(accountAddress), {
+    directs: Object.fromEntries(watermarks.directs),
+    groups: Object.fromEntries(watermarks.groups),
+  });
 }
 
 function isStoredSelectedChat(value: unknown): value is StoredSelectedChat {
