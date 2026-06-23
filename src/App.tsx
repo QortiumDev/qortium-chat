@@ -93,6 +93,8 @@ import {
   withGeneralChatGroup,
 } from './generalChat';
 import { copyTextToClipboard } from './clipboard';
+import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
+import { useModalDialog } from './useModalDialog';
 import {
   AdminIcon,
   BackIcon,
@@ -411,11 +413,6 @@ type CachedAvatarProfile = AvatarProfile & {
 // avatar URL it carries) from being treated as attacker-controlled downstream.
 type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
 
-type AvatarLightboxImage = {
-  name: string | null;
-  src: string;
-};
-
 type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
 
 // Avatar URLs are produced by fetchAvatarImage as `blob:` URLs (via
@@ -531,71 +528,6 @@ function MessageIdentity({
       </button>
     </span>
   );
-}
-
-const DIALOG_FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-function getDialogFocusable(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE_SELECTOR)).filter(
-    (element) => element.offsetParent !== null || element === document.activeElement,
-  );
-}
-
-// Shared modal behavior for the overlay dialogs: move focus inside on open, keep
-// Tab cycling within the dialog, close on Escape, and restore focus to the
-// previously focused element on dismissal. Mirrors the members-drawer pattern so
-// the dialogs honor the aria-modal they already declare.
-function useModalDialog<T extends HTMLElement = HTMLElement>(onClose: () => void) {
-  const containerRef = useRef<T>(null);
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const container = containerRef.current;
-    const initialFocusables = container ? getDialogFocusable(container) : [];
-
-    (initialFocusables[0] ?? container)?.focus();
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-        return;
-      }
-
-      if (event.key !== 'Tab' || !container) {
-        return;
-      }
-
-      const items = getDialogFocusable(container);
-
-      if (items.length === 0) {
-        event.preventDefault();
-        container.focus();
-        return;
-      }
-
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-
-      if (event.shiftKey && (active === first || !container.contains(active))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (active === last || !container.contains(active))) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      previouslyFocused?.focus?.();
-    };
-  }, [onClose]);
-
-  return containerRef;
 }
 
 function AccountInfoDialog({
@@ -1012,44 +944,6 @@ function GroupApprovalDialog({
           </ul>
         )}
       </section>
-    </div>
-  );
-}
-
-function AvatarLightbox({
-  image,
-  onClose,
-  t,
-}: {
-  image: AvatarLightboxImage;
-  onClose: () => void;
-  t: TranslateFunction;
-}) {
-  const containerRef = useModalDialog<HTMLDivElement>(onClose);
-
-  return (
-    <div
-      aria-label={t('aria.avatarLightbox')}
-      aria-modal="true"
-      className="avatar-lightbox"
-      onClick={onClose}
-      ref={containerRef}
-      role="dialog"
-      tabIndex={-1}
-    >
-      <button
-        aria-label={t('button.close')}
-        className="avatar-lightbox__close"
-        onClick={onClose}
-        title={t('button.close')}
-        type="button"
-      >
-        X
-      </button>
-      <figure className="avatar-lightbox__stage" onClick={(event) => event.stopPropagation()}>
-        <img alt={image.name ? t('label.avatarImageForName', { name: image.name }) : t('label.avatarImage')} src={image.src} />
-        {image.name ? <figcaption>{image.name}</figcaption> : null}
-      </figure>
     </div>
   );
 }
