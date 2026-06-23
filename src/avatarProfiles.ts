@@ -1,4 +1,4 @@
-import { getAccountNames } from './coreApi';
+import { getAccountNames, resolveIdentities } from './coreApi';
 import { qdnRequest } from './qdnRequest';
 import type { NameSummary, QdnAction } from './types';
 
@@ -164,6 +164,39 @@ export async function fetchAvatarImage(name: string) {
   // are intentionally not revoked here — revoking a shared URL would break any
   // avatar or open lightbox still pointing at it.
   return URL.createObjectURL(blob);
+}
+
+export type ResolvedIdentityProfile = { name: string | null; hasAvatar: boolean };
+
+// Resolve names (and whether an avatar exists) for a batch of addresses in one
+// RESOLVE_IDENTITIES call. A caller-supplied preferred name still wins, matching
+// resolveRegisteredName. Throws if the bridge action is unavailable so the caller
+// can fall back to the per-address path. The avatar image itself is fetched
+// separately via fetchAvatarImage so it goes through the hardened blob path
+// rather than binding the bridge's avatar URL straight into <img src>.
+export async function resolveAvatarIdentities({
+  actions,
+  addresses,
+  knownNamesByAddress,
+}: {
+  actions?: QdnAction[];
+  addresses: string[];
+  knownNamesByAddress?: ReadonlyMap<string, string>;
+}): Promise<Map<string, ResolvedIdentityProfile>> {
+  const identities = await resolveIdentities(addresses, actions);
+  const byAddress = new Map(identities.map((identity) => [identity.address, identity]));
+  const result = new Map<string, ResolvedIdentityProfile>();
+
+  for (const address of addresses) {
+    const identity = byAddress.get(address);
+    const name =
+      normalizeRegisteredName(knownNamesByAddress?.get(address)) ?? normalizeRegisteredName(identity?.name) ?? null;
+    const hasAvatar = !!normalizeRegisteredName(identity?.avatarSrc);
+
+    result.set(address, { hasAvatar, name });
+  }
+
+  return result;
 }
 
 export async function loadAvatarProfile({

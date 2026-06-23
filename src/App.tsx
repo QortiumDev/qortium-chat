@@ -98,9 +98,11 @@ import {
 } from './groupMembers';
 import { isPublicNodeSendUnsupported, shouldDecryptGroupMessages } from './groupAccess';
 import {
+  fetchAvatarImage,
   getAvatarFallbackCharacter,
   loadAvatarProfile,
   normalizeRegisteredName,
+  resolveAvatarIdentities,
   type AvatarProfile,
 } from './avatarProfiles';
 import type {
@@ -1074,29 +1076,94 @@ function useAvatarProfiles(
 
   useEffect(() => {
     let isDisposed = false;
+    const requestKeyByAddress = new Map<string, string>();
+    const needed: string[] = [];
 
     for (const address of addresses) {
       const preferredName = knownNamesByAddress.get(address) ?? null;
       const requestKey = getAvatarRequestKey(address, preferredName, actionsKey);
 
       latestRequestKeysRef.current.set(address, requestKey);
+      requestKeyByAddress.set(address, requestKey);
 
-      if (profiles.get(address)?.requestKey === requestKey) {
-        continue;
+      if (profiles.get(address)?.requestKey !== requestKey) {
+        needed.push(address);
+      }
+    }
+
+    const isCurrent = (address: string) =>
+      !isDisposed && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
+
+    const commit = (profile: AvatarProfile) => {
+      if (!isCurrent(profile.address)) {
+        return;
       }
 
-      void loadAvatarProfile({ actions, address, preferredName })
-        .then((profile) => {
-          if (isDisposed || latestRequestKeysRef.current.get(address) !== requestKey) {
-            return;
+      setProfiles((current) => {
+        const next = new Map(current);
+        next.set(profile.address, { ...profile, requestKey: requestKeyByAddress.get(profile.address) as string });
+        return next;
+      });
+    };
+
+    const commitMany = (batch: AvatarProfile[]) => {
+      if (isDisposed) {
+        return;
+      }
+
+      setProfiles((current) => {
+        let next: Map<string, CachedAvatarProfile> | null = null;
+
+        for (const profile of batch) {
+          if (!isCurrent(profile.address)) {
+            continue;
           }
 
-          setProfiles((current) => {
-            const next = new Map(current);
-            next.set(address, { ...profile, requestKey });
-            return next;
+          next ??= new Map(current);
+          next.set(profile.address, { ...profile, requestKey: requestKeyByAddress.get(profile.address) as string });
+        }
+
+        return next ?? current;
+      });
+    };
+
+    const loadIndividually = (targets: string[]) => {
+      for (const address of targets) {
+        const preferredName = knownNamesByAddress.get(address) ?? null;
+        void loadAvatarProfile({ actions, address, preferredName }).then(commit);
+      }
+    };
+
+    if (needed.length > 0) {
+      if (hasAction(actions, 'RESOLVE_IDENTITIES')) {
+        // One batched name + avatar-presence resolution for the whole visible set
+        // (instead of a GET_ACCOUNT_NAMES per address), then fetch only the
+        // avatars that actually exist through the hardened blob path.
+        void resolveAvatarIdentities({ actions, addresses: needed, knownNamesByAddress })
+          .then((resolved) => {
+            // Commit names first in a single update so labels are not gated on images.
+            commitMany(needed.map((address) => ({ address, avatarSrc: null, name: resolved.get(address)?.name ?? null })));
+
+            for (const address of needed) {
+              const identity = resolved.get(address);
+              const name = identity?.name ?? null;
+
+              if (name && identity?.hasAvatar) {
+                void fetchAvatarImage(name)
+                  .then((avatarSrc) => commit({ address, avatarSrc, name }))
+                  .catch(() => {
+                    // Keep the name-only profile if the avatar image fails to load.
+                  });
+              }
+            }
+          })
+          .catch(() => {
+            // Batch resolution failed unexpectedly — fall back to per-address loads.
+            loadIndividually(needed);
           });
-        });
+      } else {
+        loadIndividually(needed);
+      }
     }
 
     return () => {

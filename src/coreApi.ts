@@ -255,6 +255,36 @@ export async function getNameOwnerAddress(name: string): Promise<string | null> 
   return data && typeof data.owner === 'string' && data.owner ? data.owner : null;
 }
 
+// Home's RESOLVE_IDENTITIES resolves a batch of addresses to their registered
+// name + avatar in a single read-only bridge call (deduped, capped at 500),
+// replacing one GET_ACCOUNT_NAMES round-trip per address.
+export type ResolvedIdentity = { address: string; name?: string | null; avatarSrc?: string | null };
+
+export const RESOLVE_IDENTITIES_LIMIT = 500;
+
+export async function resolveIdentities(addresses: string[], actions?: QdnAction[]): Promise<ResolvedIdentity[]> {
+  if (!hasBridgeAction(actions, 'RESOLVE_IDENTITIES')) {
+    throw new Error('RESOLVE_IDENTITIES is not available in this Home build.');
+  }
+
+  const unique = Array.from(new Set(addresses.filter((address) => address)));
+  const resolved: ResolvedIdentity[] = [];
+
+  for (let index = 0; index < unique.length; index += RESOLVE_IDENTITIES_LIMIT) {
+    const chunk = unique.slice(index, index + RESOLVE_IDENTITIES_LIMIT);
+    const batch = await qdnRequest<ResolvedIdentity[]>({
+      action: 'RESOLVE_IDENTITIES',
+      addresses: chunk,
+    });
+
+    if (Array.isArray(batch)) {
+      resolved.push(...batch);
+    }
+  }
+
+  return resolved;
+}
+
 export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_GROUP_MEMBERS')) {
     const response = await qdnRequest<GroupMember[] | GroupMembersResponse>({
