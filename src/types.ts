@@ -1,5 +1,12 @@
 export type QdnAction = string;
 
+// A loadable value with its fetch lifecycle: idle/loading keep the last value,
+// error carries a message alongside the stale value, ready holds the fresh value.
+export type AsyncState<T> =
+  | { error?: string; phase: 'idle' | 'loading'; value: T }
+  | { error: string; phase: 'error'; value: T }
+  | { phase: 'ready'; value: T };
+
 export type BridgeState = {
   actions: QdnAction[];
   isHomeBridge: boolean;
