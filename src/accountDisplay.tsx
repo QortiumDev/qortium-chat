@@ -2,7 +2,7 @@ import { type AvatarLightboxImage } from './AvatarLightbox';
 import { getAvatarFallbackCharacter, normalizeRegisteredName, type AvatarProfile } from './avatarProfiles';
 import { getSenderLabel } from './chatText';
 import { type TranslateFunction } from './i18n';
-import { type ChatMessage } from './types';
+import { type ActiveDirectChat, type ChatMessage } from './types';
 
 export type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
 
@@ -18,6 +18,10 @@ export type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
 
 export function getShortAddress(address: string) {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
+}
+
+export function getDirectTitle(direct: ActiveDirectChat) {
+  return direct.name || getShortAddress(direct.address);
 }
 
 // Avatar URLs are produced by fetchAvatarImage as `blob:` URLs (via
