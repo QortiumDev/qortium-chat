@@ -54,7 +54,6 @@ import {
   decodeChatMessage,
   formatTimeAgo,
   formatTimestamp,
-  getSenderLabel,
 } from './chatText';
 import {
   buildMessageThreads,
@@ -94,6 +93,14 @@ import {
 } from './generalChat';
 import { copyTextToClipboard } from './clipboard';
 import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
+import {
+  getAvatarView,
+  getMessageSenderLabel,
+  getShortAddress,
+  MessageIdentity,
+  UserAvatar,
+  type AccountInfoTarget,
+} from './accountDisplay';
 import { useModalDialog } from './useModalDialog';
 import {
   AdminIcon,
@@ -129,7 +136,6 @@ import {
 import { isPublicNodeSendUnsupported, shouldDecryptGroupMessages } from './groupAccess';
 import {
   fetchAvatarImage,
-  getAvatarFallbackCharacter,
   loadAvatarProfile,
   normalizeRegisteredName,
   resolveAvatarIdentities,
@@ -286,10 +292,6 @@ function LoadingRows({ count = 3, label }: { count?: number; label: string }) {
   );
 }
 
-function getShortAddress(address: string) {
-  return `${address.slice(0, 8)}...${address.slice(-6)}`;
-}
-
 // Qortium/Qortal addresses are Base58, start with 'Q', and are ~34 chars. Anything
 // that does not match is treated as a registered name to resolve to an owner.
 function looksLikeQortalAddress(value: string) {
@@ -413,34 +415,6 @@ type CachedAvatarProfile = AvatarProfile & {
 // avatar URL it carries) from being treated as attacker-controlled downstream.
 type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
 
-type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
-
-// Avatar URLs are produced by fetchAvatarImage as `blob:` URLs (via
-// URL.createObjectURL) or null. They are cached keyed by the untrusted
-// message-sender address, which static analysis treats as tainting every field
-// read back from that cache. Confirm the value is one of the schemes we actually
-// emit before it reaches an `<img src>` — defense-in-depth, and it makes the
-// safety explicit at the one place every avatar source funnels through.
-function isSafeAvatarUrl(value: string) {
-  return value.startsWith('blob:') || value.startsWith('data:image/');
-}
-
-function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
-  const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
-  const candidateSrc = profile?.name === name ? profile.avatarSrc : null;
-  const avatarSrc = typeof candidateSrc === 'string' && isSafeAvatarUrl(candidateSrc) ? candidateSrc : null;
-
-  return { avatarSrc, name };
-}
-
-function getMessageSenderName(message: Pick<ChatMessage, 'senderName'>, profile: AvatarProfile | undefined) {
-  return normalizeRegisteredName(message.senderName) ?? profile?.name ?? null;
-}
-
-function getMessageSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName'>, profile: AvatarProfile | undefined) {
-  return getMessageSenderName(message, profile) ?? getSenderLabel(message);
-}
-
 function getReactionDetailsDomId(messageSignature: string, reaction: string) {
   const signaturePart = messageSignature.replace(/[^A-Za-z0-9_-]/g, '-');
   const reactionPart = Array.from(reaction)
@@ -448,86 +422,6 @@ function getReactionDetailsDomId(messageSignature: string, reaction: string) {
     .join('-') || 'reaction';
 
   return `reaction-details-${signaturePart}-${reactionPart}`;
-}
-
-function UserAvatar({
-  className,
-  name,
-  onOpen,
-  openLabel,
-  src,
-}: {
-  className: string;
-  name: string | null;
-  onOpen?: (image: AvatarLightboxImage) => void;
-  openLabel?: string;
-  src: string | null;
-}) {
-  const avatarClassName = `${className} user-avatar`;
-
-  if (src) {
-    if (onOpen) {
-      return (
-        <button
-          aria-label={openLabel}
-          className={`${avatarClassName} user-avatar--button`}
-          onClick={() => onOpen({ name, src })}
-          title={openLabel}
-          type="button"
-        >
-          <img alt="" className="user-avatar__image" src={src} />
-        </button>
-      );
-    }
-
-    return <img alt="" className={avatarClassName} src={src} />;
-  }
-
-  return (
-    <span aria-hidden="true" className={`${avatarClassName} user-avatar--fallback`}>
-      {getAvatarFallbackCharacter(name)}
-    </span>
-  );
-}
-
-function MessageIdentity({
-  message,
-  onOpenAccount,
-  onOpenAvatar,
-  openAvatarLabel,
-  profile,
-  t,
-}: {
-  message: ChatMessage;
-  onOpenAccount: (target: AccountInfoTarget) => void;
-  onOpenAvatar: (image: AvatarLightboxImage) => void;
-  openAvatarLabel: string;
-  profile: AvatarProfile | undefined;
-  t: TranslateFunction;
-}) {
-  const { avatarSrc, name } = getAvatarView(profile, message.senderName);
-  const label = getMessageSenderLabel(message, profile);
-
-  return (
-    <span className="message__identity" title={message.sender}>
-      <UserAvatar
-        className="message__avatar"
-        name={name}
-        onOpen={onOpenAvatar}
-        openLabel={openAvatarLabel}
-        src={avatarSrc}
-      />
-      <button
-        aria-label={t('action.openAccountInfo', { account: label })}
-        className="message__sender-button"
-        onClick={() => onOpenAccount({ sender: message.sender, senderName: message.senderName ?? null })}
-        title={message.sender}
-        type="button"
-      >
-        <strong>{label}</strong>
-      </button>
-    </span>
-  );
 }
 
 function AccountInfoDialog({
