@@ -14,6 +14,12 @@ export type QdnDisplaySettings = {
   accent: QdnAccent;
 };
 
+// NOT dead code: when the app is rendered directly by Qortium Core (the
+// standalone `render`/`gateway` path, rather than embedded in Home), Core injects
+// these as `var _qdn*` globals into the document head — see
+// qortium `src/main/java/org/qortium/api/HTMLParser.java` (`_qdnTheme`, `_qdnLang`,
+// `_qdnTextSize`, `_qdnAccent`). Home instead supplies display settings via query
+// params + postMessage, so these globals are the fallback for the Core-only path.
 type QdnHostWindow = Window & {
   _qdnLang?: unknown;
   _qdnLanguage?: unknown;
