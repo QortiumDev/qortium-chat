@@ -6,6 +6,16 @@ import { type ChatMessage } from './types';
 
 export type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
 
+export type CachedAvatarProfile = AvatarProfile & {
+  requestKey: string;
+};
+
+// Keyed by the (untrusted) account address. A Map rather than a plain object so
+// that the address — which originates from chat-message data — is never used as
+// a computed object property name; that keeps the looked-up profile (and the
+// avatar URL it carries) from being treated as attacker-controlled downstream.
+export type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
+
 export function getShortAddress(address: string) {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }

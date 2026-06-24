@@ -93,6 +93,7 @@ import {
 } from './generalChat';
 import { copyTextToClipboard } from './clipboard';
 import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
+import { GroupMemberList } from './GroupMemberList';
 import {
   getAvatarView,
   getMessageSenderLabel,
@@ -100,16 +101,16 @@ import {
   MessageIdentity,
   UserAvatar,
   type AccountInfoTarget,
+  type AvatarProfilesByAddress,
+  type CachedAvatarProfile,
 } from './accountDisplay';
 import { useModalDialog } from './useModalDialog';
 import {
-  AdminIcon,
   BackIcon,
   BrandMark,
   CloseIcon,
   DownIcon,
   LockIcon,
-  OwnerIcon,
   PlusIcon,
   SearchIcon,
   UpIcon,
@@ -128,10 +129,7 @@ import {
 import {
   getActiveMessageGroupMembers,
   getGroupMemberAddress,
-  getGroupMemberDisplayName,
   getGroupMemberRegisteredName,
-  getGroupMemberRole,
-  getOrderedGroupMembers,
 } from './groupMembers';
 import { isPublicNodeSendUnsupported, shouldDecryptGroupMessages } from './groupAccess';
 import {
@@ -405,15 +403,6 @@ function normalizeSelectedAccount(account: QdnSelectedAccount): QdnSelectedAccou
   };
 }
 
-type CachedAvatarProfile = AvatarProfile & {
-  requestKey: string;
-};
-
-// Keyed by the (untrusted) account address. A Map rather than a plain object so
-// that the address — which originates from chat-message data — is never used as
-// a computed object property name; that keeps the looked-up profile (and the
-// avatar URL it carries) from being treated as attacker-controlled downstream.
-type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
 
 function getReactionDetailsDomId(messageSignature: string, reaction: string) {
   const signaturePart = messageSignature.replace(/[^A-Za-z0-9_-]/g, '-');
@@ -2401,88 +2390,6 @@ const MessageList = memo(function MessageList({
     </>
   );
 });
-
-function GroupMemberList({
-  avatarProfiles,
-  group,
-  members,
-  onOpenAccount,
-  onOpenAvatar,
-  t,
-}: {
-  avatarProfiles: AvatarProfilesByAddress;
-  group: GroupData | null;
-  members: GroupMember[];
-  onOpenAccount: (target: AccountInfoTarget) => void;
-  onOpenAvatar: (image: AvatarLightboxImage) => void;
-  t: TranslateFunction;
-}) {
-  const orderedMembers = getOrderedGroupMembers(members, group);
-  const ownerAddress = group?.owner;
-
-  if (orderedMembers.length === 0) {
-    return <p className="empty">{t('hint.noMembers')}</p>;
-  }
-
-  return (
-    <ul className="member-list">
-      {orderedMembers.map((member) => {
-        const address = getGroupMemberAddress(member);
-        const registeredName = getGroupMemberRegisteredName(member);
-        const profile = address ? avatarProfiles.get(address) : undefined;
-        const { avatarSrc, name } = getAvatarView(profile, registeredName);
-        const label = getGroupMemberDisplayName(member, t('member.label'), getShortAddress, profile?.name);
-        const shortAddress = address ? getShortAddress(address) : '';
-        const role = getGroupMemberRole(member, ownerAddress);
-        const roleLabel =
-          role === 'owner' ? t('label.group.owner') : role === 'admin' ? t('label.group.admin') : '';
-
-        return (
-          <li
-            className={`member-chip member-chip--${role}`}
-            key={address || label}
-            title={address}
-          >
-            <UserAvatar
-              className="member-chip__avatar"
-              name={name}
-              onOpen={avatarSrc ? onOpenAvatar : undefined}
-              openLabel={t('action.openAvatarImage')}
-              src={avatarSrc}
-            />
-            <span className="member-chip__text">
-              {address ? (
-                <button
-                  className="member-chip__name member-chip__name-button"
-                  onClick={() => onOpenAccount({ sender: address, senderName: name })}
-                  title={t('action.openAccountInfo', { account: label })}
-                  type="button"
-                >
-                  {label}
-                </button>
-              ) : (
-                <span className="member-chip__name">{label}</span>
-              )}
-              {shortAddress && label !== shortAddress ? (
-                <span className="member-chip__address">{shortAddress}</span>
-              ) : null}
-            </span>
-            {role !== 'member' ? (
-              <span
-                aria-label={roleLabel}
-                className={`member-chip__role member-chip__role--${role}`}
-                role="img"
-                title={roleLabel}
-              >
-                {role === 'owner' ? <OwnerIcon /> : <AdminIcon />}
-              </span>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() =>
