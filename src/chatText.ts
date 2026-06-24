@@ -321,3 +321,11 @@ export function formatTimeAgo(timestamp: number | null | undefined, now: number,
 export function getSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName'>) {
   return message.senderName || `${message.sender.slice(0, 8)}...${message.sender.slice(-6)}`;
 }
+
+// Single-line preview of a message body for reply previews and sidebar snippets.
+export function getMessageSnippet(message: ChatMessage, t: TranslateFunction, maxLength = 140) {
+  const body = decodeChatMessage(message, t).body || t('message.empty');
+  const flattened = body.replace(/\s+/g, ' ').trim();
+
+  return flattened.length > maxLength ? `${flattened.slice(0, maxLength - 1)}…` : flattened;
+}
