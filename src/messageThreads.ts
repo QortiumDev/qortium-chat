@@ -1,6 +1,12 @@
 import type { ChatMessage } from './types';
 import { isReactionChatMessage } from './chatText';
 
+// Stable React key / dedupe key for a message: its on-chain signature when present,
+// else a synthesized fallback from timestamp/sender/index for unsigned local rows.
+export function getMessageKey(message: ChatMessage, index = 0) {
+  return message.signature || `${message.timestamp}-${message.sender}-${index}`;
+}
+
 /**
  * A chat transaction cannot be edited, so an "edit" is a new CHAT transaction
  * whose chatReference points at the original message's signature. A thread is

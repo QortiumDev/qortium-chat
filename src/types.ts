@@ -256,6 +256,19 @@ export type GroupApprovalVote = {
   timestamp?: number;
 };
 
+// A chat-driven transaction the UI tracks to confirmation, surfaced inline in the
+// transcript as a system message (joins, leaves, approvals, reward shares).
+export type TrackedTransaction = {
+  action: 'approve' | 'groupApproval' | 'join' | 'leave' | 'rewardshare';
+  groupId: number;
+  groupName: string;
+  id: string;
+  joiner?: string;
+  message: string;
+  phase: 'confirmed' | 'failed' | 'pending';
+  signature?: string;
+};
+
 // Derived client-side from the vote tally; not a Core response shape.
 export type ApprovalProgress = {
   approvalsSoFar: number; // distinct eligible voters whose latest vote approves
