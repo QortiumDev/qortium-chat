@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Nem támogatott üzenetkódolás',
   'message.decodeError': 'A jelszó nem dekódolható',
   'group.meta.memberCount': '{count} tag',
+  'group.meta.activeCount': '{count} aktív',
   'group.meta.closedHistoryPrivateRead': 'Lezárt / privát olvasás',
   'group.meta.closedHistoryUnavailable': 'Lezárt / privát előzmény nem elérhető',
   'group.meta.directPrivateRead': 'Közvetlen / privát előzmény',

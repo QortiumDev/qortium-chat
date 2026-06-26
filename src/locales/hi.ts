@@ -76,6 +76,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'असमर्थित संदेश एनकोडिंग',
   'message.decodeError': 'संदेश डिकोड नहीं कर सका',
   'group.meta.memberCount': '{count} सदस्य',
+  'group.meta.activeCount': '{count} सक्रिय',
   'group.meta.closedHistoryPrivateRead': 'बंद / निजी पठन',
   'group.meta.closedHistoryUnavailable': 'बंद / निजी इतिहास उपलब्ध नहीं',
   'group.meta.directPrivateRead': 'प्रत्यक्ष / निजी इतिहास',

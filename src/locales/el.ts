@@ -76,6 +76,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Μη υποστηριζόμενη κωδικοποίηση μηνύματος',
   'message.decodeError': 'Αδυναμία αποκωδικοποίησης μηνύματος',
   'group.meta.memberCount': '{count} μέλη',
+  'group.meta.activeCount': '{count} ενεργοί',
   'group.meta.closedHistoryPrivateRead': 'Κλειστή / ιδιωτική ανάγνωση',
   'group.meta.closedHistoryUnavailable': 'Κλειστή / η ιδιωτική ιστορία δεν είναι διαθέσιμη',
   'group.meta.directPrivateRead': 'Άμεση / ιδιωτικό ιστορικό',

@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Toetamata sõnumikodeering',
   'message.decodeError': 'Sõnumi dešifreerimine nurjus',
   'group.meta.memberCount': '{count} liiget',
+  'group.meta.activeCount': '{count} aktiivset',
   'group.meta.closedHistoryPrivateRead': 'Suletud / privaatne lugemine',
   'group.meta.closedHistoryUnavailable': 'Suletud / privaatne ajalugu pole saadaval',
   'group.meta.directPrivateRead': 'Otse / privaatne ajalugu',

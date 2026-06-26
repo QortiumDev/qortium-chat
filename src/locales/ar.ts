@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'ترميز غير مدعوم',
   'message.decodeError': 'تعذر فك تشفير الرسالة',
   'group.meta.memberCount': '{count} أعضاء',
+  'group.meta.activeCount': '{count} نشط',
   'group.meta.closedHistoryPrivateRead': 'مغلق / قراءة خاصة',
   'group.meta.closedHistoryUnavailable': 'سجل مغلق / خاص غير متاح',
   'group.meta.directPrivateRead': 'مباشر / سجل خاص',

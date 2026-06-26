@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'קידוד הודעה לא נתמך',
   'message.decodeError': 'לא ניתן לפענח את ההודעה',
   'group.meta.memberCount': '{count} חברים',
+  'group.meta.activeCount': '{count} פעילים',
   'group.meta.closedHistoryPrivateRead': 'סגור / קריאה פרטית',
   'group.meta.closedHistoryUnavailable': 'היסטוריה פרטית סגורה לא זמינה',
   'group.meta.directPrivateRead': 'ישיר / היסטוריה פרטית',

@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Кодирование сообщения не поддерживается',
   'message.decodeError': 'Не удается расшифровать сообщение',
   'group.meta.memberCount': '{count} участник(ов)',
+  'group.meta.activeCount': '{count} активных',
   'group.meta.closedHistoryPrivateRead': 'Закрыто / приватное чтение',
   'group.meta.closedHistoryUnavailable': 'Закрыто / приватная история недоступна',
   'group.meta.directPrivateRead': 'Личный / приватная история',

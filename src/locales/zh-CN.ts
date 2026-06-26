@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': '不支持的消息编码',
   'message.decodeError': '无法解码消息',
   'group.meta.memberCount': '{count} 位成员',
+  'group.meta.activeCount': '{count} 位活跃',
   'group.meta.closedHistoryPrivateRead': '已关闭/私有读取',
   'group.meta.closedHistoryUnavailable': '已关闭/私有历史不可用',
   'group.meta.directPrivateRead': '私聊/私有历史',

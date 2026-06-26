@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Nicht unterstützte Nachrichtenkodierung',
   'message.decodeError': 'Nachricht konnte nicht entschlüsselt werden',
   'group.meta.memberCount': '{count} Mitglieder',
+  'group.meta.activeCount': '{count} aktiv',
   'group.meta.closedHistoryPrivateRead': 'Geschlossen / privat lesen',
   'group.meta.closedHistoryUnavailable': 'Geschlossener / privater Verlauf nicht verfügbar',
   'group.meta.directPrivateRead': 'Direkt / privater Verlauf',

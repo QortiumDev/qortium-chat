@@ -8,6 +8,7 @@ import { type ActiveDirectChat, type GroupData } from './types';
 
 export const GroupList = memo(function GroupList({
   activityByGroupId,
+  collapsed = false,
   groups,
   memberCountsByGroupId,
   onSelect,
@@ -17,6 +18,7 @@ export const GroupList = memo(function GroupList({
   now,
 }: {
   activityByGroupId: ReadonlyMap<number, number>;
+  collapsed?: boolean;
   groups: GroupData[];
   memberCountsByGroupId?: ReadonlyMap<number, number>;
   onSelect: (group: GroupData) => void;
@@ -25,13 +27,19 @@ export const GroupList = memo(function GroupList({
   unreadGroupIds: ReadonlySet<number>;
   now: number;
 }) {
-  if (groups.length === 0) {
-    return <p className="empty">{t('hint.noGroups')}</p>;
+  // A collapsed section still surfaces the groups that need attention: unread
+  // ones, plus the currently open group (unread sets exclude the open chat).
+  const visibleGroups = collapsed
+    ? groups.filter((group) => unreadGroupIds.has(group.groupId) || group.groupId === selectedGroupId)
+    : groups;
+
+  if (visibleGroups.length === 0) {
+    return collapsed ? null : <p className="empty">{t('hint.noGroups')}</p>;
   }
 
   return (
     <ul className="group-list">
-      {groups.map((group) => {
+      {visibleGroups.map((group) => {
         const lastMessageTimestamp = activityByGroupId.get(group.groupId);
         const isUnread = unreadGroupIds.has(group.groupId);
         const memberCount =
@@ -76,7 +84,9 @@ export const GroupList = memo(function GroupList({
               ) : null}
               {typeof memberCount === 'number' ? (
                 <span className="group-row__members">
-                  {t('group.meta.memberCount', { count: memberCount.toLocaleString() })}
+                  {isGeneralChatGroup(group)
+                    ? t('group.meta.activeCount', { count: memberCount.toLocaleString() })
+                    : t('group.meta.memberCount', { count: memberCount.toLocaleString() })}
                 </span>
               ) : null}
             </span>
@@ -91,6 +101,7 @@ export const GroupList = memo(function GroupList({
 export const DirectList = memo(function DirectList({
   activityByAddress,
   canOpen,
+  collapsed = false,
   directs: directEntries,
   onRemove,
   onSelect,
@@ -102,6 +113,7 @@ export const DirectList = memo(function DirectList({
 }: {
   activityByAddress: ReadonlyMap<string, number>;
   canOpen: boolean;
+  collapsed?: boolean;
   directs: ActiveDirectChat[];
   onRemove: (address: string) => void;
   onSelect: (direct: ActiveDirectChat) => void;
@@ -112,7 +124,7 @@ export const DirectList = memo(function DirectList({
   now: number;
 }) {
   const directs = useMemo(() => {
-    return [...directEntries].sort((first, second) => {
+    const sorted = [...directEntries].sort((first, second) => {
       const firstActivity = activityByAddress.get(first.address);
       const secondActivity = activityByAddress.get(second.address);
 
@@ -130,10 +142,16 @@ export const DirectList = memo(function DirectList({
 
       return getDirectTitle(first).localeCompare(getDirectTitle(second));
     });
-  }, [directEntries, activityByAddress]);
+
+    // A collapsed section still surfaces the directs that need attention: unread
+    // ones, plus the currently open chat (unread sets exclude the open chat).
+    return collapsed
+      ? sorted.filter((direct) => unreadAddresses.has(direct.address) || direct.address === selectedAddress)
+      : sorted;
+  }, [directEntries, activityByAddress, collapsed, unreadAddresses, selectedAddress]);
 
   if (directs.length === 0) {
-    return <p className="empty">{t('hint.noDirectChats')}</p>;
+    return collapsed ? null : <p className="empty">{t('hint.noDirectChats')}</p>;
   }
 
   return (

@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Codifica del messaggio non supportata',
   'message.decodeError': 'Impossibile decodificare il messaggio',
   'group.meta.memberCount': '{count} membri',
+  'group.meta.activeCount': '{count} attivi',
   'group.meta.closedHistoryPrivateRead': 'Chiuso / lettura privata',
   'group.meta.closedHistoryUnavailable': 'Cronologia privata chiusa non disponibile',
   'group.meta.directPrivateRead': 'Diretto / cronologia privata',

@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Codificare mesaj nesuportată',
   'message.decodeError': 'Nu se poate decoda mesajul',
   'group.meta.memberCount': '{count} membri',
+  'group.meta.activeCount': '{count} activi',
   'group.meta.closedHistoryPrivateRead': 'Închis / citire privată',
   'group.meta.closedHistoryUnavailable': 'Închis / istoric privat indisponibil',
   'group.meta.directPrivateRead': 'Direct / istoric privat',

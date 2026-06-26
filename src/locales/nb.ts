@@ -76,6 +76,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Ustøttet meldingskoding',
   'message.decodeError': 'Kan ikke dekode meldingen',
   'group.meta.memberCount': '{count} medlemmer',
+  'group.meta.activeCount': '{count} aktive',
   'group.meta.closedHistoryPrivateRead': 'Lukket / privat lesing',
   'group.meta.closedHistoryUnavailable': 'Lukket / privat historikk utilgjengelig',
   'group.meta.directPrivateRead': 'Direkte / privat historikk',

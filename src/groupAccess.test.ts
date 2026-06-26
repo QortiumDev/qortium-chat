@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GENERAL_CHAT_GROUP_ID } from './generalChat';
 import {
   isOpenGroup,
+  isPublicNodePrivateGroupKeyRecoveryUnsupported,
   isPublicNodeSendUnsupported,
   shouldDecryptGroupMessages,
   type GroupReadAccessState,
@@ -75,5 +76,15 @@ describe('isPublicNodeSendUnsupported', () => {
     expect(isPublicNodeSendUnsupported(false, { group: openGroup, kind: 'group' })).toBe(false);
     expect(isPublicNodeSendUnsupported(false, { group: closedGroup, kind: 'group' })).toBe(false);
     expect(isPublicNodeSendUnsupported(false, { kind: 'direct' })).toBe(false);
+  });
+});
+
+describe('isPublicNodePrivateGroupKeyRecoveryUnsupported', () => {
+  it('blocks private group key recovery on a public node', () => {
+    expect(isPublicNodePrivateGroupKeyRecoveryUnsupported(true)).toBe(true);
+  });
+
+  it('allows private group key recovery on a trusted local/custom node', () => {
+    expect(isPublicNodePrivateGroupKeyRecoveryUnsupported(false)).toBe(false);
   });
 });
