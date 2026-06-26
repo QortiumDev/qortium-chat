@@ -1,8 +1,25 @@
 import { getAccountNames, resolveIdentities } from './coreApi';
 import { qdnRequest } from './qdnRequest';
-import type { NameSummary, QdnAction } from './types';
+import type { NameSummary, NodeApiFetchResult, QdnAction } from './types';
 
 const AVATAR_MAX_BYTES = 500 * 1024;
+const AVATAR_STATUS_MAX_BYTES = 64 * 1024;
+// Avatars are QDN resources: on a node that has not already downloaded+built the
+// thumbnail, a synchronous fetch 404s immediately. Mirror Qortium Home's own
+// avatar loader — poll the build status until READY before fetching — so the
+// image appears once the node has pulled it from the network instead of giving
+// up on the first miss. Bounded so missing/undownloadable avatars fail fast.
+const AVATAR_STATUS_POLL_INTERVAL_MS = 2000;
+const AVATAR_STATUS_MAX_POLLS = 10;
+// Statuses where waiting longer cannot help: the resource was never published or
+// cannot be served. Anything else (DOWNLOADING/BUILDING/…) is still in progress.
+const AVATAR_TERMINAL_STATUSES = new Set(['NOT_PUBLISHED', 'BLACKLISTED', 'UNSUPPORTED']);
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 // Avatars are rendered straight into `<img src>`. We only ever build them from
 // an allowlisted raster image type — raster-only deliberately excludes
@@ -130,6 +147,45 @@ async function resolveRegisteredName(address: string, preferredName: string | nu
   return getFirstRegisteredName(await getAccountNames(address, actions));
 }
 
+// Poll the QDN build status (which also drives the download) until the avatar
+// thumbnail is READY, mirroring Home's avatar loader. Returns true once ready,
+// false if the resource is terminally unavailable or still not ready after the
+// bounded number of polls. Per-poll errors (e.g. a transient 404 before the
+// download starts) are treated as "still in progress" rather than fatal.
+async function waitForAvatarReady(name: string) {
+  const statusPath = `/arbitrary/resource/status/THUMBNAIL/${encodeURIComponent(name)}/avatar?build=true`;
+
+  for (let attempt = 0; attempt < AVATAR_STATUS_MAX_POLLS; attempt += 1) {
+    let status: string | undefined;
+
+    try {
+      const result = await qdnRequest<NodeApiFetchResult>({
+        action: 'FETCH_NODE_API',
+        path: statusPath,
+        maxBytes: AVATAR_STATUS_MAX_BYTES,
+      });
+
+      status = getStringProperty(result?.data, 'status');
+    } catch {
+      // Treat a failed status read as not-ready-yet and keep polling (bounded).
+    }
+
+    if (status === 'READY') {
+      return true;
+    }
+
+    if (status && AVATAR_TERMINAL_STATUSES.has(status)) {
+      return false;
+    }
+
+    if (attempt < AVATAR_STATUS_MAX_POLLS - 1) {
+      await delay(AVATAR_STATUS_POLL_INTERVAL_MS);
+    }
+  }
+
+  return false;
+}
+
 export async function fetchAvatarImage(name: string) {
   const request = {
     service: 'THUMBNAIL',
@@ -137,6 +193,15 @@ export async function fetchAvatarImage(name: string) {
     identifier: 'avatar',
     path: '',
   };
+
+  // Wait for the node to have the thumbnail built before probing/fetching it.
+  // GET_QDN_RESOURCE_PROPERTIES loads synchronously and 404s while the resource
+  // is still downloading, so calling it (or a fetch) before READY is what made
+  // avatars fall back to the initial placeholder on a cold cache.
+  if (!(await waitForAvatarReady(name))) {
+    throw new Error('Avatar resource is not available yet.');
+  }
+
   const properties = await qdnRequest<unknown>({
     action: 'GET_QDN_RESOURCE_PROPERTIES',
     ...request,
@@ -147,12 +212,14 @@ export async function fetchAvatarImage(name: string) {
     throw new Error('Avatar exceeds the thumbnail size limit.');
   }
 
+  // No `rebuild: true`: the rebuild flag bypasses the cached avatar and forces a
+  // blocking rebuild on every call. The resource is already READY here, so a
+  // plain fetch returns the cached thumbnail.
   const base64 = getBase64Payload(
     await qdnRequest<unknown>({
       action: 'FETCH_QDN_RESOURCE',
       ...request,
       encoding: 'base64',
-      rebuild: true,
       maxBytes: AVATAR_MAX_BYTES,
     }),
   );

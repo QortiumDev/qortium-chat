@@ -50,7 +50,7 @@ import {
 import { type AvatarLightboxImage } from './AvatarLightbox';
 import { DownIcon, UpIcon } from './icons';
 import { type TranslateFunction } from './i18n';
-import { type ChatMessage, type TrackedTransaction } from './types';
+import { type ChatMessage, type ChatScrollPosition, type TrackedTransaction } from './types';
 
 function getReactionDetailsDomId(messageSignature: string, reaction: string) {
   const signaturePart = messageSignature.replace(/[^A-Za-z0-9_-]/g, '-');
@@ -454,7 +454,7 @@ export const MessageList = memo(function MessageList({
   canOpenDocumentViewer,
   canOpenMediaPlayer,
   canSaveQdnResource,
-  initialScrollTop,
+  initialScrollPosition,
   messages,
   olderMessagesError,
   olderMessagesLoading,
@@ -481,7 +481,7 @@ export const MessageList = memo(function MessageList({
   canOpenDocumentViewer: boolean;
   canOpenMediaPlayer: boolean;
   canSaveQdnResource: boolean;
-  initialScrollTop: number | undefined;
+  initialScrollPosition: ChatScrollPosition | undefined;
   messages: ChatMessage[];
   olderMessagesError: string;
   olderMessagesLoading: boolean;
@@ -492,7 +492,7 @@ export const MessageList = memo(function MessageList({
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   onReply: (message: ChatMessage) => void;
-  onScrollPositionChange: (chatKey: string, scrollTop: number) => void;
+  onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
   pendingReactionKey: string;
   scrollChatKey: string;
   selfAddress: string | null;
@@ -514,9 +514,12 @@ export const MessageList = memo(function MessageList({
   // Captured before older history is prepended so we can restore the viewport to
   // the same message instead of jumping when scrollHeight grows.
   const olderScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
-  // Pending rAF id for the scroll-to-bottom settle loop, so a new pin cancels an
-  // in-flight one and unmount can cancel it.
+  // Pending rAF id for the scroll settle loop, so a new pin cancels an in-flight
+  // one and unmount can cancel it.
   const scrollSettleRafRef = useRef(0);
+  // True while a settle loop is programmatically driving scrollTop, so the
+  // onScroll handler does not persist those transient positions over the user's.
+  const programmaticScrollRef = useRef(false);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
   // The "new messages" divider element, so the jump-to-unread control can scroll
   // it into view and so its viewport position drives whether that control shows.
@@ -702,21 +705,20 @@ export const MessageList = memo(function MessageList({
     updateBottomState(list);
   }
 
-  // Pin the feed to the bottom now, then keep re-pinning across frames until the
-  // measured height stops growing. A single re-pin lands short whenever late
-  // layout (async images, web-font metrics, line-wrap reflow, a quiet-poll
-  // append) grows the feed after that one frame — that is why one click of the
-  // down arrow only used to go part of the way. The loop stops once the height
-  // holds steady for two frames, or after a ~1s safety cap so a perpetually
-  // growing feed can never spin forever.
-  function scrollToBottom() {
+  // Re-apply a scroll target across frames until it stops moving. `applyStep`
+  // re-pins the desired position each frame and returns false to abort (e.g. the
+  // list/anchor went away). This absorbs late layout (async images, web-font
+  // metrics, line-wrap reflow, a quiet-poll append) that would otherwise leave a
+  // single pin short — that is why one click of the down arrow used to only go
+  // part of the way. Stops once scrollTop holds for two frames, or after a ~1s
+  // safety cap so a perpetually growing feed can never spin forever.
+  function runScrollSettle(applyStep: (list: HTMLOListElement) => boolean) {
     const list = listRef.current;
 
-    if (!list) {
+    if (!list || !applyStep(list)) {
       return;
     }
 
-    list.scrollTop = list.scrollHeight;
     updateBottomState(list);
 
     if (typeof requestAnimationFrame !== 'function') {
@@ -727,33 +729,35 @@ export const MessageList = memo(function MessageList({
       cancelAnimationFrame(scrollSettleRafRef.current);
     }
 
-    let lastHeight = list.scrollHeight;
+    programmaticScrollRef.current = true;
+
+    let lastTop = list.scrollTop;
     let stableFrames = 0;
     let attempts = 0;
 
     const settle = () => {
       const nextList = listRef.current;
 
-      if (!nextList) {
+      if (!nextList || !applyStep(nextList)) {
+        programmaticScrollRef.current = false;
         scrollSettleRafRef.current = 0;
         return;
       }
 
-      nextList.scrollTop = nextList.scrollHeight;
+      const top = nextList.scrollTop;
 
-      const height = nextList.scrollHeight;
-
-      if (height === lastHeight) {
+      if (top === lastTop) {
         stableFrames += 1;
       } else {
         stableFrames = 0;
-        lastHeight = height;
+        lastTop = top;
       }
 
       attempts += 1;
 
       if (stableFrames >= 2 || attempts >= 60) {
         updateBottomState(nextList);
+        programmaticScrollRef.current = false;
         scrollSettleRafRef.current = 0;
         return;
       }
@@ -762,6 +766,70 @@ export const MessageList = memo(function MessageList({
     };
 
     scrollSettleRafRef.current = requestAnimationFrame(settle);
+  }
+
+  function scrollToBottom() {
+    runScrollSettle((list) => {
+      list.scrollTop = list.scrollHeight;
+      return true;
+    });
+  }
+
+  // Position a specific message so its top sits `anchorOffset` px below the
+  // viewport top, and keep re-pinning while the feed settles. Aborts (falling
+  // back to the bottom) if the anchored message is not in the loaded window.
+  function scrollToAnchor(anchorKey: string, anchorOffset: number) {
+    if (!itemsRef.current.get(anchorKey)) {
+      scrollToBottom();
+      return;
+    }
+
+    runScrollSettle((list) => {
+      const element = itemsRef.current.get(anchorKey);
+
+      if (!element) {
+        return false;
+      }
+
+      const listTop = list.getBoundingClientRect().top;
+      const elementTop = element.getBoundingClientRect().top;
+
+      list.scrollTop += elementTop - listTop - anchorOffset;
+      return true;
+    });
+  }
+
+  function restoreScrollPosition(position: ChatScrollPosition | undefined) {
+    if (!position || position.atBottom) {
+      scrollToBottom();
+      return;
+    }
+
+    scrollToAnchor(position.anchorKey, position.anchorOffset);
+  }
+
+  // Capture the current reading position as a message anchor (the topmost message
+  // still visible at the viewport top) so it can be restored after the feed is
+  // unmounted and re-rendered with different async heights. At the bottom we save
+  // an explicit bottom pin instead, so new messages keep it stuck to the bottom.
+  function computeScrollPosition(list: HTMLOListElement): ChatScrollPosition {
+    if (stickToBottomRef.current) {
+      return { atBottom: true };
+    }
+
+    const listTop = list.getBoundingClientRect().top;
+
+    // itemsRef preserves insertion (render) order, top to bottom, so the first
+    // message whose bottom is past the viewport top is the topmost visible one.
+    for (const [key, element] of itemsRef.current) {
+      const rect = element.getBoundingClientRect();
+
+      if (rect.bottom > listTop + 1) {
+        return { anchorKey: key, anchorOffset: rect.top - listTop, atBottom: false };
+      }
+    }
+
+    return { atBottom: true };
   }
 
   // Manual retry after an error — bypasses the auto-trigger's error guard.
@@ -804,20 +872,11 @@ export const MessageList = memo(function MessageList({
 
     didRestoreScrollRef.current = true;
 
-    if (typeof initialScrollTop === 'number' && Number.isFinite(initialScrollTop)) {
-      const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
-      const target = Math.min(initialScrollTop, maxScrollTop);
-
-      list.scrollTop = target;
-      updateBottomState(list);
-    } else {
-      // No saved position, or the saved position was "at bottom" (persisted as a
-      // non-finite sentinel — see onScroll). Pin to the true bottom via the settle
-      // loop so late layout growth can't leave it short, instead of restoring a
-      // stale pixel offset captured against the previous render's height.
-      scrollToBottom();
-    }
-  }, [initialScrollTop, messages.length, scrollChatKey]);
+    // Restore the saved message anchor (or default to the bottom). Anchoring to a
+    // message rather than a raw pixel offset means the reading position survives
+    // the feed remounting and re-measuring as async previews load in.
+    restoreScrollPosition(initialScrollPosition);
+  }, [initialScrollPosition, messages.length, scrollChatKey]);
 
   // Keep the newest content in view when the user is reading at the bottom (or a
   // send just landed); if they have scrolled up, their position is left untouched.
@@ -994,16 +1053,12 @@ export const MessageList = memo(function MessageList({
             }
 
             // Remember where the user is reading so it can be restored on return.
-            // Skip until the initial position is applied so transient scrolls during
-            // mount/restore do not overwrite the saved position. When the user is at
-            // the bottom, persist a non-finite sentinel rather than the pixel offset
-            // so the restore re-pins to the live bottom (heights differ after a
-            // remount/reload) instead of landing short of it.
-            if (didRestoreScrollRef.current) {
-              onScrollPositionChange(
-                scrollChatKey,
-                stickToBottomRef.current ? Number.POSITIVE_INFINITY : list.scrollTop,
-              );
+            // Skip until the initial position is applied (so transient mount/restore
+            // scrolls don't overwrite the saved position) and while a settle loop is
+            // programmatically driving scrollTop (so its frames don't clobber the
+            // user's anchor). Saved as a message anchor — see computeScrollPosition.
+            if (didRestoreScrollRef.current && !programmaticScrollRef.current) {
+              onScrollPositionChange(scrollChatKey, computeScrollPosition(list));
             }
 
             maybeLoadOlder(list);

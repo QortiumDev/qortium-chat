@@ -118,6 +118,7 @@ import type {
   BridgeState,
   ApprovalProgress,
   ChatMessage,
+  ChatScrollPosition,
   GroupApprovalVote,
   GroupData,
   GroupJoinRequest,
@@ -641,7 +642,7 @@ export default function App() {
   const skipWatermarkPersistRef = useRef(true);
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
-  const scrollPositionsRef = useRef(new Map<string, number>());
+  const scrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
@@ -3517,7 +3518,7 @@ export default function App() {
               canOpenDocumentViewer={canOpenDocumentViewer}
               canOpenMediaPlayer={canOpenMediaPlayer}
               canSaveQdnResource={canSaveQdnResource}
-              initialScrollTop={scrollPositionsRef.current.get(selectedChatKey)}
+              initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
               messages={combinedMessages}
               olderMessagesError={olderMessagesState.error}
               olderMessagesReachedStart={olderMessagesState.reachedStart}
@@ -3528,8 +3529,8 @@ export default function App() {
               onOpenAvatar={setAvatarLightboxImage}
               onReact={(message, reaction, contentState) => void handleMessageReaction(message, reaction, contentState)}
               onReply={startReply}
-              onScrollPositionChange={(chatKey, scrollTop) => {
-                scrollPositionsRef.current.set(chatKey, scrollTop);
+              onScrollPositionChange={(chatKey, position) => {
+                scrollPositionsRef.current.set(chatKey, position);
               }}
               now={now}
               pendingReactionKey={reactionPendingKey}

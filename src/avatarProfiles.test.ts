@@ -40,8 +40,12 @@ describe('avatar profile helpers', () => {
     expect(getAvatarFallbackCharacter(null)).toBe('?');
   });
 
+  // The runtime polls QDN build status until READY before fetching the image.
+  const readyStatus = { data: { status: 'READY' } };
+
   it('fetches avatar images from THUMBNAIL with identifier avatar', async () => {
     qdnRequestMock
+      .mockResolvedValueOnce(readyStatus)
       .mockResolvedValueOnce({ filename: 'avatar.png', mimeType: 'image/png', size: 128 })
       .mockResolvedValueOnce('iVBORw0KGgo=');
 
@@ -50,27 +54,34 @@ describe('avatar profile helpers', () => {
     expect(blob?.type).toBe('image/png');
     expect(blob?.size).toBe(8);
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'FETCH_NODE_API',
+      path: '/arbitrary/resource/status/THUMBNAIL/alice/avatar?build=true',
+      maxBytes: 64 * 1024,
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
       action: 'GET_QDN_RESOURCE_PROPERTIES',
       service: 'THUMBNAIL',
       name: 'alice',
       identifier: 'avatar',
       path: '',
     });
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
       action: 'FETCH_QDN_RESOURCE',
       service: 'THUMBNAIL',
       name: 'alice',
       identifier: 'avatar',
       path: '',
       encoding: 'base64',
-      rebuild: true,
       maxBytes: 500 * 1024,
     });
+    // The cache-bypassing rebuild flag must no longer be sent.
+    expect(JSON.stringify(qdnRequestMock.mock.calls)).not.toContain('rebuild');
     expect(JSON.stringify(qdnRequestMock.mock.calls)).not.toContain('qortium_avatar');
   });
 
   it('downgrades non-raster image types so script-bearing avatars cannot reach an img src', async () => {
     qdnRequestMock
+      .mockResolvedValueOnce(readyStatus)
       .mockResolvedValueOnce({ mimeType: 'image/svg+xml', size: 128 })
       .mockResolvedValueOnce('PHN2Zy8+');
 
@@ -80,14 +91,24 @@ describe('avatar profile helpers', () => {
 
   it('rejects payloads that fall outside the base64 alphabet', async () => {
     qdnRequestMock
+      .mockResolvedValueOnce(readyStatus)
       .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
       .mockResolvedValueOnce('not base64!');
 
     await expect(fetchAvatarImage('alice')).rejects.toThrow(/malformed image data/);
   });
 
+  it('gives up without fetching when the avatar resource is terminally unavailable', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ data: { status: 'NOT_PUBLISHED' } });
+
+    await expect(fetchAvatarImage('alice')).rejects.toThrow(/not available/);
+    // Only the status poll runs — no properties probe or fetch.
+    expect(qdnRequestMock).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to a placeholder profile when avatar data is malformed', async () => {
     qdnRequestMock
+      .mockResolvedValueOnce(readyStatus)
       .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
       .mockResolvedValueOnce('<script>alert(1)</script>');
 
@@ -100,6 +121,7 @@ describe('avatar profile helpers', () => {
 
   it('uses a preferred message or account name before looking up address names', async () => {
     qdnRequestMock
+      .mockResolvedValueOnce(readyStatus)
       .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
       .mockResolvedValueOnce('iVBORw0KGgo=');
 
@@ -123,6 +145,7 @@ describe('avatar profile helpers', () => {
   it('falls back to the first returned account name', async () => {
     qdnRequestMock
       .mockResolvedValueOnce([{ name: null, owner: 'Qabc' }, { name: 'bob', owner: 'Qabc' }])
+      .mockResolvedValueOnce(readyStatus)
       .mockResolvedValueOnce({ mimeType: 'image/jpeg', size: 128 })
       .mockResolvedValueOnce('/9j/4AAQSkZJRg==');
 
@@ -152,6 +175,7 @@ describe('avatar profile helpers', () => {
         status: 200,
         statusText: 'OK',
       })
+      .mockResolvedValueOnce(readyStatus)
       .mockResolvedValueOnce({ mimeType: 'image/gif', size: 128 })
       .mockResolvedValueOnce('R0lGODlhAQABAAAAACw=');
 
@@ -179,7 +203,8 @@ describe('avatar profile helpers', () => {
   });
 
   it('keeps the registered name when avatar loading fails', async () => {
-    qdnRequestMock.mockRejectedValueOnce(new Error('Not found'));
+    // Terminal status -> waitForAvatarReady bails fast, fetch throws, name kept.
+    qdnRequestMock.mockResolvedValueOnce({ data: { status: 'NOT_PUBLISHED' } });
 
     await expect(loadAvatarProfile({ address: 'Qabc', preferredName: 'alice' })).resolves.toEqual({
       address: 'Qabc',
