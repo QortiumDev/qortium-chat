@@ -132,6 +132,9 @@ import type {
   TrackedTransaction,
 } from './types';
 
+// Shown next to the header title so the running build is identifiable at a glance.
+const APP_VERSION = 'v1.0.0';
+
 const emptyGroups: GroupData[] = [];
 const emptyMembers: GroupMember[] = [];
 const emptyMessages: ChatMessage[] = [];
@@ -3199,6 +3202,7 @@ export default function App() {
         <div className="topbar__title">
           <BrandMark />
           <h1>{t('app.title')}</h1>
+          <span className="topbar__version">{APP_VERSION}</span>
         </div>
         <div className="topbar__account">
           <AccountSummary
