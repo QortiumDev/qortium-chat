@@ -284,3 +284,12 @@ export type ApprovalProgress = {
   totalAuthorities: number; // eligible approvers (non-null members for a null-owner group)
   myVote: 'approve' | 'oppose' | null; // current account's latest confirmed vote
 };
+
+// Per-chat saved reading position. Anchored to a specific message (by stable
+// signature/key) plus its pixel offset from the viewport top, so restoration
+// survives height changes from async image/media previews loading in — a raw
+// pixel offset would land in the wrong place once the feed re-measures. `atBottom`
+// pins to the live bottom instead (and keeps sticking as new messages arrive).
+export type ChatScrollPosition =
+  | { atBottom: true }
+  | { atBottom: false; anchorKey: string; anchorOffset: number };
