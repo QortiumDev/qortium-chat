@@ -7,6 +7,14 @@
 }
 
 @font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/inter/inter-latin-wght-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 100 900;
+}
+
+@font-face {
   font-family: "Illinois Mono";
   src: url("./assets/fonts/illinois-mono/IllinoisMono-Regular.ttf") format("truetype");
   font-display: swap;
@@ -447,6 +455,82 @@
 
 :root[data-text-size='huge'] {
   --qc-text-scale: 2.1;
+}
+
+:root[data-ui='modern'] {
+  --qc-color-page-bg: #f2efe6;
+  --qc-color-frame-bg: #f2efe6;
+  --qc-color-frame-surface: #ffffff;
+  --qc-color-surface: #ffffff;
+  --qc-color-surface-alt: #f7f4ec;
+  --qc-color-surface-raised: #ffffff;
+  --qc-color-control-bg: #f7f4ec;
+  --qc-color-control-hover: #ddd9d0;
+  --qc-color-control-selected: #ddd9d0;
+  --qc-color-input-bg: #ffffff;
+  --qc-color-message-bg: #ffffff;
+  --qc-color-border: #ddd9d0;
+  --qc-color-border-strong: #ddd9d0;
+  --qc-color-border-subtle: #ddd9d0;
+  --qc-color-text: #0d0d0d;
+  --qc-color-text-secondary: #6b6b6b;
+  --qc-color-text-soft: #6b6b6b;
+  --qc-color-muted: #6b6b6b;
+  --qc-color-text-faint: #6b6b6b;
+  --qc-color-avatar: #6b6b6b;
+  --qc-color-avatar-text: #ffffff;
+  --qc-color-chip-bg: #f7f4ec;
+  --qc-color-row-hover: #ddd9d0;
+  --qc-color-row-hover-border: #ddd9d0;
+  --qc-color-warning-bg: #fff8e9;
+  --qc-color-warning-border: #d7b96d;
+  --qc-color-scrollbar-thumb: rgb(13 13 13 / 18%);
+  --qc-color-scrollbar-thumb-hover: rgb(13 13 13 / 28%);
+  --qc-color-skeleton-shimmer: rgb(255 255 255 / 68%);
+  --qc-shadow-card: none;
+  --qc-shadow-card-hover: 0 0 0 1.5px var(--qc-color-border);
+  --qc-shadow-bar: none;
+  --qc-shadow-pop: 0 18px 44px rgb(13 13 13 / 16%);
+
+  font-family:
+    "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+:root[data-theme='dark'][data-ui='modern'] {
+  --qc-color-page-bg: #111318;
+  --qc-color-frame-bg: #111318;
+  --qc-color-frame-surface: #1c1f28;
+  --qc-color-surface: #1c1f28;
+  --qc-color-surface-alt: #222633;
+  --qc-color-surface-raised: #222633;
+  --qc-color-control-bg: #222633;
+  --qc-color-control-hover: #2e3340;
+  --qc-color-control-selected: #252a36;
+  --qc-color-input-bg: #222633;
+  --qc-color-message-bg: #1c1f28;
+  --qc-color-border: #2e3340;
+  --qc-color-border-strong: #2e3340;
+  --qc-color-border-subtle: #2e3340;
+  --qc-color-text: #e4e8f0;
+  --qc-color-text-secondary: #8892a4;
+  --qc-color-text-soft: #8892a4;
+  --qc-color-muted: #6f7a8c;
+  --qc-color-text-faint: #6f7a8c;
+  --qc-color-avatar: #6f7a8c;
+  --qc-color-avatar-text: #111318;
+  --qc-color-chip-bg: #222633;
+  --qc-color-row-hover: #252a36;
+  --qc-color-row-hover-border: #2e3340;
+  --qc-color-warning-bg: #282414;
+  --qc-color-warning-border: #72642a;
+  --qc-color-scrollbar-thumb: rgb(228 232 240 / 14%);
+  --qc-color-scrollbar-thumb-hover: rgb(228 232 240 / 24%);
+  --qc-color-skeleton-shimmer: rgb(255 255 255 / 7%);
+  --qc-shadow-card: none;
+  --qc-shadow-card-hover: 0 0 0 1.5px var(--qc-color-border);
+  --qc-shadow-bar: none;
+  --qc-shadow-pop: 0 18px 44px rgb(0 0 0 / 32%);
 }
 
 * {
@@ -2468,6 +2552,143 @@ button.message__reply-preview:focus-visible,
   background: rgb(255 255 255 / 22%);
   outline: 2px solid #ffffff;
   outline-offset: 2px;
+}
+
+:root[data-ui='modern'] body {
+  background:
+    radial-gradient(520px 180px at 50% -80px, var(--qc-color-accent-soft), transparent 70%),
+    var(--qc-color-page-bg);
+}
+
+/* Modern uses a darker "empty" canvas (page-bg) behind floating message cards,
+   matching 7R15's apps — rather than Classic's full-bleed surface where the
+   message area shares the message cards' gray. */
+:root[data-ui='modern'] .chat-pane {
+  background:
+    radial-gradient(520px 180px at 50% -80px, var(--qc-color-accent-soft), transparent 70%),
+    var(--qc-color-page-bg);
+}
+
+:root[data-ui='modern'] .topbar {
+  min-height: 52px;
+  padding-block: 8px;
+  background: var(--qc-color-surface);
+  border-bottom: 1.5px solid var(--qc-color-border);
+  box-shadow: none;
+}
+
+:root[data-ui='modern'] .layout {
+  background: var(--qc-color-frame-bg);
+}
+
+:root[data-ui='modern'] .sidebar,
+:root[data-ui='modern'] .members-drawer {
+  background: var(--qc-color-frame-bg);
+}
+
+/* On the darker Modern sidebar canvas, the conversation rows become floating
+   cards (like 7R15's group-manager) instead of sharing the panel background. */
+:root[data-ui='modern'] .group-row,
+:root[data-ui='modern'] .direct-row {
+  background: var(--qc-color-surface);
+  border-color: var(--qc-color-border-subtle);
+}
+
+:root[data-ui='modern'] .group-row:hover,
+:root[data-ui='modern'] .group-row:focus-visible,
+:root[data-ui='modern'] .group-row--selected,
+:root[data-ui='modern'] .direct-row:hover:not(:disabled),
+:root[data-ui='modern'] .direct-row:focus-visible,
+:root[data-ui='modern'] .direct-row--selected {
+  background: var(--qc-color-row-hover);
+  border-color: var(--qc-color-row-hover-border);
+}
+
+:root[data-ui='modern'] .panel,
+:root[data-ui='modern'] .chat-pane__header,
+:root[data-ui='modern'] .members-drawer__header,
+:root[data-ui='modern'] .composer,
+:root[data-ui='modern'] .join-requests {
+  border-color: var(--qc-color-border);
+}
+
+:root[data-ui='modern'] .button,
+:root[data-ui='modern'] .icon-button,
+:root[data-ui='modern'] .search input,
+:root[data-ui='modern'] .composer textarea,
+:root[data-ui='modern'] .group-row,
+:root[data-ui='modern'] .direct-row,
+:root[data-ui='modern'] .chat-pane__back,
+:root[data-ui='modern'] .members-drawer__close,
+:root[data-ui='modern'] .account-dialog__close,
+:root[data-ui='modern'] .direct-row__remove,
+:root[data-ui='modern'] .message__reaction-quick-row button {
+  border-width: 1.5px;
+}
+
+:root[data-ui='modern'] .button,
+:root[data-ui='modern'] .message-feed__scroll-bottom,
+:root[data-ui='modern'] .message-feed__jump-unread {
+  border-radius: 50px;
+}
+
+:root[data-ui='modern'] .button--secondary,
+:root[data-ui='modern'] .icon-button,
+:root[data-ui='modern'] .chat-pane__back,
+:root[data-ui='modern'] .members-drawer__close,
+:root[data-ui='modern'] .account-dialog__close {
+  box-shadow: none;
+}
+
+:root[data-ui='modern'] .group-row--selected,
+:root[data-ui='modern'] .direct-row--selected {
+  box-shadow: inset 3px 0 0 var(--qc-color-accent);
+}
+
+:root[data-ui='modern'][dir='rtl'] .group-row--selected,
+:root[data-ui='modern'][dir='rtl'] .direct-row--selected {
+  box-shadow: inset -3px 0 0 var(--qc-color-accent);
+}
+
+:root[data-ui='modern'] .message,
+:root[data-ui='modern'] .join-request,
+:root[data-ui='modern'] .tx-status,
+:root[data-ui='modern'] .approval-item,
+:root[data-ui='modern'] .account-dialog__card,
+:root[data-ui='modern'] .reaction-popover,
+:root[data-ui='modern'] .message__reaction-details,
+:root[data-ui='modern'] .message__reaction-picker,
+:root[data-ui='modern'] .message__image-preview,
+:root[data-ui='modern'] .message__code-block,
+:root[data-ui='modern'] .empty,
+:root[data-ui='modern'] .skeleton--row {
+  border-width: 1.5px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+:root[data-ui='modern'] .account-dialog {
+  background: rgb(13 13 13 / 38%);
+}
+
+:root[data-theme='dark'][data-ui='modern'] .account-dialog {
+  background: rgb(0 0 0 / 45%);
+}
+
+:root[data-ui='modern'] .members-drawer__scrim {
+  background: rgb(13 13 13 / 32%);
+}
+
+:root[data-theme='dark'][data-ui='modern'] .members-drawer__scrim {
+  background: rgb(0 0 0 / 45%);
+}
+
+:root[data-ui='modern'] .account-dialog__card {
+  width: min(720px, 100%);
+}
+
+:root[data-ui='modern'] .account-dialog__card:not(.account-dialog__card--approval) {
+  width: min(460px, 100%);
 }
 
 .tx-status {
