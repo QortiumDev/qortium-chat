@@ -89,10 +89,14 @@ import {
   readLastChat,
   readPersistedDirects,
   readReadWatermarks,
+  readScrollBookmarks,
+  readSidebarCollapse,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
   writeReadWatermarks,
+  writeScrollBookmarks,
+  writeSidebarCollapse,
   type PersistedDirect,
 } from './chatStorage';
 import {
@@ -131,6 +135,9 @@ import type {
   QdnSelectedAccount,
   TrackedTransaction,
 } from './types';
+
+// Shown next to the header title so the running build is identifiable at a glance.
+const APP_VERSION = 'v1.0.3';
 
 const emptyGroups: GroupData[] = [];
 const emptyMembers: GroupMember[] = [];
@@ -371,11 +378,17 @@ function useAvatarProfiles(
 ) {
   const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
+  // Tracks genuine unmount, distinct from an effect re-run. An in-flight avatar
+  // fetch must still commit when the effect merely re-ran (e.g. a new sender
+  // changed the address list) as long as its request key is still current —
+  // otherwise the slow (status-polled) avatar fetch is discarded every time the
+  // message list changes and the avatar never appears.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const addressKey = JSON.stringify(addresses);
   const knownNamesKey = JSON.stringify(Array.from(knownNamesByAddress.entries()));
 
   useEffect(() => {
-    let isDisposed = false;
     const requestKeyByAddress = new Map<string, string>();
     const needed: string[] = [];
 
@@ -391,8 +404,12 @@ function useAvatarProfiles(
       }
     }
 
+    // A result is still wanted if the component is mounted and the address's
+    // latest request key still matches the one this run issued (a changed key
+    // means a newer run superseded it). Crucially this does NOT drop results
+    // just because the effect re-ran with an unchanged key.
     const isCurrent = (address: string) =>
-      !isDisposed && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
+      mountedRef.current && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
 
     const commit = (profile: AvatarProfile) => {
       if (!isCurrent(profile.address)) {
@@ -407,7 +424,7 @@ function useAvatarProfiles(
     };
 
     const commitMany = (batch: AvatarProfile[]) => {
-      if (isDisposed) {
+      if (!mountedRef.current) {
         return;
       }
 
@@ -465,10 +482,6 @@ function useAvatarProfiles(
         loadIndividually(needed);
       }
     }
-
-    return () => {
-      isDisposed = true;
-    };
   }, [actionsKey, addressKey, knownNamesKey]);
 
   return profiles;
@@ -606,9 +619,10 @@ export default function App() {
   const [isGroupSearchOpen, setGroupSearchOpen] = useState(false);
   // Sidebar sections start collapsed; unread items still render through a
   // collapsed section (see GroupList/DirectList `collapsed`), so a collapsed
-  // section only ever shows the chats that need attention.
-  const [isGroupsCollapsed, setGroupsCollapsed] = useState(true);
-  const [isDirectCollapsed, setDirectCollapsed] = useState(true);
+  // section only ever shows the chats that need attention. The expanded/collapsed
+  // choice is persisted (app-wide) and restored on the next app start.
+  const [isGroupsCollapsed, setGroupsCollapsed] = useState(() => readSidebarCollapse()?.groups ?? true);
+  const [isDirectCollapsed, setDirectCollapsed] = useState(() => readSidebarCollapse()?.direct ?? true);
   const [draft, setDraft] = useState('');
   const [composeContext, setComposeContext] = useState<
     | { kind: 'edit'; thread: MessageThread }
@@ -643,6 +657,12 @@ export default function App() {
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
   const scrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
+  // Per-chat snapshot of the full loaded message view (live tail + any paged-in
+  // older history). On returning to a chat this is restored so the saved scroll
+  // bookmark resolves even when the user had read back beyond the latest window
+  // (which a fresh load alone would not include). Bounded to the recent chats.
+  const chatViewCacheRef = useRef(new Map<string, ChatMessage[]>());
+  const loadedChatKeyRef = useRef('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
@@ -2554,7 +2574,11 @@ export default function App() {
     skipWatermarkPersistRef.current = true;
     setLastReadByGroupId(watermarks?.groups ?? new Map());
     setLastReadByAddress(watermarks?.directs ?? new Map());
-    scrollPositionsRef.current.clear();
+    // Restore this account's saved scroll bookmarks so reading positions survive
+    // restarts; the in-memory view cache is per-session and starts empty.
+    scrollPositionsRef.current = account ? readScrollBookmarks(account.address) : new Map();
+    chatViewCacheRef.current.clear();
+    loadedChatKeyRef.current = '';
     requestedPrivateGroupKeysRef.current.clear();
     resolvedPrivateGroupKeyRequestsRef.current.clear();
     setPrivateGroupKeyStatus('');
@@ -2800,6 +2824,11 @@ export default function App() {
     applyDisplaySettings(displaySettings);
   }, [displaySettings]);
 
+  // Persist the sidebar section expand/collapse choice so it survives a restart.
+  useEffect(() => {
+    writeSidebarCollapse({ direct: isDirectCollapsed, groups: isGroupsCollapsed });
+  }, [isDirectCollapsed, isGroupsCollapsed]);
+
   useEffect(() => {
     const language = normalizeLanguage(displaySettings.language);
 
@@ -2898,9 +2927,37 @@ export default function App() {
   }, [Object.values(trackedTransactions).map((transaction) => `${transaction.id}:${transaction.phase}`).join('|')]);
 
   useEffect(() => {
-    // A new conversation starts with no paged-in history; the live tail reloads
-    // below and decides (from its page size) whether older history may exist.
-    setOlderMessages(emptyMessages);
+    // Snapshot the outgoing chat's full view (live tail + paged history) before
+    // leaving, so returning can restore it and the saved scroll bookmark resolves.
+    const previousKey = loadedChatKeyRef.current;
+
+    if (previousKey && previousKey !== selectedChatKey && messagesChatKey === previousKey) {
+      const previousView =
+        olderMessages.length === 0 ? messages.value : mergeMessages(olderMessages, messages.value, Infinity);
+
+      if (previousView.length > 0) {
+        chatViewCacheRef.current.set(previousKey, previousView);
+
+        while (chatViewCacheRef.current.size > 12) {
+          const oldest = chatViewCacheRef.current.keys().next().value;
+
+          if (oldest === undefined) {
+            break;
+          }
+
+          chatViewCacheRef.current.delete(oldest);
+        }
+      }
+    }
+
+    loadedChatKeyRef.current = selectedChatKey;
+
+    // Seed paged history from the cache so a returning chat shows the same
+    // content it had (incl. messages read back beyond the latest window); the
+    // live tail still reloads below. A first visit starts with no paged history.
+    const cachedView = selectedChat ? chatViewCacheRef.current.get(selectedChatKey) : undefined;
+
+    setOlderMessages(cachedView ?? emptyMessages);
     setOlderMessagesState({ error: '', loading: false, reachedStart: true });
     loadingOlderRef.current = false;
 
@@ -3199,6 +3256,7 @@ export default function App() {
         <div className="topbar__title">
           <BrandMark />
           <h1>{t('app.title')}</h1>
+          <span className="topbar__version">{APP_VERSION}</span>
         </div>
         <div className="topbar__account">
           <AccountSummary
@@ -3531,6 +3589,11 @@ export default function App() {
               onReply={startReply}
               onScrollPositionChange={(chatKey, position) => {
                 scrollPositionsRef.current.set(chatKey, position);
+
+                // Persist the bookmark so the reading position survives a restart.
+                if (account) {
+                  writeScrollBookmarks(account.address, scrollPositionsRef.current);
+                }
               }}
               now={now}
               pendingReactionKey={reactionPendingKey}

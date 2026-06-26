@@ -285,11 +285,12 @@ export type ApprovalProgress = {
   myVote: 'approve' | 'oppose' | null; // current account's latest confirmed vote
 };
 
-// Per-chat saved reading position. Anchored to a specific message (by stable
-// signature/key) plus its pixel offset from the viewport top, so restoration
-// survives height changes from async image/media previews loading in — a raw
-// pixel offset would land in the wrong place once the feed re-measures. `atBottom`
-// pins to the live bottom instead (and keeps sticking as new messages arrive).
+// Per-chat saved reading position ("bookmark"). Anchored to a specific message
+// by stable signature/key plus its pixel offset from the viewport top, so it
+// survives height changes from async previews. `anchorTimestamp` lets the reader
+// page backward to the bookmarked message when it is not in the freshly-loaded
+// window (the user had read back beyond the live tail). `atBottom` is the special
+// case: pin to the live bottom and keep sticking as new messages arrive.
 export type ChatScrollPosition =
   | { atBottom: true }
-  | { atBottom: false; anchorKey: string; anchorOffset: number };
+  | { atBottom: false; anchorKey: string; anchorOffset: number; anchorTimestamp: number };

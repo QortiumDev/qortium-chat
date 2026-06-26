@@ -573,6 +573,14 @@ samp,
   gap: 10px;
 }
 
+.topbar__version {
+  flex: none;
+  align-self: center;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-small);
+  font-weight: 600;
+}
+
 .topbar__brand-mark {
   flex: none;
   font-size: var(--qc-text-heading);

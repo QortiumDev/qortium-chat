@@ -219,3 +219,77 @@ export function mergePersistedDirect(
 
   return [...directs, entry];
 }
+
+// Whether the sidebar Direct / Groups sections are collapsed. App-wide (not
+// per-account) so the layout the user left is restored on the next app start.
+export type StoredSidebarCollapse = { direct: boolean; groups: boolean };
+
+function sidebarCollapseStorageKey() {
+  return `${PREFIX}:sidebarCollapse`;
+}
+
+export function readSidebarCollapse(): StoredSidebarCollapse | null {
+  const value = readJson<{ direct?: unknown; groups?: unknown }>(sidebarCollapseStorageKey());
+
+  if (!value) {
+    return null;
+  }
+
+  return {
+    direct: typeof value.direct === 'boolean' ? value.direct : true,
+    groups: typeof value.groups === 'boolean' ? value.groups : true,
+  };
+}
+
+export function writeSidebarCollapse(state: StoredSidebarCollapse): void {
+  writeJson(sidebarCollapseStorageKey(), state);
+}
+
+// Per-chat scroll bookmark (the message the reader left off at, or "at bottom"),
+// keyed by chat key within an account, so a reading position is restored on the
+// next visit and across app restarts. Shape mirrors ChatScrollPosition in types.
+export type StoredScrollBookmark =
+  | { atBottom: true }
+  | { atBottom: false; anchorKey: string; anchorOffset: number; anchorTimestamp: number };
+
+export function scrollBookmarksStorageKey(accountAddress: string) {
+  return `${PREFIX}:scroll:${accountAddress}`;
+}
+
+export function readScrollBookmarks(accountAddress: string): Map<string, StoredScrollBookmark> {
+  const value = readJson<Record<string, unknown>>(scrollBookmarksStorageKey(accountAddress));
+  const map = new Map<string, StoredScrollBookmark>();
+
+  if (!value || typeof value !== 'object') {
+    return map;
+  }
+
+  for (const [chatKey, raw] of Object.entries(value)) {
+    if (!raw || typeof raw !== 'object') {
+      continue;
+    }
+
+    const entry = raw as Record<string, unknown>;
+
+    if (entry.atBottom === true) {
+      map.set(chatKey, { atBottom: true });
+    } else if (
+      typeof entry.anchorKey === 'string' &&
+      typeof entry.anchorOffset === 'number' &&
+      typeof entry.anchorTimestamp === 'number'
+    ) {
+      map.set(chatKey, {
+        anchorKey: entry.anchorKey,
+        anchorOffset: entry.anchorOffset,
+        anchorTimestamp: entry.anchorTimestamp,
+        atBottom: false,
+      });
+    }
+  }
+
+  return map;
+}
+
+export function writeScrollBookmarks(accountAddress: string, bookmarks: ReadonlyMap<string, StoredScrollBookmark>): void {
+  writeJson(scrollBookmarksStorageKey(accountAddress), Object.fromEntries(bookmarks));
+}
