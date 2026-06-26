@@ -89,11 +89,13 @@ import {
   readLastChat,
   readPersistedDirects,
   readReadWatermarks,
+  readScrollBookmarks,
   readSidebarCollapse,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
   writeReadWatermarks,
+  writeScrollBookmarks,
   writeSidebarCollapse,
   type PersistedDirect,
 } from './chatStorage';
@@ -135,7 +137,7 @@ import type {
 } from './types';
 
 // Shown next to the header title so the running build is identifiable at a glance.
-const APP_VERSION = 'v1.0.2';
+const APP_VERSION = 'v1.0.3';
 
 const emptyGroups: GroupData[] = [];
 const emptyMembers: GroupMember[] = [];
@@ -2572,7 +2574,11 @@ export default function App() {
     skipWatermarkPersistRef.current = true;
     setLastReadByGroupId(watermarks?.groups ?? new Map());
     setLastReadByAddress(watermarks?.directs ?? new Map());
-    scrollPositionsRef.current.clear();
+    // Restore this account's saved scroll bookmarks so reading positions survive
+    // restarts; the in-memory view cache is per-session and starts empty.
+    scrollPositionsRef.current = account ? readScrollBookmarks(account.address) : new Map();
+    chatViewCacheRef.current.clear();
+    loadedChatKeyRef.current = '';
     requestedPrivateGroupKeysRef.current.clear();
     resolvedPrivateGroupKeyRequestsRef.current.clear();
     setPrivateGroupKeyStatus('');
@@ -3583,6 +3589,11 @@ export default function App() {
               onReply={startReply}
               onScrollPositionChange={(chatKey, position) => {
                 scrollPositionsRef.current.set(chatKey, position);
+
+                // Persist the bookmark so the reading position survives a restart.
+                if (account) {
+                  writeScrollBookmarks(account.address, scrollPositionsRef.current);
+                }
               }}
               now={now}
               pendingReactionKey={reactionPendingKey}

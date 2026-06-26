@@ -526,6 +526,13 @@ export const MessageList = memo(function MessageList({
   // off just because they momentarily moved the viewport off the bottom.
   const userScrollRef = useRef(false);
   const userScrollClearRef = useRef(0);
+  // While restoring a saved bookmark we page older history in until the target
+  // message loads. restoringRef suppresses position-saving during that seek so
+  // the in-progress scroll doesn't overwrite the bookmark we're chasing.
+  const pendingBookmarkRef = useRef<
+    { anchorKey: string; anchorOffset: number; anchorTimestamp: number; attempts: number } | null
+  >(null);
+  const restoringRef = useRef(false);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
   // The "new messages" divider element, so the jump-to-unread control can scroll
   // it into view and so its viewport position drives whether that control shows.
@@ -906,15 +913,89 @@ export const MessageList = memo(function MessageList({
       return;
     }
 
-    scrollToAnchor(position.anchorKey, position.anchorOffset);
+    // Restoring a bookmark: not at the bottom, so drop the stick intent and
+    // suppress position-saving until it resolves (paging back must not overwrite
+    // the bookmark we're chasing). Then seek to the message, paging older history
+    // in if it isn't in the freshly-loaded window.
+    stickToBottomRef.current = false;
+    restoringRef.current = true;
+    pendingBookmarkRef.current = {
+      anchorKey: position.anchorKey,
+      anchorOffset: position.anchorOffset,
+      anchorTimestamp: position.anchorTimestamp,
+      attempts: 0,
+    };
+    attemptBookmarkRestore();
   }
 
-  // Capture the current reading position as a message anchor (the topmost message
-  // still visible at the viewport top) so it can be restored after the feed is
-  // unmounted and re-rendered with different async heights. At the bottom we save
-  // an explicit bottom pin instead, so new messages keep it stuck to the bottom.
+  function finishBookmarkRestore() {
+    pendingBookmarkRef.current = null;
+    // Re-enable saving once the restore scroll has settled.
+    window.setTimeout(() => {
+      restoringRef.current = false;
+    }, 500);
+  }
+
+  function attemptBookmarkRestore() {
+    const pending = pendingBookmarkRef.current;
+
+    if (!pending) {
+      return;
+    }
+
+    // The bookmarked message is loaded: anchor to it and we're done.
+    if (itemsRef.current.get(pending.anchorKey)) {
+      scrollToAnchor(pending.anchorKey, pending.anchorOffset);
+      finishBookmarkRestore();
+      return;
+    }
+
+    // Not loaded yet: page backward until the oldest loaded message is at/before
+    // the bookmark's timestamp (or history is exhausted, or a safety cap). Each
+    // new page re-fires the seek effect, which calls back into here.
+    const oldest = messages[0];
+    const canPageToBookmark =
+      !olderMessagesReachedStart && (!oldest || oldest.timestamp > pending.anchorTimestamp);
+
+    if (canPageToBookmark && pending.attempts < 30) {
+      pending.attempts += 1;
+
+      if (!olderMessagesLoading) {
+        onLoadOlder();
+      }
+
+      return;
+    }
+
+    // Paged as far as needed but the exact message is gone (edited/deleted) or
+    // unreachable: land on the nearest loaded message at/after the bookmark.
+    let nearestKey = '';
+
+    for (const [key] of itemsRef.current) {
+      if ((threadByKey.get(key)?.original.timestamp ?? 0) >= pending.anchorTimestamp) {
+        nearestKey = key;
+        break;
+      }
+    }
+
+    if (nearestKey) {
+      scrollToAnchor(nearestKey, pending.anchorOffset);
+    } else {
+      scrollToBottom();
+    }
+
+    finishBookmarkRestore();
+  }
+
+  // Capture the current reading position as a message bookmark: the topmost
+  // message still visible at the viewport top, with its timestamp so it can be
+  // paged back to later, even across a restart or beyond the live tail. "At the
+  // bottom" (by actual position — not just the stick intent, so a scrollbar drag
+  // counts too) saves a bottom pin so new messages keep it stuck there.
   function computeScrollPosition(list: HTMLOListElement): ChatScrollPosition {
-    if (stickToBottomRef.current) {
+    const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+
+    if (isAtBottom) {
       return { atBottom: true };
     }
 
@@ -926,7 +1007,12 @@ export const MessageList = memo(function MessageList({
       const rect = element.getBoundingClientRect();
 
       if (rect.bottom > listTop + 1) {
-        return { anchorKey: key, anchorOffset: rect.top - listTop, atBottom: false };
+        return {
+          anchorKey: key,
+          anchorOffset: rect.top - listTop,
+          anchorTimestamp: threadByKey.get(key)?.original.timestamp ?? 0,
+          atBottom: false,
+        };
       }
     }
 
@@ -958,6 +1044,8 @@ export const MessageList = memo(function MessageList({
   // bottom) is applied instead of the previous chat's, and drop any open popover.
   useEffect(() => {
     didRestoreScrollRef.current = false;
+    pendingBookmarkRef.current = null;
+    restoringRef.current = false;
     closeReactionPopover();
   }, [scrollChatKey]);
 
@@ -971,13 +1059,46 @@ export const MessageList = memo(function MessageList({
       return;
     }
 
-    didRestoreScrollRef.current = true;
+    // In narrow/mobile mode the chat pane can be display:none (zero height) while
+    // the list view is showing; restoring then would measure a 0-height list and
+    // land wrong. Defer until it has real layout (the observer below re-triggers).
+    if (list.clientHeight === 0) {
+      return;
+    }
 
-    // Restore the saved message anchor (or default to the bottom). Anchoring to a
-    // message rather than a raw pixel offset means the reading position survives
-    // the feed remounting and re-measuring as async previews load in.
+    didRestoreScrollRef.current = true;
     restoreScrollPosition(initialScrollPosition);
   }, [initialScrollPosition, messages.length, scrollChatKey]);
+
+  // Re-attempt the restore once the list actually has layout — covers the mobile
+  // case where the pane was hidden (0 height) when messages first arrived.
+  useEffect(() => {
+    const list = listRef.current;
+
+    if (!list || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (!didRestoreScrollRef.current && list.clientHeight > 0 && messages.length > 0) {
+        didRestoreScrollRef.current = true;
+        restoreScrollPosition(initialScrollPosition);
+      }
+    });
+
+    observer.observe(list);
+
+    return () => observer.disconnect();
+  }, [initialScrollPosition, messages.length, scrollChatKey]);
+
+  // While a bookmark restore is seeking, re-attempt each time a newly paged-in
+  // page renders (firstMessageKey changes) or pagination state settles, until the
+  // bookmarked message is loaded or history is exhausted.
+  useLayoutEffect(() => {
+    if (pendingBookmarkRef.current) {
+      attemptBookmarkRestore();
+    }
+  }, [firstMessageKey, messages.length, olderMessagesReachedStart, olderMessagesLoading]);
 
   // Keep the newest content in view when the user is reading at the bottom (or a
   // send just landed); if they have scrolled up, their position is left untouched.
@@ -1193,7 +1314,7 @@ export const MessageList = memo(function MessageList({
             // scrolls don't overwrite the saved position) and while a settle loop is
             // programmatically driving scrollTop (so its frames don't clobber the
             // user's anchor). Saved as a message anchor — see computeScrollPosition.
-            if (didRestoreScrollRef.current && !programmaticScrollRef.current) {
+            if (didRestoreScrollRef.current && !programmaticScrollRef.current && !restoringRef.current) {
               onScrollPositionChange(scrollChatKey, computeScrollPosition(list));
             }
 
