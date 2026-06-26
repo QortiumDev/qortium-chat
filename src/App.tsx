@@ -133,7 +133,7 @@ import type {
 } from './types';
 
 // Shown next to the header title so the running build is identifiable at a glance.
-const APP_VERSION = 'v1.0.0';
+const APP_VERSION = 'v1.0.1';
 
 const emptyGroups: GroupData[] = [];
 const emptyMembers: GroupMember[] = [];
@@ -374,11 +374,17 @@ function useAvatarProfiles(
 ) {
   const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
+  // Tracks genuine unmount, distinct from an effect re-run. An in-flight avatar
+  // fetch must still commit when the effect merely re-ran (e.g. a new sender
+  // changed the address list) as long as its request key is still current —
+  // otherwise the slow (status-polled) avatar fetch is discarded every time the
+  // message list changes and the avatar never appears.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const addressKey = JSON.stringify(addresses);
   const knownNamesKey = JSON.stringify(Array.from(knownNamesByAddress.entries()));
 
   useEffect(() => {
-    let isDisposed = false;
     const requestKeyByAddress = new Map<string, string>();
     const needed: string[] = [];
 
@@ -394,8 +400,12 @@ function useAvatarProfiles(
       }
     }
 
+    // A result is still wanted if the component is mounted and the address's
+    // latest request key still matches the one this run issued (a changed key
+    // means a newer run superseded it). Crucially this does NOT drop results
+    // just because the effect re-ran with an unchanged key.
     const isCurrent = (address: string) =>
-      !isDisposed && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
+      mountedRef.current && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
 
     const commit = (profile: AvatarProfile) => {
       if (!isCurrent(profile.address)) {
@@ -410,7 +420,7 @@ function useAvatarProfiles(
     };
 
     const commitMany = (batch: AvatarProfile[]) => {
-      if (isDisposed) {
+      if (!mountedRef.current) {
         return;
       }
 
@@ -468,10 +478,6 @@ function useAvatarProfiles(
         loadIndividually(needed);
       }
     }
-
-    return () => {
-      isDisposed = true;
-    };
   }, [actionsKey, addressKey, knownNamesKey]);
 
   return profiles;

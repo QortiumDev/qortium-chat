@@ -520,6 +520,12 @@ export const MessageList = memo(function MessageList({
   // True while a settle loop is programmatically driving scrollTop, so the
   // onScroll handler does not persist those transient positions over the user's.
   const programmaticScrollRef = useRef(false);
+  // True briefly around genuine user scroll input (wheel/touch/keys). Only such
+  // input may CLEAR the stick-to-bottom intent — programmatic repositions (settle
+  // loop, image-load re-pin, older-history anchor restore) must never flip intent
+  // off just because they momentarily moved the viewport off the bottom.
+  const userScrollRef = useRef(false);
+  const userScrollClearRef = useRef(0);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
   // The "new messages" divider element, so the jump-to-unread control can scroll
   // it into view and so its viewport position drives whether that control shows.
@@ -669,12 +675,25 @@ export const MessageList = memo(function MessageList({
   function updateBottomState(list: HTMLOListElement) {
     const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
 
-    stickToBottomRef.current = isAtBottom;
-    setShowScrollToBottom(!isAtBottom);
+    // stickToBottomRef is the INTENT to stay pinned to the bottom, not merely
+    // "currently at the bottom". Only genuine user scroll input may turn the
+    // intent OFF (the user deliberately scrolled up). Programmatic repositions
+    // — settle loop, image-load re-pin, older-history anchor restore, window
+    // re-renders — must never clear it just because async growth momentarily
+    // left the viewport short of the new bottom; otherwise the feed gets
+    // stranded part-way and the scroll-to-bottom button reappears.
+    if (userScrollRef.current) {
+      stickToBottomRef.current = isAtBottom;
+    } else if (isAtBottom) {
+      stickToBottomRef.current = true;
+    }
+
+    const sticking = stickToBottomRef.current;
+    setShowScrollToBottom(!isAtBottom && !sticking);
 
     const dividerEl = dividerRef.current;
 
-    if (dividerEl && !isAtBottom) {
+    if (dividerEl && !isAtBottom && !sticking) {
       // Offer the jump only while the divider is scrolled above the visible area
       // AND the user is away from the bottom. Reaching the bottom means the newest
       // messages are in view — i.e. read — so the prompt is dismissed there too,
@@ -768,11 +787,87 @@ export const MessageList = memo(function MessageList({
     scrollSettleRafRef.current = requestAnimationFrame(settle);
   }
 
+  // Mark that the imminent scroll event(s) are user-driven, so updateBottomState
+  // may update the stick intent from the resulting position. Kept set briefly to
+  // cover inertial/momentum scrolling after the input gesture ends.
+  function noteUserScroll() {
+    userScrollRef.current = true;
+    window.clearTimeout(userScrollClearRef.current);
+    userScrollClearRef.current = window.setTimeout(() => {
+      userScrollRef.current = false;
+    }, 200);
+  }
+
+  // One-shot pin to the bottom (no settle loop). Used to maintain the bottom as
+  // the feed height changes (image loads, message re-renders/merges) while the
+  // stick-to-bottom intent is active.
+  function pinToBottom() {
+    const list = listRef.current;
+
+    if (!list) {
+      return;
+    }
+
+    list.scrollTop = list.scrollHeight;
+    updateBottomState(list);
+  }
+
   function scrollToBottom() {
-    runScrollSettle((list) => {
-      list.scrollTop = list.scrollHeight;
-      return true;
-    });
+    stickToBottomRef.current = true;
+
+    const list = listRef.current;
+
+    if (!list) {
+      return;
+    }
+
+    list.scrollTop = list.scrollHeight;
+    updateBottomState(list);
+
+    if (typeof requestAnimationFrame !== 'function') {
+      return;
+    }
+
+    if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(scrollSettleRafRef.current);
+    }
+
+    // Re-pin to the bottom EVERY frame until we've genuinely held the bottom for
+    // ~0.8s, or the user scrolls away, or a ~6s cap. Re-pinning every frame (not
+    // stopping on transient scrollTop stability) is what survives the feed's
+    // multi-second height churn — async image previews, quiet-poll merges, and
+    // older-history loads — that previously stranded a single pin part-way.
+    programmaticScrollRef.current = true;
+    let atBottomFrames = 0;
+    let attempts = 0;
+
+    const tick = () => {
+      const nextList = listRef.current;
+
+      // Stop if the list is gone or the user scrolled away (intent cleared).
+      if (!nextList || !stickToBottomRef.current) {
+        programmaticScrollRef.current = false;
+        scrollSettleRafRef.current = 0;
+        if (nextList) updateBottomState(nextList);
+        return;
+      }
+
+      nextList.scrollTop = nextList.scrollHeight;
+      const distance = nextList.scrollHeight - nextList.scrollTop - nextList.clientHeight;
+      atBottomFrames = distance < 4 ? atBottomFrames + 1 : 0;
+      attempts += 1;
+
+      if (atBottomFrames >= 48 || attempts >= 360) {
+        updateBottomState(nextList);
+        programmaticScrollRef.current = false;
+        scrollSettleRafRef.current = 0;
+        return;
+      }
+
+      scrollSettleRafRef.current = requestAnimationFrame(tick);
+    };
+
+    scrollSettleRafRef.current = requestAnimationFrame(tick);
   }
 
   // Position a specific message so its top sits `anchorOffset` px below the
@@ -783,6 +878,12 @@ export const MessageList = memo(function MessageList({
       scrollToBottom();
       return;
     }
+
+    // Restoring a mid-feed position means the reader was NOT at the bottom, so
+    // clear the stick intent (it defaults to true on a fresh mount). Otherwise
+    // the post-mount "keep newest in view" effect would immediately pin to the
+    // bottom and the saved position would never be seen.
+    stickToBottomRef.current = false;
 
     runScrollSettle((list) => {
       const element = itemsRef.current.get(anchorKey);
@@ -887,11 +988,19 @@ export const MessageList = memo(function MessageList({
       return;
     }
 
-    if (forceBottomRef.current || stickToBottomRef.current) {
+    if (forceBottomRef.current) {
       forceBottomRef.current = false;
       scrollToBottom();
+      return;
     }
-  }, [lastMessageKey, systemMessagesKey]);
+
+    // Re-pin whenever the rendered messages change (new message, but also a quiet
+    // poll merge / edit that changes the feed height) so a stuck-to-bottom reader
+    // is not left short when scrollHeight shifts without a new last message.
+    if (stickToBottomRef.current) {
+      pinToBottom();
+    }
+  }, [lastMessageKey, systemMessagesKey, messages]);
 
   // Sending a message always returns the user to the bottom so their own message
   // is in view, regardless of where they had scrolled. forceBottomRef survives
@@ -922,6 +1031,16 @@ export const MessageList = memo(function MessageList({
     }
 
     olderScrollAnchorRef.current = null;
+
+    // If the reader has asked to be at the bottom (e.g. tapped the down arrow
+    // while an older-history fetch was still in flight), honor that instead of
+    // restoring the pre-prepend anchor — restoring would yank them back up and
+    // strand the scroll-to-bottom part-way.
+    if (stickToBottomRef.current || forceBottomRef.current) {
+      pinToBottom();
+      return;
+    }
+
     list.scrollTop = list.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
     updateBottomState(list);
   }, [firstMessageKey]);
@@ -930,6 +1049,7 @@ export const MessageList = memo(function MessageList({
     return () => {
       window.clearTimeout(highlightTimeoutRef.current);
       window.clearTimeout(expandedTimeTimeoutRef.current);
+      window.clearTimeout(userScrollClearRef.current);
 
       if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(scrollSettleRafRef.current);
@@ -1041,6 +1161,22 @@ export const MessageList = memo(function MessageList({
       <div className="message-feed">
         <ol
           className="message-list"
+          onWheel={noteUserScroll}
+          onTouchMove={noteUserScroll}
+          onKeyDown={(event) => {
+            // Keys that scroll the feed count as user-driven scrolling.
+            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
+              noteUserScroll();
+            }
+          }}
+          onLoadCapture={() => {
+            // A QDN image/media preview finished loading and grew the feed. If the
+            // reader is pinned to the bottom, keep them there — this is what carries
+            // a scroll-to-bottom all the way down as async previews settle in.
+            if (stickToBottomRef.current) {
+              pinToBottom();
+            }
+          }}
           onScroll={(event) => {
             const list = event.currentTarget;
 
