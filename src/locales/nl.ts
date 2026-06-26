@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Berichtcodering niet ondersteund',
   'message.decodeError': 'Kan bericht niet decoderen',
   'group.meta.memberCount': '{count} leden',
+  'group.meta.activeCount': '{count} actief',
   'group.meta.closedHistoryPrivateRead': 'Gesloten / privé-lezen',
   'group.meta.closedHistoryUnavailable': 'Gesloten / privégeschiedenis niet beschikbaar',
   'group.meta.directPrivateRead': 'Direct / privégeschiedenis',

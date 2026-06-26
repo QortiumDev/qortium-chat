@@ -514,6 +514,9 @@ export const MessageList = memo(function MessageList({
   // Captured before older history is prepended so we can restore the viewport to
   // the same message instead of jumping when scrollHeight grows.
   const olderScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  // Pending rAF id for the scroll-to-bottom settle loop, so a new pin cancels an
+  // in-flight one and unmount can cancel it.
+  const scrollSettleRafRef = useRef(0);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
   // The "new messages" divider element, so the jump-to-unread control can scroll
   // it into view and so its viewport position drives whether that control shows.
@@ -668,9 +671,11 @@ export const MessageList = memo(function MessageList({
 
     const dividerEl = dividerRef.current;
 
-    if (dividerEl) {
-      // Offer the jump only while the divider is scrolled above the visible area;
-      // once the user reaches it (or scrolls past it) the prompt is dismissed.
+    if (dividerEl && !isAtBottom) {
+      // Offer the jump only while the divider is scrolled above the visible area
+      // AND the user is away from the bottom. Reaching the bottom means the newest
+      // messages are in view — i.e. read — so the prompt is dismissed there too,
+      // instead of lingering after the new messages have been seen.
       const listRect = list.getBoundingClientRect();
       const dividerRect = dividerEl.getBoundingClientRect();
 
@@ -697,9 +702,13 @@ export const MessageList = memo(function MessageList({
     updateBottomState(list);
   }
 
-  // Pin the feed to the bottom now, then again after the next frame so a layout
-  // settling pass (the composer reflowing on a narrow screen, a late image or
-  // font measurement) cannot leave the newest message just out of view.
+  // Pin the feed to the bottom now, then keep re-pinning across frames until the
+  // measured height stops growing. A single re-pin lands short whenever late
+  // layout (async images, web-font metrics, line-wrap reflow, a quiet-poll
+  // append) grows the feed after that one frame — that is why one click of the
+  // down arrow only used to go part of the way. The loop stops once the height
+  // holds steady for two frames, or after a ~1s safety cap so a perpetually
+  // growing feed can never spin forever.
   function scrollToBottom() {
     const list = listRef.current;
 
@@ -710,16 +719,49 @@ export const MessageList = memo(function MessageList({
     list.scrollTop = list.scrollHeight;
     updateBottomState(list);
 
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        const nextList = listRef.current;
-
-        if (nextList) {
-          nextList.scrollTop = nextList.scrollHeight;
-          updateBottomState(nextList);
-        }
-      });
+    if (typeof requestAnimationFrame !== 'function') {
+      return;
     }
+
+    if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(scrollSettleRafRef.current);
+    }
+
+    let lastHeight = list.scrollHeight;
+    let stableFrames = 0;
+    let attempts = 0;
+
+    const settle = () => {
+      const nextList = listRef.current;
+
+      if (!nextList) {
+        scrollSettleRafRef.current = 0;
+        return;
+      }
+
+      nextList.scrollTop = nextList.scrollHeight;
+
+      const height = nextList.scrollHeight;
+
+      if (height === lastHeight) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+        lastHeight = height;
+      }
+
+      attempts += 1;
+
+      if (stableFrames >= 2 || attempts >= 60) {
+        updateBottomState(nextList);
+        scrollSettleRafRef.current = 0;
+        return;
+      }
+
+      scrollSettleRafRef.current = requestAnimationFrame(settle);
+    };
+
+    scrollSettleRafRef.current = requestAnimationFrame(settle);
   }
 
   // Manual retry after an error — bypasses the auto-trigger's error guard.
@@ -769,8 +811,11 @@ export const MessageList = memo(function MessageList({
       list.scrollTop = target;
       updateBottomState(list);
     } else {
-      list.scrollTop = list.scrollHeight;
-      updateBottomState(list);
+      // No saved position, or the saved position was "at bottom" (persisted as a
+      // non-finite sentinel — see onScroll). Pin to the true bottom via the settle
+      // loop so late layout growth can't leave it short, instead of restoring a
+      // stale pixel offset captured against the previous render's height.
+      scrollToBottom();
     }
   }, [initialScrollTop, messages.length, scrollChatKey]);
 
@@ -826,6 +871,10 @@ export const MessageList = memo(function MessageList({
     return () => {
       window.clearTimeout(highlightTimeoutRef.current);
       window.clearTimeout(expandedTimeTimeoutRef.current);
+
+      if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(scrollSettleRafRef.current);
+      }
     };
   }, []);
 
@@ -946,9 +995,15 @@ export const MessageList = memo(function MessageList({
 
             // Remember where the user is reading so it can be restored on return.
             // Skip until the initial position is applied so transient scrolls during
-            // mount/restore do not overwrite the saved position.
+            // mount/restore do not overwrite the saved position. When the user is at
+            // the bottom, persist a non-finite sentinel rather than the pixel offset
+            // so the restore re-pins to the live bottom (heights differ after a
+            // remount/reload) instead of landing short of it.
             if (didRestoreScrollRef.current) {
-              onScrollPositionChange(scrollChatKey, list.scrollTop);
+              onScrollPositionChange(
+                scrollChatKey,
+                stickToBottomRef.current ? Number.POSITIVE_INFINITY : list.scrollTop,
+              );
             }
 
             maybeLoadOlder(list);

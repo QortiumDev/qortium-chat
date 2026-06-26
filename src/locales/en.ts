@@ -76,6 +76,7 @@ export const EN_STRINGS = {
   'message.unsupportedEncoding': 'Unsupported message encoding',
   'message.decodeError': 'Unable to decode message',
   'group.meta.memberCount': '{count} members',
+  'group.meta.activeCount': '{count} active',
   'group.meta.closedHistoryPrivateRead': 'Closed / private read',
   'group.meta.closedHistoryUnavailable': 'Closed / private history unavailable',
   'group.meta.directPrivateRead': 'Direct / private history',

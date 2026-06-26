@@ -44,3 +44,12 @@ export function isPublicNodeSendUnsupported(isUsingPublicNode: boolean, target: 
 
   return !isOpenGroup(target.group);
 }
+
+// Private group chat key recovery publishes a key request and relays the
+// announced key back — both are chain broadcasts to a closed group. On a
+// public/network node those broadcasts are rejected (the same rule that blocks
+// closed-group sends), so the prompts dead-end without ever decrypting history.
+// A local Core or trusted custom node is required. Mirrors isPublicNodeSendUnsupported.
+export function isPublicNodePrivateGroupKeyRecoveryUnsupported(isUsingPublicNode: boolean) {
+  return isUsingPublicNode;
+}

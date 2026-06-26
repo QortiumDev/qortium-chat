@@ -867,7 +867,8 @@ samp,
 
 .icon-button svg,
 .group-row__lock svg,
-.chat-pane__title-lock svg {
+.chat-pane__title-lock svg,
+.panel__toggle svg {
   width: 16px;
   height: 16px;
   fill: none;
@@ -875,6 +876,33 @@ samp,
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* The section header doubles as a collapse toggle: a bare button holding the
+   chevron + heading. The chevron points down when expanded and rotates to point
+   right when collapsed (driven purely by aria-expanded). */
+.panel__toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.panel__toggle svg {
+  flex: 0 0 auto;
+  color: var(--qc-color-muted);
+  transition: transform 0.15s ease;
+}
+
+.panel__toggle[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
 }
 
 .icon-button:hover,

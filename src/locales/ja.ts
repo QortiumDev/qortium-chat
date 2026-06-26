@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'サポートされていないメッセージのエンコーディング',
   'message.decodeError': 'メッセージのデコードに失敗しました',
   'group.meta.memberCount': '{count} メンバー',
+  'group.meta.activeCount': '{count} アクティブ',
   'group.meta.closedHistoryPrivateRead': 'クローズド / プライベート読取専用',
   'group.meta.closedHistoryUnavailable': 'クローズド / プライベート履歴は利用できません',
   'group.meta.directPrivateRead': 'ダイレクト / プライベート履歴',

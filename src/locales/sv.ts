@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Meddelandeencoding stöds inte',
   'message.decodeError': 'Det gick inte att avkoda meddelandet',
   'group.meta.memberCount': '{count} medlemmar',
+  'group.meta.activeCount': '{count} aktiva',
   'group.meta.closedHistoryPrivateRead': 'Stängd / privat läsning',
   'group.meta.closedHistoryUnavailable': 'Stängd / privat historik otillgänglig',
   'group.meta.directPrivateRead': 'Direkt / privat historik',

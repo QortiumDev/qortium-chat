@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': 'Viestikoodaus ei ole tuettu',
   'message.decodeError': 'Viestin purku epäonnistui',
   'group.meta.memberCount': '{count} jäsentä',
+  'group.meta.activeCount': '{count} aktiivista',
   'group.meta.closedHistoryPrivateRead': 'Suljettu / yksityinen lukeminen',
   'group.meta.closedHistoryUnavailable': 'Suljettu / yksityinen historia ei saatavilla',
   'group.meta.directPrivateRead': 'Suora / yksityinen historia',

@@ -79,6 +79,7 @@ import {
 import {
   BackIcon,
   BrandMark,
+  DownIcon,
   LockIcon,
   PlusIcon,
   SearchIcon,
@@ -99,7 +100,11 @@ import {
   getGroupMemberAddress,
   getGroupMemberRegisteredName,
 } from './groupMembers';
-import { isPublicNodeSendUnsupported, shouldDecryptGroupMessages } from './groupAccess';
+import {
+  isPublicNodePrivateGroupKeyRecoveryUnsupported,
+  isPublicNodeSendUnsupported,
+  shouldDecryptGroupMessages,
+} from './groupAccess';
 import {
   fetchAvatarImage,
   loadAvatarProfile,
@@ -598,6 +603,11 @@ export default function App() {
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [search, setSearch] = useState('');
   const [isGroupSearchOpen, setGroupSearchOpen] = useState(false);
+  // Sidebar sections start collapsed; unread items still render through a
+  // collapsed section (see GroupList/DirectList `collapsed`), so a collapsed
+  // section only ever shows the chats that need attention.
+  const [isGroupsCollapsed, setGroupsCollapsed] = useState(true);
+  const [isDirectCollapsed, setDirectCollapsed] = useState(true);
   const [draft, setDraft] = useState('');
   const [composeContext, setComposeContext] = useState<
     | { kind: 'edit'; thread: MessageThread }
@@ -695,6 +705,7 @@ export default function App() {
   const selectedDirectAddress = selectedDirect?.address ?? null;
   const selectedChatKey = getSelectedChatKey(selectedChat);
   const selectedGroupIdRef = useRef<number | null>(selectedGroupId);
+  const selectedDirectAddressRef = useRef<string | null>(selectedDirectAddress);
   // Live mirror of the current selection so async callbacks (e.g. a group search
   // resolving after the saved-chat restore) don't auto-select over a real choice.
   const hasSelectedChatRef = useRef(selectedChat !== null);
@@ -706,6 +717,7 @@ export default function App() {
   const userSelectedChatRef = useRef(false);
 
   selectedGroupIdRef.current = selectedGroupId;
+  selectedDirectAddressRef.current = selectedDirectAddress;
   hasSelectedChatRef.current = selectedChat !== null;
   currentAccountAddressRef.current = account?.address ?? null;
   const groupActivityById = useMemo(() => {
@@ -1546,6 +1558,25 @@ export default function App() {
     actionList: QdnAction[],
     options: { quiet?: boolean } = {},
   ) {
+    // Belt-and-suspenders membership gate: key recovery publishes a request as
+    // this account, so never fire it for a group the account hasn't joined even
+    // if a caller's gate ever regresses. Callers already require membership, but
+    // keeping the precondition local to the side-effecting function prevents a
+    // future caller from prompting a non-member.
+    if (!joinedIds.has(group.groupId)) {
+      return;
+    }
+
+    // Public/network node: the request + relay broadcasts are rejected, so the
+    // prompts dead-end and nothing ever decrypts. Skip them entirely and show a
+    // clear "needs a local/trusted node" notice instead of several futile
+    // approval dialogs followed by silence.
+    if (isPublicNodePrivateGroupKeyRecoveryUnsupported(bridge.value.isUsingPublicNode)) {
+      setPrivateGroupKeyStatus('');
+      setPrivateGroupKeyError(t('action.publicNodeSendUnavailable'));
+      return;
+    }
+
     const missingKeyRequests = getMissingPrivateGroupKeyRequests(nextMessages, group.groupId);
 
     if (missingKeyRequests.length === 0) {
@@ -2143,11 +2174,24 @@ export default function App() {
   }
 
   function toggleGroupSearch() {
-    setGroupSearchOpen((current) => !current || search.trim().length > 0);
+    setGroupSearchOpen((current) => {
+      const next = !current || search.trim().length > 0;
+      // Opening search must reveal the form, so expand a collapsed section.
+      if (next) {
+        setGroupsCollapsed(false);
+      }
+      return next;
+    });
   }
 
   function toggleDirectSearch() {
-    setDirectSearchOpen((current) => !current || directAddress.trim().length > 0);
+    setDirectSearchOpen((current) => {
+      const next = !current || directAddress.trim().length > 0;
+      if (next) {
+        setDirectCollapsed(false);
+      }
+      return next;
+    });
   }
 
   function mentionAccount(target: AccountInfoTarget) {
@@ -2664,33 +2708,92 @@ export default function App() {
     }
 
     let isDisposed = false;
+    let isHydrating = false;
 
-    async function hydrateDirectActivity() {
-      for (const direct of directs) {
-        if (isDisposed || loadedDirectActivityRef.current.has(direct.address)) {
-          continue;
-        }
+    // Mirror the group activity sweep: the first pass only fills gaps, the
+    // periodic refresh re-reads known directs so their sidebar activity + unread
+    // dot stay live. Without this, a private direct chat has no background poll
+    // at all — its only live signal is the account-level active-chats websocket,
+    // so a recipient gets no "new message" notice when that stream is unavailable.
+    async function hydrateDirectActivity(refresh: boolean) {
+      if (isHydrating) {
+        return;
+      }
 
-        try {
-          const nextMessages = await getDirectMessages(direct.address, actions);
+      isHydrating = true;
 
+      // The open direct chat has its own 15s poll; skip it here to avoid redundant reads.
+      const openDirectAddress = selectedDirectAddressRef.current;
+
+      try {
+        for (const direct of directs) {
           if (isDisposed) {
             return;
           }
 
-          setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, direct.address, nextMessages));
-        } catch {
-          // Direct history is optional in older Home/Core bridge contexts.
+          if (direct.address === openDirectAddress) {
+            continue;
+          }
+
+          if (!refresh && loadedDirectActivityRef.current.has(direct.address)) {
+            continue;
+          }
+
+          try {
+            const nextMessages = await getDirectMessages(direct.address, actions);
+
+            if (isDisposed) {
+              return;
+            }
+
+            setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, direct.address, nextMessages));
+          } catch {
+            // Direct history is optional in older Home/Core bridge contexts.
+          }
         }
+      } finally {
+        isHydrating = false;
       }
     }
 
-    void hydrateDirectActivity();
+    void hydrateDirectActivity(false);
+
+    const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      void hydrateDirectActivity(true);
+    }, 30000);
 
     return () => {
       isDisposed = true;
+      window.clearInterval(interval);
     };
   }, [actionsKey, activeChats.value.direct, canReadPrivateDirectChat, isAccountUnlocked]);
+
+  // Refresh the decrypted active-chats list on a slow cadence so a brand-new
+  // direct conversation (from a sender not yet in the list) surfaces in the
+  // sidebar without the user reloading. The active-chats websocket folds in
+  // timestamps for known addresses but never adds new decrypted entries, so the
+  // list itself must be re-fetched periodically to discover new conversations.
+  useEffect(() => {
+    if (!account || !isAccountUnlocked || !canReadPrivateDirectChat) {
+      return undefined;
+    }
+
+    const selectedAccount = account;
+
+    const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      void loadActiveChats(selectedAccount, actions, { quiet: true });
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [account?.address, actionsKey, canReadPrivateDirectChat, isAccountUnlocked]);
 
   useEffect(() => {
     applyDisplaySettings(displaySettings);
@@ -3115,71 +3218,17 @@ export default function App() {
         }`}
       >
         <aside className="sidebar" aria-label={t('aria.navigation')} inert={isMembersOverlay || undefined}>
-          <section className="panel">
+          <section className={`panel${isDirectCollapsed ? ' panel--collapsed' : ''}`}>
             <div className="panel__header">
-              <h2>{t('label.common.groups')}</h2>
-              <div className="panel__header-actions">
-                {hasUnreadGroups ? (
-                  <span
-                    aria-label={t('aria.unreadGroups')}
-                    className="panel__unread-dot"
-                    role="img"
-                    title={t('aria.unreadGroups')}
-                  />
-                ) : null}
-                <span className="panel__count">{groups.value.length}</span>
-                <button
-                  aria-expanded={isGroupSearchVisible}
-                  aria-label={t('label.searchGroups')}
-                  className="icon-button"
-                  onClick={toggleGroupSearch}
-                  title={t('label.searchGroups')}
-                  type="button"
-                >
-                  <SearchIcon />
-                </button>
-              </div>
-            </div>
-            {isGroupSearchVisible ? (
-              <form
-                className="search"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void loadGroups(search);
-                }}
+              <button
+                aria-expanded={!isDirectCollapsed}
+                className="panel__toggle"
+                onClick={() => setDirectCollapsed((collapsed) => !collapsed)}
+                type="button"
               >
-                <input
-                  aria-label={t('label.searchGroups')}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t('placeholder.searchGroups')}
-                  ref={groupSearchInputRef}
-                  value={search}
-                />
-                <button className="button" type="submit">
-                  {t('button.search')}
-                </button>
-              </form>
-            ) : null}
-            {groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
-            {groups.phase === 'loading' ? (
-              <LoadingRows count={5} label={t('label.loading')} />
-            ) : (
-              <GroupList
-                activityByGroupId={groupActivityById}
-                groups={sortedGroups}
-                memberCountsByGroupId={syntheticMemberCountsByGroupId}
-                onSelect={selectGroup}
-                selectedGroupId={selectedGroupId}
-                t={t}
-                unreadGroupIds={unreadGroupIds}
-                now={now}
-              />
-            )}
-          </section>
-
-          <section className="panel">
-            <div className="panel__header">
-              <h2>{t('label.common.direct')}</h2>
+                <DownIcon />
+                <h2>{t('label.common.direct')}</h2>
+              </button>
               <div className="panel__header-actions">
                 {hasUnreadDirect ? (
                   <span
@@ -3202,7 +3251,7 @@ export default function App() {
                 </button>
               </div>
             </div>
-            {isDirectFormVisible ? (
+            {!isDirectCollapsed && isDirectFormVisible ? (
               <form className="search" onSubmit={handleOpenDirectChat}>
                 <input
                   aria-label={t('placeholder.directNameOrAddress')}
@@ -3225,16 +3274,19 @@ export default function App() {
                 </button>
               </form>
             ) : null}
-            {directLookupError ? <p className="error">{directLookupError}</p> : null}
-            {activeChats.phase === 'error' ? <p className="error">{activeChats.error}</p> : null}
-            {!canOpenDirectChat ? <p className="muted">{directAccessUnavailableLabel}</p> : null}
-            {canOpenDirectChat && !canLoadPrivateDirectChats ? <p className="muted">{directListUnavailableLabel}</p> : null}
-            {activeChats.phase === 'loading' ? (
+            {!isDirectCollapsed && directLookupError ? <p className="error">{directLookupError}</p> : null}
+            {!isDirectCollapsed && activeChats.phase === 'error' ? <p className="error">{activeChats.error}</p> : null}
+            {!isDirectCollapsed && !canOpenDirectChat ? <p className="muted">{directAccessUnavailableLabel}</p> : null}
+            {!isDirectCollapsed && canOpenDirectChat && !canLoadPrivateDirectChats ? (
+              <p className="muted">{directListUnavailableLabel}</p>
+            ) : null}
+            {activeChats.phase === 'loading' && !isDirectCollapsed ? (
               <LoadingRows count={3} label={t('label.loading')} />
             ) : (
               <DirectList
                 activityByAddress={directActivityByAddress}
                 canOpen={canOpenDirectChat}
+                collapsed={isDirectCollapsed}
                 directs={mergedDirects}
                 onRemove={removeDirect}
                 onSelect={selectDirect}
@@ -3242,6 +3294,77 @@ export default function App() {
                 selectedAddress={selectedDirectAddress}
                 t={t}
                 unreadAddresses={unreadDirectAddresses}
+                now={now}
+              />
+            )}
+          </section>
+
+          <section className={`panel${isGroupsCollapsed ? ' panel--collapsed' : ''}`}>
+            <div className="panel__header">
+              <button
+                aria-expanded={!isGroupsCollapsed}
+                className="panel__toggle"
+                onClick={() => setGroupsCollapsed((collapsed) => !collapsed)}
+                type="button"
+              >
+                <DownIcon />
+                <h2>{t('label.common.groups')}</h2>
+              </button>
+              <div className="panel__header-actions">
+                {hasUnreadGroups ? (
+                  <span
+                    aria-label={t('aria.unreadGroups')}
+                    className="panel__unread-dot"
+                    role="img"
+                    title={t('aria.unreadGroups')}
+                  />
+                ) : null}
+                <span className="panel__count">{groups.value.length}</span>
+                <button
+                  aria-expanded={isGroupSearchVisible}
+                  aria-label={t('label.searchGroups')}
+                  className="icon-button"
+                  onClick={toggleGroupSearch}
+                  title={t('label.searchGroups')}
+                  type="button"
+                >
+                  <SearchIcon />
+                </button>
+              </div>
+            </div>
+            {!isGroupsCollapsed && isGroupSearchVisible ? (
+              <form
+                className="search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void loadGroups(search);
+                }}
+              >
+                <input
+                  aria-label={t('label.searchGroups')}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t('placeholder.searchGroups')}
+                  ref={groupSearchInputRef}
+                  value={search}
+                />
+                <button className="button" type="submit">
+                  {t('button.search')}
+                </button>
+              </form>
+            ) : null}
+            {!isGroupsCollapsed && groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
+            {groups.phase === 'loading' && !isGroupsCollapsed ? (
+              <LoadingRows count={5} label={t('label.loading')} />
+            ) : (
+              <GroupList
+                activityByGroupId={groupActivityById}
+                collapsed={isGroupsCollapsed}
+                groups={sortedGroups}
+                memberCountsByGroupId={syntheticMemberCountsByGroupId}
+                onSelect={selectGroup}
+                selectedGroupId={selectedGroupId}
+                t={t}
+                unreadGroupIds={unreadGroupIds}
                 now={now}
               />
             )}

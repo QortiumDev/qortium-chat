@@ -73,6 +73,7 @@ export const STRINGS = {
   'message.unsupportedEncoding': '지원되지 않는 메시지 인코딩',
   'message.decodeError': '메시지를 디코딩할 수 없습니다',
   'group.meta.memberCount': '멤버 {count}명',
+  'group.meta.activeCount': '활성 {count}명',
   'group.meta.closedHistoryPrivateRead': '닫힘 / 비공개 읽기',
   'group.meta.closedHistoryUnavailable': '닫힘 / 비공개 기록을 사용할 수 없음',
   'group.meta.directPrivateRead': '직접 / 비공개 기록',
