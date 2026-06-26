@@ -89,10 +89,12 @@ import {
   readLastChat,
   readPersistedDirects,
   readReadWatermarks,
+  readSidebarCollapse,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
   writeReadWatermarks,
+  writeSidebarCollapse,
   type PersistedDirect,
 } from './chatStorage';
 import {
@@ -133,7 +135,7 @@ import type {
 } from './types';
 
 // Shown next to the header title so the running build is identifiable at a glance.
-const APP_VERSION = 'v1.0.1';
+const APP_VERSION = 'v1.0.2';
 
 const emptyGroups: GroupData[] = [];
 const emptyMembers: GroupMember[] = [];
@@ -615,9 +617,10 @@ export default function App() {
   const [isGroupSearchOpen, setGroupSearchOpen] = useState(false);
   // Sidebar sections start collapsed; unread items still render through a
   // collapsed section (see GroupList/DirectList `collapsed`), so a collapsed
-  // section only ever shows the chats that need attention.
-  const [isGroupsCollapsed, setGroupsCollapsed] = useState(true);
-  const [isDirectCollapsed, setDirectCollapsed] = useState(true);
+  // section only ever shows the chats that need attention. The expanded/collapsed
+  // choice is persisted (app-wide) and restored on the next app start.
+  const [isGroupsCollapsed, setGroupsCollapsed] = useState(() => readSidebarCollapse()?.groups ?? true);
+  const [isDirectCollapsed, setDirectCollapsed] = useState(() => readSidebarCollapse()?.direct ?? true);
   const [draft, setDraft] = useState('');
   const [composeContext, setComposeContext] = useState<
     | { kind: 'edit'; thread: MessageThread }
@@ -652,6 +655,12 @@ export default function App() {
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
   const scrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
+  // Per-chat snapshot of the full loaded message view (live tail + any paged-in
+  // older history). On returning to a chat this is restored so the saved scroll
+  // bookmark resolves even when the user had read back beyond the latest window
+  // (which a fresh load alone would not include). Bounded to the recent chats.
+  const chatViewCacheRef = useRef(new Map<string, ChatMessage[]>());
+  const loadedChatKeyRef = useRef('');
   const [mintingStatus, setMintingStatus] = useState<AsyncState<MintingStatus | null>>(createState(null));
   const [joinPending, setJoinPending] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
@@ -2809,6 +2818,11 @@ export default function App() {
     applyDisplaySettings(displaySettings);
   }, [displaySettings]);
 
+  // Persist the sidebar section expand/collapse choice so it survives a restart.
+  useEffect(() => {
+    writeSidebarCollapse({ direct: isDirectCollapsed, groups: isGroupsCollapsed });
+  }, [isDirectCollapsed, isGroupsCollapsed]);
+
   useEffect(() => {
     const language = normalizeLanguage(displaySettings.language);
 
@@ -2907,9 +2921,37 @@ export default function App() {
   }, [Object.values(trackedTransactions).map((transaction) => `${transaction.id}:${transaction.phase}`).join('|')]);
 
   useEffect(() => {
-    // A new conversation starts with no paged-in history; the live tail reloads
-    // below and decides (from its page size) whether older history may exist.
-    setOlderMessages(emptyMessages);
+    // Snapshot the outgoing chat's full view (live tail + paged history) before
+    // leaving, so returning can restore it and the saved scroll bookmark resolves.
+    const previousKey = loadedChatKeyRef.current;
+
+    if (previousKey && previousKey !== selectedChatKey && messagesChatKey === previousKey) {
+      const previousView =
+        olderMessages.length === 0 ? messages.value : mergeMessages(olderMessages, messages.value, Infinity);
+
+      if (previousView.length > 0) {
+        chatViewCacheRef.current.set(previousKey, previousView);
+
+        while (chatViewCacheRef.current.size > 12) {
+          const oldest = chatViewCacheRef.current.keys().next().value;
+
+          if (oldest === undefined) {
+            break;
+          }
+
+          chatViewCacheRef.current.delete(oldest);
+        }
+      }
+    }
+
+    loadedChatKeyRef.current = selectedChatKey;
+
+    // Seed paged history from the cache so a returning chat shows the same
+    // content it had (incl. messages read back beyond the latest window); the
+    // live tail still reloads below. A first visit starts with no paged history.
+    const cachedView = selectedChat ? chatViewCacheRef.current.get(selectedChatKey) : undefined;
+
+    setOlderMessages(cachedView ?? emptyMessages);
     setOlderMessagesState({ error: '', loading: false, reachedStart: true });
     loadingOlderRef.current = false;
 

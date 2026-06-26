@@ -219,3 +219,28 @@ export function mergePersistedDirect(
 
   return [...directs, entry];
 }
+
+// Whether the sidebar Direct / Groups sections are collapsed. App-wide (not
+// per-account) so the layout the user left is restored on the next app start.
+export type StoredSidebarCollapse = { direct: boolean; groups: boolean };
+
+function sidebarCollapseStorageKey() {
+  return `${PREFIX}:sidebarCollapse`;
+}
+
+export function readSidebarCollapse(): StoredSidebarCollapse | null {
+  const value = readJson<{ direct?: unknown; groups?: unknown }>(sidebarCollapseStorageKey());
+
+  if (!value) {
+    return null;
+  }
+
+  return {
+    direct: typeof value.direct === 'boolean' ? value.direct : true,
+    groups: typeof value.groups === 'boolean' ? value.groups : true,
+  };
+}
+
+export function writeSidebarCollapse(state: StoredSidebarCollapse): void {
+  writeJson(sidebarCollapseStorageKey(), state);
+}
