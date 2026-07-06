@@ -128,6 +128,7 @@ export type GroupWithJoinRequests = {
 
 export type ActiveGroupChat = {
   data?: string | null;
+  encoding?: 'BASE58' | 'BASE64';
   groupId: number;
   groupName?: string;
   sender?: string;
@@ -174,6 +175,25 @@ export type ChatMessage = {
   status?: string;
   timestamp: number;
   txGroupId: number;
+};
+
+export type GroupInvite = {
+  expiry?: number | null;
+  groupId: number;
+  invitee?: string;
+  inviter?: string;
+};
+
+export type QdnPublishResult = {
+  accepted: boolean;
+  action: 'PUBLISH_QDN_RESOURCE';
+  resource?: {
+    identifier: string | null;
+    name: string;
+    service: string;
+  };
+  result?: unknown;
+  transactionSignature?: string;
 };
 
 export type ChatActionResult = {

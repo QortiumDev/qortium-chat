@@ -1,5 +1,5 @@
 import { getAccountNames, resolveIdentities } from './coreApi';
-import { qdnRequest } from './qdnRequest';
+import { hasAction, qdnRequest } from './qdnRequest';
 import type { NameSummary, NodeApiFetchResult, QdnAction } from './types';
 
 const AVATAR_MAX_BYTES = 500 * 1024;
@@ -186,7 +186,19 @@ async function waitForAvatarReady(name: string) {
   return false;
 }
 
-export async function fetchAvatarImage(name: string) {
+export async function fetchAvatarImage(name: string, actions?: QdnAction[]) {
+  // Browser fallback (no Home bridge) cannot fetch the image blob at all:
+  // GET_QDN_RESOURCE_PROPERTIES / FETCH_QDN_RESOURCE are bridge-only actions
+  // with no REST fallback here. Fail fast (name-only profile) instead of
+  // running the readiness poll — up to ~20s per name — ahead of an
+  // unavoidable failure. Callers that omit `actions` keep the old behavior.
+  if (
+    actions &&
+    (!hasAction(actions, 'GET_QDN_RESOURCE_PROPERTIES') || !hasAction(actions, 'FETCH_QDN_RESOURCE'))
+  ) {
+    throw new Error('Avatar images require the Qortium Home bridge.');
+  }
+
   const request = {
     service: 'THUMBNAIL',
     name,
@@ -288,7 +300,7 @@ export async function loadAvatarProfile({
   try {
     return {
       address,
-      avatarSrc: await fetchAvatarImage(name),
+      avatarSrc: await fetchAvatarImage(name, actions),
       name,
     };
   } catch {

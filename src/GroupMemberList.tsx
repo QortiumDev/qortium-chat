@@ -65,6 +65,14 @@ export function GroupMemberList({
               openLabel={t('action.openAvatarImage')}
               src={avatarSrc}
             />
+            {member.online === true ? (
+              <span
+                aria-label={t('label.member.online')}
+                className="member-chip__online"
+                role="img"
+                title={t('label.member.online')}
+              />
+            ) : null}
             <span className="member-chip__text">
               {address ? (
                 <button

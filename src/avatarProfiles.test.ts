@@ -9,6 +9,10 @@ import { qdnRequest } from './qdnRequest';
 
 vi.mock('./qdnRequest', () => ({
   buildNodeWebSocketUrl: (path: string) => `ws://127.0.0.1:24891${path}`,
+  // Real implementation: fetchAvatarImage's bridge-capability gate must
+  // behave authentically against the action lists the tests pass.
+  hasAction: (actions: string[], ...candidates: string[]) =>
+    candidates.some((candidate) => actions.some((action) => action.toUpperCase() === candidate.toUpperCase())),
   qdnRequest: vi.fn(),
 }));
 
@@ -129,7 +133,7 @@ describe('avatar profile helpers', () => {
       loadAvatarProfile({
         address: 'Qabc',
         preferredName: 'alice',
-        actions: ['GET_ACCOUNT_NAMES'],
+        actions: ['GET_ACCOUNT_NAMES', 'GET_QDN_RESOURCE_PROPERTIES', 'FETCH_QDN_RESOURCE'],
       }),
     ).resolves.toEqual({
       address: 'Qabc',
@@ -152,7 +156,7 @@ describe('avatar profile helpers', () => {
     await expect(
       loadAvatarProfile({
         address: 'Qabc',
-        actions: ['GET_ACCOUNT_NAMES'],
+        actions: ['GET_ACCOUNT_NAMES', 'GET_QDN_RESOURCE_PROPERTIES', 'FETCH_QDN_RESOURCE'],
       }),
     ).resolves.toEqual({
       address: 'Qabc',
@@ -166,24 +170,25 @@ describe('avatar profile helpers', () => {
   });
 
   it('uses node read fallback when the account names bridge action is unavailable', async () => {
-    qdnRequestMock
-      .mockResolvedValueOnce({
-        body: '[]',
-        contentType: 'application/json',
-        data: [{ name: 'carol', owner: 'Qabc' }],
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-      })
-      .mockResolvedValueOnce(readyStatus)
-      .mockResolvedValueOnce({ mimeType: 'image/gif', size: 128 })
-      .mockResolvedValueOnce('R0lGODlhAQABAAAAACw=');
+    // Fallback mode resolves the name over REST, but the avatar image itself
+    // needs the bridge-only GET_QDN_RESOURCE_PROPERTIES / FETCH_QDN_RESOURCE
+    // actions — with an empty action list the load fails fast to a name-only
+    // profile without running the readiness poll at all.
+    qdnRequestMock.mockResolvedValueOnce({
+      body: '[]',
+      contentType: 'application/json',
+      data: [{ name: 'carol', owner: 'Qabc' }],
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
 
     await expect(loadAvatarProfile({ address: 'Qabc', actions: [] })).resolves.toEqual({
       address: 'Qabc',
-      avatarSrc: 'blob:mock/image/gif',
+      avatarSrc: null,
       name: 'carol',
     });
+    expect(qdnRequestMock).toHaveBeenCalledTimes(1);
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,

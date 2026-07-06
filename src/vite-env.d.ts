@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+declare const __APP_VERSION__: string;
+
 interface ImportMetaEnv {
   readonly VITE_QORTIUM_NODE_API_URL?: string;
   // Comma-separated group ids treated as development (tx-approval) groups. Defaults to "1".

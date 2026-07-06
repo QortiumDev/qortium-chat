@@ -44,4 +44,44 @@ describe('i18n locale parity', () => {
       ).toEqual(placeholders((EN_STRINGS as Record<string, string>)[key]));
     }
   });
+
+  // Keys whose value legitimately matches English in a given locale: verified
+  // cognates, loanwords, and shared abbreviations ("Navigation" in German,
+  // "min"/"h", "Emoji", "Online", …). A value identical to English that is
+  // NOT listed here is the classic signature of a key added without
+  // translating it — add a real translation, or extend this list only after
+  // confirming the English form is the correct native term.
+  const IDENTICAL_TO_ENGLISH_ALLOWLIST: Record<string, string[]> = {
+    de: ['aria.navigation', 'label.approval.block', 'label.approval.windowEta', 'label.common.navigation', 'label.composer.emoji', 'label.group.admin', 'label.group.global', 'label.member.online', 'label.message.original'],
+    el: ['app.title', 'label.composer.emoji'],
+    es: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.error', 'label.group.global', 'label.message.original', 'message.error'],
+    et: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji'],
+    fi: ['label.approval.eta.minutes', 'label.composer.emoji'],
+    fr: ['aria.navigation', 'button.mention', 'label.approval.eta.hours', 'label.approval.eta.minutes', 'label.approval.signature', 'label.approval.type.unknown', 'label.common.direct', 'label.common.message', 'label.common.navigation', 'label.group.admin', 'label.group.global', 'label.invites', 'label.message', 'label.message.original', 'placeholder.message', 'title.directPanel'],
+    hi: ['app.title'],
+    hu: ['label.composer.emoji', 'label.group.admin'],
+    it: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.admin', 'label.member.online'],
+    nb: ['app.title', 'button.send', 'button.startMinting', 'group.status.minting.minting', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.admin', 'label.group.global', 'label.message.original'],
+    nl: ['label.approval.eta.minutes', 'label.common.direct', 'label.composer.emoji', 'label.group.open', 'label.member.online', 'title.directPanel'],
+    pl: ['label.approval.eta.minutes', 'label.composer.emoji', 'label.member.online'],
+    pt: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.global', 'label.member.online', 'label.message.original'],
+    ro: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.common.direct', 'label.composer.emoji', 'label.group.global', 'label.member.online', 'label.message.original', 'title.directPanel'],
+    sv: ['label.approval.block', 'label.approval.eta.hours', 'label.approval.eta.minutes', 'label.approval.windowEta', 'label.composer.emoji', 'label.group.global', 'label.member.online', 'label.message.original'],
+  };
+
+  it.each(NON_EN)('locale "%s" has no unexpected untranslated values', (language) => {
+    const catalog = (OTHER_STRINGS[language] ?? {}) as Record<string, string>;
+    const allowed = new Set(IDENTICAL_TO_ENGLISH_ALLOWLIST[language] ?? []);
+    const unexpectedIdentical = EN_KEYS.filter(
+      (key) =>
+        catalog[key] !== undefined &&
+        catalog[key] === (EN_STRINGS as Record<string, string>)[key] &&
+        !allowed.has(key),
+    );
+
+    expect(
+      unexpectedIdentical,
+      `${language} has values identical to English that are not in the cognate allowlist — translate them (or allowlist a confirmed cognate)`,
+    ).toEqual([]);
+  });
 });

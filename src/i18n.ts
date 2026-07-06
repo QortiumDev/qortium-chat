@@ -157,11 +157,19 @@ export function createTranslator(language: string | undefined) {
   const locale = normalizeLanguage(language) ?? DEFAULT_LANGUAGE;
   const catalog: MessageCatalog = { ...EN_STRINGS, ...OTHER_STRINGS[locale] } as MessageCatalog;
 
-  return function translate(key: MessageKey, values?: MessageValues) {
+  function translate(key: MessageKey, values?: MessageValues) {
     const message = catalog[key] ?? EN_STRINGS[key];
 
     return interpolate(message, values);
-  };
+  }
+
+  // Date/number formatting must follow the app's language (set by Home), not
+  // the browser default — the two can differ, and English relative times in a
+  // German UI read as a bug. Riding the locale on the translator means every
+  // formatting call site already has it in hand.
+  translate.locale = locale;
+
+  return translate;
 }
 
 export type TranslateFunction = ReturnType<typeof createTranslator>;

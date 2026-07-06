@@ -1,5 +1,5 @@
-import { buildMessageThreads } from './messageThreads';
 import type { ChatMessage, GroupData, GroupMember } from './types';
+import { isReactionChatMessage } from './chatText';
 
 export type GroupMemberRole = 'admin' | 'member' | 'owner';
 
@@ -142,15 +142,19 @@ export function getActiveMessageGroupMembers(messages: ChatMessage[], groupId?: 
   const activeMessages =
     typeof groupId === 'number' ? messages.filter((message) => message.txGroupId === groupId) : messages;
 
-  for (const [index, thread] of buildMessageThreads(activeMessages).entries()) {
-    const address = thread.original.sender;
+  for (const [index, message] of activeMessages.entries()) {
+    if (isReactionChatMessage(message)) {
+      continue;
+    }
+
+    const address = message.sender;
 
     if (!address) {
       continue;
     }
 
-    const latestTimestamp = thread.latest.timestamp;
-    const registeredName = normalizeName(thread.latest.senderName) ?? normalizeName(thread.original.senderName);
+    const latestTimestamp = message.timestamp;
+    const registeredName = normalizeName(message.senderName);
     const existing = membersByAddress.get(address);
 
     if (!existing) {

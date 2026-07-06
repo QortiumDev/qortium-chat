@@ -391,6 +391,14 @@ export function getDocumentQdnResources(text: string): QdnDocumentResource[] {
 }
 
 export async function openAppLinkInHomeTab(address: string) {
+  // The address comes from attacker-controlled message text. Home re-validates
+  // on its side, but the trust boundary is enforced here too so a future or
+  // more lenient bridge cannot be driven by a crafted chat link: only the
+  // three app-link schemes, and a sane length cap (mirroring Home's own rule).
+  if (address.length > 2048 || !/^(?:qdn|home|core):\/\//i.test(address)) {
+    throw new Error('Blocked app link with an unsupported address.');
+  }
+
   return qdnRequest<boolean>({ action: 'OPEN_NEW_TAB', address });
 }
 

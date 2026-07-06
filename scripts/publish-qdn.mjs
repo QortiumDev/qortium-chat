@@ -173,6 +173,15 @@ function getApiKeySource() {
     };
   }
 
+  // Final fallback: a bare ENOENT stack trace here explains nothing — say
+  // what was tried and which knobs configure the key instead.
+  if (!existsSync(apiKeyPath)) {
+    throw new Error(
+      `No node API key found: set QORTIUM_CHAT_NODE_API_KEY (or QORTIUM_CHAT_NODE_API_KEY_PATH), ` +
+        `run alongside a local Core (auto-discovered via /proc), or place the key at ${apiKeyPath}.`,
+    );
+  }
+
   return {
     apiKey: readText(apiKeyPath),
   };
@@ -379,9 +388,26 @@ async function signAndProcess(rawUnsignedBytes58, privateKey58, computePath = '/
     headers: getHeaders('text/plain'),
     body: signedBytes58,
   });
+  const trimmedResult = processResult.trim();
 
-  if (processResult.trim() !== 'true' && !processResult.includes('"type"')) {
-    throw new Error(`Transaction was not accepted: ${processResult}`);
+  // Core answers `true` or the accepted transaction JSON; a structured error
+  // is also JSON, so parse instead of substring-matching — an error payload
+  // that happens to contain a "type" field must never pass as success.
+  if (trimmedResult !== 'true') {
+    let parsed;
+
+    try {
+      parsed = JSON.parse(trimmedResult);
+    } catch {
+      throw new Error(`Transaction was not accepted: ${trimmedResult.slice(0, 300)}`);
+    }
+
+    const isAcceptedTransaction =
+      parsed && typeof parsed === 'object' && parsed.error === undefined && typeof parsed.type === 'string';
+
+    if (!isAcceptedTransaction) {
+      throw new Error(`Transaction was not accepted: ${trimmedResult.slice(0, 300)}`);
+    }
   }
 
   return signedBytes58;
@@ -464,6 +490,45 @@ async function publishResource(account) {
   await signAndProcess(rawUnsignedBytes58, account.accountPrivateKey);
 }
 
+// Fail fast on a missing or stale build: dist/ is gitignored (invisible to git
+// status) and the defaults target the production APP/Chat/Chat resource, so a
+// habitual publish after pulling but before building would silently ship the
+// previous version. The __APP_VERSION__ define stamps `v<package version>`
+// into the bundle, so its absence means "not built from this source tree".
+// (A stale build of the same version still passes — bump the version or
+// rebuild to be sure.)
+const packageVersion = readJson(path.join(repoRoot, 'package.json')).version;
+const distAssetsPath = path.join(distPath, 'assets');
+
+if (!existsSync(path.join(distPath, 'index.html')) || !existsSync(distAssetsPath)) {
+  throw new Error(`No build found at ${distPath} — run \`npm run build\` first.`);
+}
+
+const hasCurrentVersionStamp = readdirSync(distAssetsPath)
+  .filter((entry) => entry.endsWith('.js'))
+  .some((entry) => readFileSync(path.join(distAssetsPath, entry), 'utf8').includes(`v${packageVersion}`));
+
+if (!hasCurrentVersionStamp) {
+  throw new Error(
+    `Build at ${distPath} does not contain v${packageVersion} (package.json version) — ` +
+      'run `npm run build` before publishing.',
+  );
+}
+
+// The publish signs by POSTing the preview account's private key to the node's
+// /transactions/sign — fine against a local node, never in cleartext across a
+// network. Require loopback or HTTPS unless explicitly overridden.
+if (
+  !isLoopbackNodeApiUrl() &&
+  !nodeApiUrl.startsWith('https://') &&
+  process.env.QORTIUM_CHAT_ALLOW_REMOTE_SIGN !== '1'
+) {
+  throw new Error(
+    `Refusing to send the account private key to non-loopback HTTP node ${nodeApiUrl}. ` +
+      'Use a local node or an https:// URL, or set QORTIUM_CHAT_ALLOW_REMOTE_SIGN=1 to override.',
+  );
+}
+
 const apiKeySource = getApiKeySource();
 const apiKey = apiKeySource.apiKey;
 const account = getLocalPreviewAccount();
@@ -483,19 +548,36 @@ if (!status || status.syncPercent !== 100 || status.isSynchronizing) {
 await ensureNameRegistered(publishName, account);
 await publishResource(account);
 
-const readyStatus = await waitFor(`${service}/${publishName}/${identifier}`, async () => {
-  const resourceStatus = await getResourceStatus();
+let lastObservedStatus = null;
+let readyStatus;
 
-  if (resourceStatus?.status === 'READY') {
-    return resourceStatus;
-  }
+try {
+  readyStatus = await waitFor(`${service}/${publishName}/${identifier}`, async () => {
+    const resourceStatus = await getResourceStatus();
 
-  if (resourceStatus?.status === 'BLOCKED' || resourceStatus?.status === 'BUILD_FAILED') {
-    throw new Error(`${service}/${publishName}/${identifier} status is ${resourceStatus.status}.`);
-  }
+    lastObservedStatus = resourceStatus?.status ?? lastObservedStatus;
 
-  return null;
-});
+    if (resourceStatus?.status === 'READY') {
+      return resourceStatus;
+    }
+
+    if (resourceStatus?.status === 'BLOCKED' || resourceStatus?.status === 'BUILD_FAILED') {
+      throw new Error(`${service}/${publishName}/${identifier} status is ${resourceStatus.status}.`);
+    }
+
+    return null;
+  });
+} catch (error) {
+  // A poll timeout is not a failed publish: the transaction was already
+  // accepted above, and a slow node may simply still be building. Say so
+  // explicitly, or a confused re-publish follows.
+  throw new Error(
+    `${error instanceof Error ? error.message : String(error)} ` +
+      `Note: the publish transaction WAS accepted; the node may still be building ` +
+      `${service}/${publishName}/${identifier} (last status: ${lastObservedStatus ?? 'unknown'}). ` +
+      'Check the resource status again before re-publishing.',
+  );
+}
 
 console.log(`Ready: qdn://${service}/${publishName}/${identifier}`);
 console.log(`Status: ${readyStatus.status}${readyStatus.description ? ` - ${readyStatus.description}` : ''}`);

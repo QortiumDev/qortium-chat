@@ -1,12 +1,12 @@
 {
   "name": "qortium-chat",
-  "version": "0.1.0",
+  "version": "1.0.3",
   "private": true,
   "license": "0BSD",
   "description": "A small QDN chat app for Qortium Home.",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && vite build",
     "dev": "vite",
     "preview": "vite preview",
     "qdn:publish": "node scripts/publish-qdn.mjs",

@@ -1,10 +1,25 @@
 import {
+  lazy,
+  Suspense,
+  type ClipboardEvent,
+  type DragEvent,
   type SubmitEvent,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import type { EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
+import {
+  buildAttachmentIdentifier,
+  buildAttachmentLink,
+  formatAttachmentSize,
+  getAttachmentMaxBytes,
+  getAttachmentService,
+  prepareAttachment,
+  ATTACHMENT_FILE_MAX_BYTES,
+  type PreparedAttachment,
+} from './attachments';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
@@ -16,6 +31,7 @@ import {
   getCurrentBlockHeight,
   getDirectMessages,
   getGroupApprovalVotes,
+  getGroupInvites,
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
@@ -27,6 +43,7 @@ import {
   getPrivateDirectActiveChats,
   leaveGroup,
   joinGroup,
+  publishQdnAttachment,
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
   searchGroups,
@@ -38,9 +55,11 @@ import {
 import { computeApprovalProgress, NULL_ACCOUNT_ADDRESS } from './approvalProgress';
 import {
   buildChatMessageText,
+  buildDeletedMessageText,
   buildReactionMessageText,
   decodeChatMessage,
   getMessageSnippet,
+  isReactionChatMessage,
 } from './chatText';
 import {
   getLatestNonReactionMessageTimestamp,
@@ -62,7 +81,7 @@ import {
   withGeneralChatGroup,
 } from './generalChat';
 import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
-import { AccountInfoDialog, GroupApprovalDialog } from './dialogs';
+import { AccountInfoDialog, ConfirmDeleteMessageDialog, GroupApprovalDialog } from './dialogs';
 import { DirectList, GroupList } from './chatLists';
 import { GroupMemberList } from './GroupMemberList';
 import { MessageList } from './MessageList';
@@ -79,6 +98,7 @@ import {
 import {
   BackIcon,
   BrandMark,
+  CloseIcon,
   DownIcon,
   LockIcon,
   PlusIcon,
@@ -119,12 +139,14 @@ import {
 import type {
   ActiveChats,
   ActiveDirectChat,
+  ActiveGroupChat,
   BridgeState,
   ApprovalProgress,
   ChatMessage,
   ChatScrollPosition,
   GroupApprovalVote,
   GroupData,
+  GroupInvite,
   GroupJoinRequest,
   GroupWithJoinRequests,
   GroupMember,
@@ -136,8 +158,7 @@ import type {
   TrackedTransaction,
 } from './types';
 
-// Shown next to the header title so the running build is identifiable at a glance.
-const APP_VERSION = 'v1.0.3';
+const APP_VERSION = __APP_VERSION__;
 
 const emptyGroups: GroupData[] = [];
 const emptyMembers: GroupMember[] = [];
@@ -147,6 +168,25 @@ const emptyAdminJoinRequests: GroupWithJoinRequests[] = [];
 const emptyPendingApprovals: PendingApprovalTransaction[] = [];
 const emptyApprovalVotes: GroupApprovalVote[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
+const emptyInvites: GroupInvite[] = [];
+
+// The 30s sidebar activity sweeps only need the latest real (non-reaction)
+// message timestamp per chat, not a full transcript page — a small window cuts
+// each probe's payload ~10x. Deep enough that a burst of reactions rarely
+// fills it; when one does, the merge skips rather than guessing (see
+// mergeActivityTimestamp's allowTombstone).
+const ACTIVITY_SWEEP_MESSAGE_LIMIT = 10;
+
+// Loaded on demand, same as the reaction picker in MessageList: the shared
+// emoji-picker-react chunk must not weigh down app startup, so only type-only
+// imports appear at module top and enum values are passed as literals.
+const ComposerEmojiPicker = lazy(() => import('emoji-picker-react'));
+
+// Websocket reconnects back off 5s → 60s while the node stays unreachable
+// (reset by any successful frame) instead of hammering a fixed 5s cadence;
+// while the tab is hidden, reconnection waits for visibility instead.
+const WS_RECONNECT_BASE_MS = 5000;
+const WS_RECONNECT_MAX_MS = 60000;
 
 // Groups whose transactions are gated by development-group approval (e.g. Core
 // auto-updates). Previewnet uses group id 1 ("development"); override with the
@@ -303,15 +343,56 @@ function mergeMessages(
   return Number.isFinite(maxCount) ? merged.slice(-maxCount) : merged;
 }
 
+// An active-chats entry whose latest message is an emoji reaction must not
+// drive sidebar activity ("time ago", unread, sort): Core filters reactions
+// out of the stream via haschatreference=false, but a reaction published
+// without a chatReference (older clients, Home's network-mode keyless send)
+// slips through that filter — so the payload itself is checked here. Encrypted
+// payloads that cannot be decoded are indeterminate and keep their timestamp.
+function isReactionActiveChatEntry(entry: {
+  data?: string | null;
+  decryptionStatus?: string;
+  encoding?: 'BASE58' | 'BASE64';
+  isEncrypted?: boolean;
+  isText?: boolean;
+}) {
+  if (!entry.data) {
+    return false;
+  }
+
+  if (entry.isEncrypted && entry.decryptionStatus !== 'DECRYPTED') {
+    return false;
+  }
+
+  // Group entries from the public stream carry no isText flag; group chat
+  // payloads are text (same assertion the sidebar preview memo makes).
+  return isReactionChatMessage({
+    data: entry.data,
+    decryptionStatus: entry.decryptionStatus,
+    encoding: entry.encoding ?? 'BASE64',
+    isEncrypted: entry.isEncrypted,
+    isText: entry.isText ?? true,
+  });
+}
+
 function mergeActivityTimestamp<Key>(
   current: ReadonlyMap<Key, number | null>,
   key: Key,
   messages: ChatMessage[],
+  options: { allowTombstone?: boolean } = {},
 ) {
   const latestTimestamp = getLatestNonReactionMessageTimestamp(messages);
   const currentTimestamp = current.get(key);
 
   if (latestTimestamp === null) {
+    // A window with no real message only proves "this chat has no messages"
+    // when the caller saw the full history. The activity sweep fetches small
+    // windows, and a window filled entirely by reactions is indeterminate —
+    // it must not erase a known timestamp with a tombstone.
+    if (options.allowTombstone === false) {
+      return current;
+    }
+
     if (currentTimestamp === null) {
       return current;
     }
@@ -346,6 +427,24 @@ function parseActiveChats(value: unknown) {
   return parsed && typeof parsed === 'object' ? parsed as ActiveChats : emptyActiveChats;
 }
 
+// Equality signal for active-chats group entries: groupId + timestamp identify
+// an entry's content — a new last message always advances its timestamp, and
+// the sidebar reads names/previews from other sources. Order-sensitive on
+// purpose: a genuinely reordered list should produce new state.
+function areActiveGroupChatsEqual(current: ActiveGroupChat[] | undefined, next: ActiveGroupChat[]) {
+  if (!current || current.length !== next.length) {
+    return false;
+  }
+
+  for (let index = 0; index < next.length; index += 1) {
+    if (current[index].groupId !== next[index].groupId || current[index].timestamp !== next[index].timestamp) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -378,6 +477,11 @@ function useAvatarProfiles(
 ) {
   const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
+  // Requests already issued and still awaiting their final commit, so an
+  // effect re-run (new sender in a busy chat) does not fire a duplicate
+  // resolve/status-poll/fetch chain for an address whose slow avatar load —
+  // up to ~20s on a cold cache — is still in flight.
+  const pendingRequestKeysRef = useRef(new Map<string, string>());
   // Tracks genuine unmount, distinct from an effect re-run. An in-flight avatar
   // fetch must still commit when the effect merely re-ran (e.g. a new sender
   // changed the address list) as long as its request key is still current —
@@ -399,10 +503,26 @@ function useAvatarProfiles(
       latestRequestKeysRef.current.set(address, requestKey);
       requestKeyByAddress.set(address, requestKey);
 
-      if (profiles.get(address)?.requestKey !== requestKey) {
+      if (
+        profiles.get(address)?.requestKey !== requestKey &&
+        pendingRequestKeysRef.current.get(address) !== requestKey
+      ) {
         needed.push(address);
       }
     }
+
+    for (const address of needed) {
+      pendingRequestKeysRef.current.set(address, requestKeyByAddress.get(address) as string);
+    }
+
+    // Release an address for future re-requests once its request reaches a
+    // final outcome (committed, failed, or superseded); key-checked so a
+    // newer run's pending marker is never cleared by an older completion.
+    const settlePending = (address: string) => {
+      if (pendingRequestKeysRef.current.get(address) === requestKeyByAddress.get(address)) {
+        pendingRequestKeysRef.current.delete(address);
+      }
+    };
 
     // A result is still wanted if the component is mounted and the address's
     // latest request key still matches the one this run issued (a changed key
@@ -412,6 +532,8 @@ function useAvatarProfiles(
       mountedRef.current && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
 
     const commit = (profile: AvatarProfile) => {
+      settlePending(profile.address);
+
       if (!isCurrent(profile.address)) {
         return;
       }
@@ -447,7 +569,13 @@ function useAvatarProfiles(
     const loadIndividually = (targets: string[]) => {
       for (const address of targets) {
         const preferredName = knownNamesByAddress.get(address) ?? null;
-        void loadAvatarProfile({ actions, address, preferredName }).then(commit);
+        void loadAvatarProfile({ actions, address, preferredName })
+          .then(commit)
+          .catch(() => {
+            // loadAvatarProfile resolves with a fallback profile; an
+            // unexpected rejection just releases the address for retry.
+            settlePending(address);
+          });
       }
     };
 
@@ -466,11 +594,16 @@ function useAvatarProfiles(
               const name = identity?.name ?? null;
 
               if (name && identity?.hasAvatar) {
-                void fetchAvatarImage(name)
+                void fetchAvatarImage(name, actions)
                   .then((avatarSrc) => commit({ address, avatarSrc, name }))
                   .catch(() => {
-                    // Keep the name-only profile if the avatar image fails to load.
+                    // Keep the name-only profile if the avatar image fails to
+                    // load; release the address either way.
+                    settlePending(address);
                   });
+              } else {
+                // The name-only commit above was this address's final state.
+                settlePending(address);
               }
             }
           })
@@ -570,6 +703,18 @@ function useMediaQuery(query: string) {
   return matches;
 }
 
+// Returns a function with a stable identity whose body always calls the latest
+// render's closure (the "useEvent" pattern). App re-declares its handlers on
+// every render, and passing them directly to a React.memo child would defeat
+// the memo's shallow prop compare — so child-bound handlers are wrapped here.
+function useStableCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result) {
+  const callbackRef = useRef(callback);
+
+  callbackRef.current = callback;
+
+  return useRef((...args: Args) => callbackRef.current(...args)).current;
+}
+
 export default function App() {
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({ actions: [], isHomeBridge: false, isUsingPublicNode: false, ui: 'BROWSER_DEV' }));
   const [account, setAccount] = useState<QdnSelectedAccount | null>(null);
@@ -629,10 +774,17 @@ export default function App() {
     | { kind: 'reply'; message: ChatMessage }
     | null
   >(null);
+  // Per-chat composer drafts (in-memory, session-scoped). The open chat's draft
+  // lives in `draft`; this map stashes the other chats' unsent text so switching
+  // chats neither carries text into the wrong conversation nor loses it.
+  const draftsByChatKeyRef = useRef(new Map<string, string>());
+  // Chat key the current `draft`/`composeContext` belong to.
+  const draftChatKeyRef = useRef('');
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const groupSearchInputRef = useRef<HTMLInputElement>(null);
   const loadedGroupActivityRef = useRef<ReadonlyMap<number, number | null>>(new Map());
   const loadedDirectActivityRef = useRef<ReadonlyMap<string, number | null>>(new Map());
+  const activeChatsGroupIdsRef = useRef<ReadonlySet<number>>(new Set());
   const requestedPrivateGroupKeysRef = useRef(new Set<string>());
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const pendingApprovalsRequestRef = useRef(0);
@@ -657,6 +809,12 @@ export default function App() {
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
   const scrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
+  // Trailing-debounce state for persisting the bookmarks: the map above is
+  // updated per scroll event; localStorage catches up on a pause or a flush
+  // (hide/unmount/account switch). The address is captured at schedule time so
+  // a flush can never write one account's bookmarks under another's key.
+  const scrollPersistTimerRef = useRef(0);
+  const scrollPersistAddressRef = useRef<string | null>(null);
   // Per-chat snapshot of the full loaded message view (live tail + any paged-in
   // older history). On returning to a chat this is restored so the saved scroll
   // bookmark resolves even when the user had read back beyond the latest window
@@ -677,6 +835,18 @@ export default function App() {
   const [approvalActionSignature, setApprovalActionSignature] = useState<string | null>(null);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
+  const [isComposerEmojiOpen, setComposerEmojiOpen] = useState(false);
+  // One attachment per message (Qortal Hub's model): staged, encoded, and
+  // size-checked up front; published on Send and then linked in the text.
+  const [stagedAttachment, setStagedAttachment] = useState<
+    { filename: string; phase: 'processing' } | ({ phase: 'ready' } & PreparedAttachment) | null
+  >(null);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [isDraggingAttachment, setDraggingAttachment] = useState(false);
+  // dragenter/dragleave fire per child element; a counter tells actual exits
+  // from nested re-entries so the drop overlay does not flicker.
+  const attachmentDragDepthRef = useRef(0);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [reactionPendingKey, setReactionPendingKey] = useState('');
   const [writeError, setWriteError] = useState('');
   const [privateGroupKeyStatus, setPrivateGroupKeyStatus] = useState('');
@@ -703,8 +873,15 @@ export default function App() {
   const [sentMessageNonce, setSentMessageNonce] = useState(0);
   const [displaySettings, setDisplaySettings] = useState(getInitialDisplaySettings);
   const [trackedTransactions, setTrackedTransactions] = useState<Record<string, TrackedTransaction>>({});
+  // Invitations sent TO this account (closed groups are otherwise invisible
+  // until joined, so an invite has no other surface in the app).
+  const [groupInvites, setGroupInvites] = useState<AsyncState<GroupInvite[]>>(createState(emptyInvites));
+  const [inviteActionGroupId, setInviteActionGroupId] = useState<number | null>(null);
   const [accountInfoTarget, setAccountInfoTarget] = useState<AccountInfoTarget | null>(null);
   const [avatarLightboxImage, setAvatarLightboxImage] = useState<AvatarLightboxImage | null>(null);
+  // Message thread awaiting delete confirmation (the dialog is the commit).
+  const [deleteTarget, setDeleteTarget] = useState<MessageThread | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
   const [now, setNow] = useState(() => Date.now());
 
@@ -720,6 +897,23 @@ export default function App() {
     () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
     [memberGroups.value],
   );
+  // Invitations worth showing: unexpired, not already a member, and without a
+  // join transaction already in flight (Core keeps the invite listed until
+  // the join confirms).
+  const pendingGroupInvites = useMemo(() => {
+    const pendingJoinGroupIds = new Set(
+      Object.values(trackedTransactions)
+        .filter((transaction) => transaction.action === 'join' && transaction.phase === 'pending')
+        .map((transaction) => transaction.groupId),
+    );
+
+    return groupInvites.value.filter(
+      (invite) =>
+        (!invite.expiry || invite.expiry > now) &&
+        !joinedIds.has(invite.groupId) &&
+        !pendingJoinGroupIds.has(invite.groupId),
+    );
+  }, [groupInvites.value, joinedIds, now, trackedTransactions]);
   const selectedGroup = selectedChat?.kind === 'group' ? selectedChat.group : null;
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
@@ -727,6 +921,12 @@ export default function App() {
   const selectedChatKey = getSelectedChatKey(selectedChat);
   const selectedGroupIdRef = useRef<number | null>(selectedGroupId);
   const selectedDirectAddressRef = useRef<string | null>(selectedDirectAddress);
+  // Live mirror of the selected chat key so async loads can drop results that
+  // resolve after the user has switched chats (see loadMessages).
+  const selectedChatKeyRef = useRef(selectedChatKey);
+  // Live mirror of "a dialog (account info / avatar lightbox) is open", read
+  // by lower-layer Escape handlers so one press dismisses one layer only.
+  const hasStackedDialogRef = useRef(false);
   // Live mirror of the current selection so async callbacks (e.g. a group search
   // resolving after the saved-chat restore) don't auto-select over a real choice.
   const hasSelectedChatRef = useRef(selectedChat !== null);
@@ -739,13 +939,16 @@ export default function App() {
 
   selectedGroupIdRef.current = selectedGroupId;
   selectedDirectAddressRef.current = selectedDirectAddress;
+  selectedChatKeyRef.current = selectedChatKey;
   hasSelectedChatRef.current = selectedChat !== null;
   currentAccountAddressRef.current = account?.address ?? null;
+  hasStackedDialogRef.current =
+    accountInfoTarget !== null || avatarLightboxImage !== null || deleteTarget !== null;
   const groupActivityById = useMemo(() => {
     const activity = new Map<number, number>();
 
     for (const activeGroup of activeChats.value.groups ?? []) {
-      if (typeof activeGroup.timestamp === 'number') {
+      if (typeof activeGroup.timestamp === 'number' && !isReactionActiveChatEntry(activeGroup)) {
         activity.set(activeGroup.groupId, activeGroup.timestamp);
       }
     }
@@ -768,7 +971,7 @@ export default function App() {
     const activity = new Map<string, number>();
 
     for (const direct of activeChats.value.direct ?? []) {
-      if (typeof direct.timestamp === 'number') {
+      if (typeof direct.timestamp === 'number' && !isReactionActiveChatEntry(direct)) {
         activity.set(direct.address, direct.timestamp);
       }
     }
@@ -915,16 +1118,119 @@ export default function App() {
   );
   const selectedAdminJoinRequests =
     selectedGroupId === null || isSelectedGeneralChat ? [] : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
-  const selectedTransactions = Object.values(trackedTransactions).filter(
-    (transaction) => selectedGroupId !== null && transaction.groupId === selectedGroupId,
+  // One-line last-message previews for the sidebar rows, decoded from the
+  // active-chats data already in memory (no extra fetches). Group entries from
+  // the public stream carry the payload but no isText flag (verified against
+  // live Core); group chat payloads are text, so it is asserted here. Closed
+  // groups' encrypted payloads are filtered out at render via group.isOpen.
+  const groupPreviewByGroupId = useMemo(() => {
+    const previews = new Map<number, string>();
+
+    for (const activeGroup of activeChats.value.groups ?? []) {
+      // A reaction entry has no preview-worthy body ("X: Empty message") and its
+      // timestamp is already excluded from sidebar activity; show no preview.
+      if (!activeGroup.data || isReactionActiveChatEntry(activeGroup)) {
+        continue;
+      }
+
+      const snippet = getMessageSnippet(
+        { data: activeGroup.data, encoding: activeGroup.encoding ?? 'BASE64', isText: true },
+        t,
+        80,
+      );
+
+      previews.set(
+        activeGroup.groupId,
+        activeGroup.senderName ? `${activeGroup.senderName}: ${snippet}` : snippet,
+      );
+    }
+
+    return previews;
+  }, [activeChats.value.groups, t]);
+  // Direct entries come from the decrypted private list when Home provides it;
+  // anything still encrypted stays preview-less rather than showing a stub.
+  const directPreviewByAddress = useMemo(() => {
+    const previews = new Map<string, string>();
+
+    for (const direct of activeChats.value.direct ?? []) {
+      if (
+        !direct.data ||
+        (direct.isEncrypted && direct.decryptionStatus !== 'DECRYPTED') ||
+        isReactionActiveChatEntry(direct)
+      ) {
+        continue;
+      }
+
+      previews.set(direct.address, getMessageSnippet(direct, t, 80));
+    }
+
+    return previews;
+  }, [activeChats.value.direct, t]);
+  // Memoized: this array feeds the memoized MessageList as `systemMessages`,
+  // and a fresh identity per render would defeat its memo bailout.
+  const selectedTransactions = useMemo(
+    () =>
+      Object.values(trackedTransactions).filter(
+        (transaction) => selectedGroupId !== null && transaction.groupId === selectedGroupId,
+      ),
+    [trackedTransactions, selectedGroupId],
   );
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
-  // The rendered feed is the live tail plus any older history paged in behind it.
-  const combinedMessages = useMemo(
-    () => (olderMessages.length === 0 ? messages.value : mergeMessages(olderMessages, messages.value, Infinity)),
-    [olderMessages, messages.value],
+  // The rendered feed is the live tail plus any older history paged in behind
+  // it. The live tail only participates while it belongs to the selected chat
+  // (`hasSelectedMessages`): after a failed switch load, `messages.value` still
+  // holds the previous chat's transcript, which must never render under the new
+  // chat's header. Older history is per-chat (re-seeded by the switch effect),
+  // so it is always safe to show.
+  const combinedMessages = useMemo(() => {
+    const liveTail = hasSelectedMessages ? messages.value : emptyMessages;
+
+    return olderMessages.length === 0 ? liveTail : mergeMessages(olderMessages, liveTail, Infinity);
+  }, [olderMessages, messages.value, hasSelectedMessages]);
+  // Stable identities for every handler passed to the memoized GroupList /
+  // DirectList / MessageList (the handlers themselves are re-declared each
+  // render). With these, the shared 30s clock is the only prop that should
+  // invalidate the lists on a quiet tick. The wrapped functions are declared
+  // later in this component; function declarations hoist.
+  const handleSelectGroup = useStableCallback(selectGroup);
+  const handleSelectDirect = useStableCallback(selectDirect);
+  const handleRemoveDirect = useStableCallback(removeDirect);
+  const handleStartReply = useStableCallback(startReply);
+  const handleStartEdit = useStableCallback(startEdit);
+  const handleLoadOlderMessages = useStableCallback(() => void loadOlderMessages());
+  const handleReactToMessage = useStableCallback(
+    (message: ChatMessage, reaction: string, contentState: boolean) =>
+      void handleMessageReaction(message, reaction, contentState),
   );
+  const flushScrollBookmarks = useStableCallback(() => {
+    window.clearTimeout(scrollPersistTimerRef.current);
+    scrollPersistTimerRef.current = 0;
+
+    const address = scrollPersistAddressRef.current;
+
+    scrollPersistAddressRef.current = null;
+
+    if (address) {
+      writeScrollBookmarks(address, scrollPositionsRef.current);
+    }
+  });
+  const handleScrollPositionChange = useStableCallback((chatKey: string, position: ChatScrollPosition) => {
+    scrollPositionsRef.current.set(chatKey, position);
+
+    if (!account) {
+      return;
+    }
+
+    // Persist the bookmark so the reading position survives a restart — on a
+    // trailing debounce: scroll events fire at frame rate during flings, and a
+    // synchronous localStorage JSON write per event janks the feed. The map
+    // above is always current; the write catches up on a pause and is flushed
+    // on hide/unmount/account switch.
+    scrollPersistAddressRef.current = account.address;
+    window.clearTimeout(scrollPersistTimerRef.current);
+    scrollPersistTimerRef.current = window.setTimeout(flushScrollBookmarks, 400);
+  });
   const knownAvatarNames = useMemo(() => {
     const namesByAddress = new Map<string, string>();
     const accountName = normalizeRegisteredName(account?.name);
@@ -937,6 +1243,14 @@ export default function App() {
 
     if (accountInfoTarget?.sender && accountInfoName) {
       namesByAddress.set(accountInfoTarget.sender, accountInfoName);
+    }
+
+    for (const direct of mergedDirects) {
+      const directName = normalizeRegisteredName(direct.name ?? direct.recipientName ?? direct.senderName);
+
+      if (directName && !namesByAddress.has(direct.address)) {
+        namesByAddress.set(direct.address, directName);
+      }
     }
 
     for (const message of messages.value) {
@@ -967,6 +1281,7 @@ export default function App() {
     accountInfoTarget?.sender,
     accountInfoTarget?.senderName,
     groupMembers.value,
+    mergedDirects,
     messages.value,
     selectedGroup?.owner,
     selectedGroup?.ownerPrimaryName,
@@ -984,6 +1299,10 @@ export default function App() {
 
     for (const message of messages.value) {
       addresses.add(message.sender);
+    }
+
+    for (const direct of mergedDirects) {
+      addresses.add(direct.address);
     }
 
     for (const member of groupMembers.value) {
@@ -1009,6 +1328,7 @@ export default function App() {
     account?.address,
     accountInfoTarget?.sender,
     groupMembers.value,
+    mergedDirects,
     messages.value,
     pendingApprovals.value,
     selectedGroup?.owner,
@@ -1104,7 +1424,20 @@ export default function App() {
     !isPublicNodeSendBlocked &&
     (selectedChat.kind === 'group' ? canSendGroupChat && canPostInSelectedGroup : canSendDirectChat);
   const canSubmitMessage =
-    canComposeMessage && draft.trim().length > 0 && !sendPending;
+    canComposeMessage &&
+    (draft.trim().length > 0 || stagedAttachment?.phase === 'ready') &&
+    !sendPending;
+  // Attachments are public QDN data (no encrypt-on-publish in Home yet), so
+  // they are offered in open groups only, and publishing requires the Home
+  // bridge plus a registered name to publish under. Edits keep the original
+  // message's media, so no attaching mid-edit.
+  const canAttach =
+    selectedChat?.kind === 'group' &&
+    selectedChat.group.isOpen !== false &&
+    canComposeMessage &&
+    composeContext?.kind !== 'edit' &&
+    !!normalizeRegisteredName(account?.name) &&
+    hasAction(actions, 'PUBLISH_QDN_RESOURCE');
   const publicNodeSendNotice = isPublicNodeSendBlocked ? t('action.publicNodeSendUnavailable') : '';
   const showGroupComposerNotice =
     canUseSelectedAccount &&
@@ -1286,11 +1619,17 @@ export default function App() {
     try {
       setGroupMembers({ phase: 'ready', value: await getGroupMembers(group.groupId, actionList) });
     } catch (error) {
-      setGroupMembers({
+      // Quiet 30s refreshes keep the last good roster on a transient blip
+      // instead of flashing an error banner (same rule as loadMessages).
+      if (options.quiet) {
+        return;
+      }
+
+      setGroupMembers((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.groupMembers'), t),
         phase: 'error',
-        value: groupMembers.value,
-      });
+        value: current.value,
+      }));
     }
   }
 
@@ -1309,11 +1648,17 @@ export default function App() {
         value: await getAccountGroupJoinRequests(selectedAccount.address, actionList),
       });
     } catch (error) {
-      setAccountJoinRequests({
+      // Quiet 30s refreshes keep the last good value on a transient blip;
+      // this error renders as a persistent banner over every chat otherwise.
+      if (options.quiet) {
+        return;
+      }
+
+      setAccountJoinRequests((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.joinRequests'), t),
         phase: 'error',
-        value: accountJoinRequests.value,
-      });
+        value: current.value,
+      }));
     }
   }
 
@@ -1332,11 +1677,41 @@ export default function App() {
         value: await getAdminGroupJoinRequests(selectedAccount.address, actionList),
       });
     } catch (error) {
-      setAdminJoinRequests({
+      // Quiet 30s refreshes keep the last good value on a transient blip;
+      // this error renders as a persistent banner over every chat otherwise.
+      if (options.quiet) {
+        return;
+      }
+
+      setAdminJoinRequests((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.groupApprovals'), t),
         phase: 'error',
-        value: adminJoinRequests.value,
-      });
+        value: current.value,
+      }));
+    }
+  }
+
+  async function loadGroupInvites(
+    selectedAccount: QdnSelectedAccount,
+    options: { quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setGroupInvites({ phase: 'loading', value: groupInvites.value });
+    }
+
+    try {
+      setGroupInvites({ phase: 'ready', value: await getGroupInvites(selectedAccount.address) });
+    } catch (error) {
+      // Quiet 30s refreshes keep the last good value on a transient blip.
+      if (options.quiet) {
+        return;
+      }
+
+      setGroupInvites((current) => ({
+        error: getBridgeErrorMessage(error, t('status.loadingError.invites'), t),
+        phase: 'error',
+        value: current.value,
+      }));
     }
   }
 
@@ -1352,11 +1727,16 @@ export default function App() {
     try {
       setMintingStatus({ phase: 'ready', value: await getMintingStatus(selectedAccount.address, actionList) });
     } catch (error) {
-      setMintingStatus({
+      // Quiet refreshes keep the last good value on a transient blip.
+      if (options.quiet) {
+        return;
+      }
+
+      setMintingStatus((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.minting'), t),
         phase: 'error',
-        value: mintingStatus.value,
-      });
+        value: current.value,
+      }));
     }
   }
 
@@ -1413,6 +1793,7 @@ export default function App() {
 
     void loadAccountJoinRequests(selectedAccount, actionList);
     void loadAdminJoinRequests(selectedAccount, actionList);
+    void loadGroupInvites(selectedAccount);
     void loadMintingStatus(selectedAccount, actionList);
   }
 
@@ -1427,6 +1808,17 @@ export default function App() {
 
     const canReadUnlockedMessages = options.accountUnlocked ?? isAccountUnlocked;
     const chatKey = getSelectedChatKey(chat);
+    // A load can outlive its chat: the switch effect clears timers/sockets but
+    // cannot cancel an in-flight promise, and quiet callers (post-send refresh,
+    // key recovery, the websocket REST fallback) capture the chat at call time.
+    // Drop any result that resolves after the user has moved on, so one chat's
+    // messages are never committed into another chat's pane (mirrors the
+    // request guard loadPendingApprovals already uses).
+    const isStale = () => selectedChatKeyRef.current !== chatKey;
+
+    if (isStale()) {
+      return;
+    }
 
     if (!options.quiet) {
       setMessagesChatKey('');
@@ -1460,10 +1852,16 @@ export default function App() {
           ? await getGroupMessages(chat.group, actionList, { decryptPrivate: shouldDecryptPrivateGroup })
           : await getDirectMessages(chat.direct.address, actionList);
 
+      // The activity merge is keyed by group/address, so it is correct for the
+      // fetched chat even when the user has switched away — apply it either way.
       if (chat.kind === 'group') {
         setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
       } else {
         setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, chat.direct.address, nextMessages));
+      }
+
+      if (isStale()) {
+        return;
       }
 
       setMessagesChatKey(chatKey);
@@ -1494,8 +1892,9 @@ export default function App() {
       // Quiet background polls (the 15s direct/closed-group poll) and the
       // websocket REST-fallback must never replace a working chat with an
       // error banner + stale value on a transient blip — keep the last good
-      // state and let the next poll recover.
-      if (options.quiet) {
+      // state and let the next poll recover. A stale request's failure equally
+      // must not clobber whichever chat is open now.
+      if (options.quiet || isStale()) {
         return;
       }
 
@@ -1517,6 +1916,12 @@ export default function App() {
       return;
     }
 
+    // Same staleness rule as loadMessages: never commit a window fetched for a
+    // chat the user has since left (the switch effect re-seeds older history
+    // for the new chat, and a late result would overwrite that seed).
+    const chatKey = getSelectedChatKey(chat);
+    const isStale = () => selectedChatKeyRef.current !== chatKey;
+
     const shouldDecryptPrivateGroup =
       chat.kind === 'group' &&
       shouldDecryptGroupMessages(chat.group, {
@@ -1527,8 +1932,12 @@ export default function App() {
       });
 
     // Page backward from the oldest message currently shown (live tail + any
-    // history already paged in).
-    const loadedMessages = mergeMessages(olderMessages, messages.value, Infinity);
+    // history already paged in). The live tail only counts while it belongs to
+    // the selected chat — after a failed switch load it still holds the
+    // previous chat's messages, which must not be folded into this chat's
+    // paged history.
+    const liveTail = hasSelectedMessages ? messages.value : emptyMessages;
+    const loadedMessages = mergeMessages(olderMessages, liveTail, Infinity);
     const oldest = loadedMessages[0];
 
     if (!oldest) {
@@ -1552,6 +1961,10 @@ export default function App() {
             })
           : await getDirectMessages(chat.direct.address, actions, { before: olderBefore });
 
+      if (isStale()) {
+        return;
+      }
+
       const merged = mergeMessages(olderWindow, loadedMessages, Infinity);
 
       // A short window (fewer than the cap) means the Core has no more history
@@ -1562,6 +1975,10 @@ export default function App() {
       setOlderMessages(merged);
       setOlderMessagesState({ error: '', loading: false, reachedStart });
     } catch (error) {
+      if (isStale()) {
+        return;
+      }
+
       setOlderMessagesState({
         error: getBridgeErrorMessage(error, t('status.loadingError.olderMessages'), t),
         loading: false,
@@ -1730,6 +2147,84 @@ export default function App() {
     }
   }
 
+  async function handleAcceptInvite(invite: GroupInvite) {
+    if (!canUseSelectedAccount || !canJoinGroup || inviteActionGroupId !== null) {
+      return;
+    }
+
+    // An invited join is auto-approved by the standing invite, so the plain
+    // JOIN_GROUP flow is all an accept needs. The invite may point at a group
+    // outside the browsed list (closed groups often are); synthesize a
+    // minimal GroupData for the transaction tracker in that case.
+    const group =
+      groups.value.find((candidate) => candidate.groupId === invite.groupId) ??
+      ({ groupId: invite.groupId, groupName: `id:${invite.groupId}` } as GroupData);
+
+    setInviteActionGroupId(invite.groupId);
+    setWriteError('');
+
+    try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
+      const result = await joinGroup(invite.groupId);
+
+      trackTransaction({
+        action: 'join',
+        group,
+        message: t('status.join.submitted'),
+        result,
+      });
+
+      await loadAccountData(selectedAccount);
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.join'), t));
+    } finally {
+      setInviteActionGroupId(null);
+    }
+  }
+
+  async function handleDeleteMessage(thread: MessageThread) {
+    const chat = selectedChat;
+    const chatReference = thread.original.signature ?? undefined;
+
+    if (!chat || !canComposeMessage || !chatReference || deletePending) {
+      return;
+    }
+
+    setDeletePending(true);
+    setWriteError('');
+
+    try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
+      // Same shape as an edit: a revision over the original's signature —
+      // just with an empty body (the reply target is preserved so the
+      // tombstone stays threaded).
+      const message = buildDeletedMessageText(decodeChatMessage(thread.original).repliedTo);
+
+      if (chat.kind === 'group') {
+        await sendChatMessage(chat.group.groupId, message, chatReference);
+      } else {
+        await sendDirectChatMessage(chat.direct.address, message, chatReference);
+      }
+
+      setDeleteTarget(null);
+      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
+    } finally {
+      setDeletePending(false);
+    }
+  }
+
   async function handleLeaveGroup() {
     if (!selectedGroup || !canSubmitLeave) {
       return;
@@ -1850,11 +2345,18 @@ export default function App() {
         return;
       }
 
-      setPendingApprovals({
+      // A quiet 30s refresh failure must not zero the queue: that hides the
+      // "Pending approvals (N)" button (gated on count > 0) and empties an
+      // open approval dialog on a transient blip — keep the last good value.
+      if (options.quiet) {
+        return;
+      }
+
+      setPendingApprovals((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.pendingApprovals'), t),
         phase: 'error',
-        value: emptyPendingApprovals,
-      });
+        value: current.value,
+      }));
     }
   }
 
@@ -1975,6 +2477,10 @@ export default function App() {
 
     setComposeContext({ kind: 'edit', thread });
     setDraft(decodeChatMessage(thread.latest, t).body);
+    // Edits keep the original message's media; a staged new attachment does
+    // not belong in an edit.
+    setStagedAttachment(null);
+    setAttachmentError('');
     composerRef.current?.focus();
   }
 
@@ -1994,19 +2500,11 @@ export default function App() {
     }
 
     const text = draft.trim();
+    const submittedDraft = draft;
     const chat = selectedChat;
     const context = composeContext;
-    let message = text;
-    let chatReference: string | undefined;
-
-    if (context?.kind === 'edit') {
-      // An edit is a new transaction replacing the original via chatReference;
-      // keep the original's reply target so the reply preview survives edits.
-      chatReference = context.thread.original.signature ?? undefined;
-      message = buildChatMessageText(text, decodeChatMessage(context.thread.original).repliedTo);
-    } else if (context?.kind === 'reply') {
-      message = buildChatMessageText(text, context.message.signature);
-    }
+    const staged = chat.kind === 'group' && stagedAttachment?.phase === 'ready' ? stagedAttachment : null;
+    let publishedLink = '';
 
     setSendPending(true);
     setWriteError('');
@@ -2018,16 +2516,63 @@ export default function App() {
         return;
       }
 
+      if (staged && chat.kind === 'group') {
+        // Publish the attachment first (Home shows its approval prompt);
+        // only a successful publish gets linked into the message.
+        const publisherName = normalizeRegisteredName(selectedAccount.name);
+
+        if (!publisherName) {
+          setWriteError(t('status.attachment.nameRequired'));
+          return;
+        }
+
+        const identifier = buildAttachmentIdentifier(chat.group.groupId, Date.now());
+
+        await publishQdnAttachment({
+          dataBase64: staged.dataBase64,
+          filename: staged.filename,
+          identifier,
+          name: publisherName,
+          service: staged.service,
+        });
+        publishedLink = buildAttachmentLink(staged.service, publisherName, identifier);
+      }
+
+      const bodyText = publishedLink ? (text ? `${text}\n${publishedLink}` : publishedLink) : text;
+      let message = bodyText;
+      let chatReference: string | undefined;
+
+      if (context?.kind === 'edit') {
+        // An edit is a new transaction replacing the original via chatReference;
+        // keep the original's reply target so the reply preview survives edits.
+        chatReference = context.thread.original.signature ?? undefined;
+        message = buildChatMessageText(bodyText, decodeChatMessage(context.thread.original).repliedTo);
+      } else if (context?.kind === 'reply') {
+        message = buildChatMessageText(bodyText, context.message.signature);
+      }
+
       if (chat.kind === 'group') {
         await sendChatMessage(chat.group.groupId, message, chatReference);
       } else {
         await sendDirectChatMessage(chat.direct.address, message, chatReference);
       }
 
-      setDraft('');
-      setComposeContext(null);
-      // Return the feed to the bottom so the just-sent message is in view.
-      setSentMessageNonce((nonce) => nonce + 1);
+      // The sent text is consumed: drop any stashed draft for that chat, and
+      // clear the live composer only if the user is still on it (they may have
+      // switched chats while the send was pending — the swap stashed their
+      // text, and the new chat's draft must not be wiped).
+      draftsByChatKeyRef.current.delete(getSelectedChatKey(chat));
+
+      if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+        // The textarea stays enabled during the send, so only clear what was
+        // actually submitted — anything typed since must survive.
+        setDraft((current) => (current === submittedDraft ? '' : current));
+        setComposeContext(null);
+        setStagedAttachment(null);
+        setAttachmentError('');
+        // Return the feed to the bottom so the just-sent message is in view.
+        setSentMessageNonce((nonce) => nonce + 1);
+      }
       if (chat.kind === 'direct') {
         // A direct send only touches the conversation list, not membership/
         // minting; refresh just that (quietly) instead of the whole account.
@@ -2037,6 +2582,18 @@ export default function App() {
       await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
+
+      // The attachment published but the message send failed: the resource
+      // exists on QDN either way, so fold its link into the draft and drop
+      // the staged file — a retry then re-sends the link without publishing
+      // (and paying for) a duplicate resource.
+      if (publishedLink && selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+        setDraft((current) =>
+          current === submittedDraft ? `${submittedDraft ? `${submittedDraft}\n` : ''}${publishedLink}` : current,
+        );
+        setStagedAttachment(null);
+        setAttachmentError('');
+      }
     } finally {
       setSendPending(false);
     }
@@ -2122,11 +2679,188 @@ export default function App() {
     }
   }
 
+  // Stage a file for the next send: route to IMAGE/ATTACHMENT, compress
+  // images, base64-encode, and size-check. Replaces any previously staged
+  // file (one attachment per message).
+  function stageAttachment(file: File) {
+    if (!canAttach || stagedAttachment?.phase === 'processing') {
+      return;
+    }
+
+    setAttachmentError('');
+
+    // Fail a hopeless drop fast: non-image files publish as-is, so a raw
+    // size over the cap can never succeed (images may still shrink below
+    // their cap during compression, so they are checked after preparing).
+    if (getAttachmentService(file) === 'ATTACHMENT' && file.size > ATTACHMENT_FILE_MAX_BYTES) {
+      setAttachmentError(
+        t('status.attachment.tooLarge', { max: String(Math.round(ATTACHMENT_FILE_MAX_BYTES / 1024 / 1024)) }),
+      );
+      return;
+    }
+
+    const filename = file.name || 'attachment';
+    const chatKey = selectedChatKeyRef.current;
+
+    setStagedAttachment({ filename, phase: 'processing' });
+
+    void prepareAttachment(file)
+      .then((prepared) => {
+        // Attachments are per-conversation; drop a result that finished
+        // preparing after the user moved to another chat.
+        if (selectedChatKeyRef.current !== chatKey) {
+          return;
+        }
+
+        const maxBytes = getAttachmentMaxBytes(prepared.service);
+
+        if (prepared.size > maxBytes) {
+          setAttachmentError(
+            t('status.attachment.tooLarge', { max: String(Math.round(maxBytes / 1024 / 1024)) }),
+          );
+          setStagedAttachment(null);
+          return;
+        }
+
+        setStagedAttachment({ phase: 'ready', ...prepared });
+      })
+      .catch(() => {
+        if (selectedChatKeyRef.current !== chatKey) {
+          return;
+        }
+
+        setAttachmentError(t('status.attachment.error'));
+        setStagedAttachment(null);
+      });
+  }
+
+  function clearStagedAttachment() {
+    setStagedAttachment(null);
+    setAttachmentError('');
+  }
+
+  function isFileDrag(event: DragEvent<HTMLElement>) {
+    return Array.from(event.dataTransfer.types).includes('Files');
+  }
+
+  function handleAttachmentDragEnter(event: DragEvent<HTMLElement>) {
+    if (!canAttach || !isFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    attachmentDragDepthRef.current += 1;
+    setDraggingAttachment(true);
+  }
+
+  function handleAttachmentDragOver(event: DragEvent<HTMLElement>) {
+    if (!canAttach || !isFileDrag(event)) {
+      return;
+    }
+
+    // preventDefault marks the pane as a valid drop target.
+    event.preventDefault();
+  }
+
+  function handleAttachmentDragLeave(event: DragEvent<HTMLElement>) {
+    if (!isFileDrag(event)) {
+      return;
+    }
+
+    attachmentDragDepthRef.current = Math.max(0, attachmentDragDepthRef.current - 1);
+
+    if (attachmentDragDepthRef.current === 0) {
+      setDraggingAttachment(false);
+    }
+  }
+
+  function handleAttachmentDrop(event: DragEvent<HTMLElement>) {
+    if (!isFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    attachmentDragDepthRef.current = 0;
+    setDraggingAttachment(false);
+
+    if (!canAttach) {
+      return;
+    }
+
+    // One attachment per message: only the first dropped file is taken.
+    const file = event.dataTransfer.files[0];
+
+    if (file) {
+      stageAttachment(file);
+    }
+  }
+
+  function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const file = event.clipboardData.files[0];
+
+    // Only intercept when the clipboard carries a file (e.g. a screenshot);
+    // plain text pastes flow through untouched.
+    if (file && canAttach) {
+      event.preventDefault();
+      stageAttachment(file);
+    }
+  }
+
+  // Insert an emoji at the composer caret (falling back to the end), keeping
+  // focus and caret position so picking several emojis in a row flows.
+  function insertComposerEmoji(emoji: string) {
+    const composer = composerRef.current;
+    const start = composer?.selectionStart ?? draft.length;
+    const end = composer?.selectionEnd ?? draft.length;
+
+    setDraft((current) => `${current.slice(0, start)}${emoji}${current.slice(end)}`);
+    requestAnimationFrame(() => {
+      const element = composerRef.current;
+
+      if (element) {
+        const caret = start + emoji.length;
+
+        element.focus();
+        element.setSelectionRange(caret, caret);
+      }
+    });
+  }
+
+  // Stash the outgoing chat's unsent composer text under its chat key. An edit
+  // draft is the original message's historical text, not something the user
+  // typed for this chat — it is dropped, never stashed, so it can never be sent
+  // into another conversation as an ordinary message.
+  function stashDraft(previousKey: string) {
+    if (!previousKey) {
+      return;
+    }
+
+    if (composeContext?.kind !== 'edit' && draft.trim() !== '') {
+      draftsByChatKeyRef.current.set(previousKey, draft);
+    } else {
+      draftsByChatKeyRef.current.delete(previousKey);
+    }
+  }
+
+  // Swap the composer to the chat being opened: stash the current chat's draft
+  // and restore whatever the next chat had. Reads `draft`/`composeContext` from
+  // this render, so it must run before the setters that clear them.
+  function switchDraftTo(nextKey: string) {
+    if (draftChatKeyRef.current === nextKey) {
+      return;
+    }
+
+    stashDraft(draftChatKeyRef.current);
+    draftChatKeyRef.current = nextKey;
+    setDraft(draftsByChatKeyRef.current.get(nextKey) ?? '');
+  }
+
   function selectGroup(group: GroupData) {
     setWriteError('');
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
+    switchDraftTo(getSelectedChatKey({ group, kind: 'group' }));
     setComposeContext(null);
     userSelectedChatRef.current = true;
     setSelectedChat({ group, kind: 'group' });
@@ -2139,6 +2873,7 @@ export default function App() {
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
+    switchDraftTo(getSelectedChatKey({ direct, kind: 'direct' }));
     setComposeContext(null);
     userSelectedChatRef.current = true;
     setSelectedChat({ direct, kind: 'direct' });
@@ -2194,25 +2929,35 @@ export default function App() {
     setMembersOpen(false);
   }
 
+  // The toggles must always respond visibly: while the field has text, the
+  // form stays visible regardless of the open flag, so "close" also clears the
+  // query (and restores the unfiltered group list) instead of doing nothing.
   function toggleGroupSearch() {
-    setGroupSearchOpen((current) => {
-      const next = !current || search.trim().length > 0;
-      // Opening search must reveal the form, so expand a collapsed section.
-      if (next) {
-        setGroupsCollapsed(false);
+    if (isGroupSearchVisible) {
+      setGroupSearchOpen(false);
+
+      if (search.trim().length > 0) {
+        setSearch('');
+        void loadGroups('');
       }
-      return next;
-    });
+
+      return;
+    }
+
+    // Opening search must reveal the form, so expand a collapsed section.
+    setGroupsCollapsed(false);
+    setGroupSearchOpen(true);
   }
 
   function toggleDirectSearch() {
-    setDirectSearchOpen((current) => {
-      const next = !current || directAddress.trim().length > 0;
-      if (next) {
-        setDirectCollapsed(false);
-      }
-      return next;
-    });
+    if (isDirectFormVisible) {
+      setDirectSearchOpen(false);
+      setDirectAddress('');
+      return;
+    }
+
+    setDirectCollapsed(false);
+    setDirectSearchOpen(true);
   }
 
   function mentionAccount(target: AccountInfoTarget) {
@@ -2533,6 +3278,72 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChatKey]);
 
+  // A file dropped outside the attachment target (or where attaching is not
+  // allowed) must never trigger the browser default of navigating to the
+  // file — that would replace the whole app. The chat pane's own drop handler
+  // runs first via bubbling; this window-level guard only kills the default.
+  useEffect(() => {
+    function preventWindowDrop(event: Event) {
+      event.preventDefault();
+    }
+
+    window.addEventListener('dragover', preventWindowDrop);
+    window.addEventListener('drop', preventWindowDrop);
+
+    return () => {
+      window.removeEventListener('dragover', preventWindowDrop);
+      window.removeEventListener('drop', preventWindowDrop);
+    };
+  }, []);
+
+  // The composer emoji panel and any staged attachment are per-conversation
+  // UI: drop them when the chat changes (Escape dismisses the panel too).
+  useEffect(() => {
+    setComposerEmojiOpen(false);
+    setStagedAttachment(null);
+    setAttachmentError('');
+    attachmentDragDepthRef.current = 0;
+    setDraggingAttachment(false);
+    // A pending delete confirmation belongs to the previous chat's thread —
+    // committing it after a switch would send the tombstone with the new
+    // chat's context, so drop it.
+    setDeleteTarget(null);
+  }, [selectedChatKey]);
+
+  useEffect(() => {
+    if (!isComposerEmojiOpen) {
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      // Yield to a dialog stacked above (account info / avatar lightbox):
+      // its own Escape handler dismisses that layer first.
+      if (event.key === 'Escape' && !hasStackedDialogRef.current) {
+        setComposerEmojiOpen(false);
+        composerRef.current?.focus();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isComposerEmojiOpen]);
+
+  // Fallback for selection changes that bypass the click handlers (saved-chat
+  // restore, auto-select, removed-direct fallback): perform the same per-chat
+  // draft swap the handlers do, and drop any reply/edit context still aimed at
+  // the previous chat so it cannot compose into this one. No-ops when a click
+  // handler already swapped.
+  useEffect(() => {
+    if (draftChatKeyRef.current === selectedChatKey) {
+      return;
+    }
+
+    switchDraftTo(selectedChatKey);
+    setComposeContext(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChatKey]);
+
   // While the members panel is a modal overlay (narrow screens), close it on
   // Escape and move focus into it, restoring focus to the toggle on dismissal.
   useEffect(() => {
@@ -2545,7 +3356,11 @@ export default function App() {
     membersCloseRef.current?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
+      // A dialog stacked above the drawer (account info, avatar lightbox)
+      // owns Escape via its own handler; one press must dismiss one layer,
+      // not the whole stack. Read via refs so this effect (which also moves
+      // focus on re-run) does not re-run when a dialog opens or closes.
+      if (event.key === 'Escape' && !hasStackedDialogRef.current) {
         setMembersOpen(false);
       }
     }
@@ -2566,6 +3381,44 @@ export default function App() {
     loadedDirectActivityRef.current = loadedDirectActivityByAddress;
   }, [loadedDirectActivityByAddress]);
 
+  // Scroll-bookmark persistence is debounced; land a pending write before the
+  // page is hidden or closed (mobile webviews often skip unload paths, so
+  // visibilitychange is the reliable signal) and on unmount. The flush handler
+  // has a stable identity, so this binds once.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        flushScrollBookmarks();
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', flushScrollBookmarks);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', flushScrollBookmarks);
+      flushScrollBookmarks();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live mirror of the group ids whose activity timestamps the active-chats
+  // stream already delivers (a ref, so the 30s sweep effect does not re-run on
+  // every websocket frame). Read by the sweep to skip covered groups. A group
+  // whose stream entry is a reaction is NOT covered — its usable timestamp is
+  // unknown, so the sweep must read it to find the latest real message.
+  useEffect(() => {
+    activeChatsGroupIdsRef.current = new Set(
+      (activeChats.value.groups ?? [])
+        .filter(
+          (activeGroup) =>
+            typeof activeGroup.timestamp === 'number' && !isReactionActiveChatEntry(activeGroup),
+        )
+        .map((activeGroup) => activeGroup.groupId),
+    );
+  }, [activeChats.value.groups]);
+
   useEffect(() => {
     setLoadedDirectActivityByAddress(new Map());
     // Restore this account's read watermarks so unread state survives reloads;
@@ -2574,6 +3427,10 @@ export default function App() {
     skipWatermarkPersistRef.current = true;
     setLastReadByGroupId(watermarks?.groups ?? new Map());
     setLastReadByAddress(watermarks?.directs ?? new Map());
+    // Land any debounced bookmark write for the previous account before its map
+    // is replaced below (the flush writes under the address captured when the
+    // scroll happened, so this cannot leak across accounts).
+    flushScrollBookmarks();
     // Restore this account's saved scroll bookmarks so reading positions survive
     // restarts; the in-memory view cache is per-session and starts empty.
     scrollPositionsRef.current = account ? readScrollBookmarks(account.address) : new Map();
@@ -2581,6 +3438,15 @@ export default function App() {
     loadedChatKeyRef.current = '';
     requestedPrivateGroupKeysRef.current.clear();
     resolvedPrivateGroupKeyRequestsRef.current.clear();
+    // Drafts are per-account session state: never carry one account's unsent
+    // text (or a reply/edit context) into another account's composer. The now-
+    // empty draft belongs to whichever chat is still selected.
+    draftsByChatKeyRef.current.clear();
+    draftChatKeyRef.current = selectedChatKeyRef.current;
+    setDraft('');
+    setComposeContext(null);
+    setStagedAttachment(null);
+    setAttachmentError('');
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
@@ -2677,6 +3543,21 @@ export default function App() {
             continue;
           }
 
+          // Groups on the active-chats stream get their timestamps for free
+          // (the stream is already reaction-filtered and refreshed on its own
+          // cadence); this sweep only exists for the groups that stream does
+          // not cover — non-member / browsed groups and memberships with no
+          // active-chats entry yet. Exception: a loaded null tombstone ("no
+          // real messages") outranks stream timestamps in the activity fold,
+          // so a tombstoned group must still be re-read to clear the tombstone
+          // once its first real message arrives on the stream.
+          if (
+            activeChatsGroupIdsRef.current.has(group.groupId) &&
+            loadedGroupActivityRef.current.get(group.groupId) !== null
+          ) {
+            continue;
+          }
+
           // First pass only fills gaps; the periodic refresh re-reads known groups
           // so non-member / browsed groups (off the active-chats stream) stay live.
           if (!refresh && loadedGroupActivityRef.current.has(group.groupId)) {
@@ -2691,13 +3572,20 @@ export default function App() {
                 isGroupMembershipConfirmed: memberGroups.phase === 'ready',
                 isJoinedGroup: joinedIds.has(group.groupId),
               }),
+              limit: ACTIVITY_SWEEP_MESSAGE_LIMIT,
             });
 
             if (isDisposed) {
               return;
             }
 
-            setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, group.groupId, nextMessages));
+            setLoadedGroupActivityById((current) =>
+              mergeActivityTimestamp(current, group.groupId, nextMessages, {
+                // A short window saw the whole history, so "no real messages"
+                // is a fact; a full window of reactions-only is indeterminate.
+                allowTombstone: nextMessages.length < ACTIVITY_SWEEP_MESSAGE_LIMIT,
+              }),
+            );
           } catch {
             // Some closed groups cannot expose history in the current Home/Core context.
           }
@@ -2765,13 +3653,21 @@ export default function App() {
           }
 
           try {
-            const nextMessages = await getDirectMessages(direct.address, actions);
+            const nextMessages = await getDirectMessages(direct.address, actions, {
+              limit: ACTIVITY_SWEEP_MESSAGE_LIMIT,
+            });
 
             if (isDisposed) {
               return;
             }
 
-            setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, direct.address, nextMessages));
+            setLoadedDirectActivityByAddress((current) =>
+              mergeActivityTimestamp(current, direct.address, nextMessages, {
+                // A short window saw the whole history, so "no real messages"
+                // is a fact; a full window of reactions-only is indeterminate.
+                allowTombstone: nextMessages.length < ACTIVITY_SWEEP_MESSAGE_LIMIT,
+              }),
+            );
           } catch {
             // Direct history is optional in older Home/Core bridge contexts.
           }
@@ -2833,8 +3729,16 @@ export default function App() {
     const language = normalizeLanguage(displaySettings.language);
 
     document.documentElement.lang = language ?? 'en';
-    document.title = t('app.title');
-  }, [displaySettings.language, t]);
+
+    // Surface the unread total in the tab/window title — the only passive
+    // "new message" signal available today (Home's bridge has no notification
+    // action). Polling pauses while hidden, so the count freezes at its last
+    // value until the tab is next visible; still a real signal on return and
+    // whenever a websocket frame lands before the tab goes fully idle.
+    const unreadCount = unreadGroupIds.size + unreadDirectAddresses.size;
+
+    document.title = unreadCount > 0 ? `(${unreadCount}) ${t('app.title')}` : t('app.title');
+  }, [displaySettings.language, t, unreadGroupIds, unreadDirectAddresses]);
 
   useEffect(() => {
     function handleHostMessage(event: MessageEvent) {
@@ -2997,6 +3901,8 @@ export default function App() {
     const chatKey = getSelectedChatKey(chat);
     let socket: WebSocket | null = null;
     let reconnectTimeout = 0;
+    let reconnectDelay = WS_RECONNECT_BASE_MS;
+    let visibilityReconnect: (() => void) | null = null;
     let isDisposed = false;
     let receivedInitialMessages = false;
     let usedRestFallback = false;
@@ -3009,11 +3915,31 @@ export default function App() {
         return;
       }
 
+      // Hidden tab: hold the reconnect (and its REST fallback) until the tab
+      // is visible again, then connect immediately.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        if (!visibilityReconnect) {
+          visibilityReconnect = () => {
+            if (document.visibilityState !== 'hidden' && visibilityReconnect) {
+              document.removeEventListener('visibilitychange', visibilityReconnect);
+              visibilityReconnect = null;
+              connect();
+            }
+          };
+          document.addEventListener('visibilitychange', visibilityReconnect);
+        }
+
+        return;
+      }
+
       socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId));
 
       socket.addEventListener('message', (event) => {
         try {
           const nextMessages = parseChatMessages(event.data);
+
+          // A live frame proves the node is reachable; reset the backoff.
+          reconnectDelay = WS_RECONNECT_BASE_MS;
 
           setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
 
@@ -3037,12 +3963,21 @@ export default function App() {
             value: mergeMessages(current.value, nextMessages),
           }));
         } catch (error) {
-          setMessagesChatKey('');
-          setMessages({
+          // Once the chat is live, a single malformed frame is a transient
+          // blip: keep the working transcript and let the next frame (or the
+          // 5s reconnect, which resends the initial batch) recover — the same
+          // rule the quiet-poll path follows.
+          if (receivedInitialMessages) {
+            return;
+          }
+
+          // Functional update so the displayed value is the live state, never
+          // a stale value captured by this closure at chat-selection time.
+          setMessages((current) => ({
             error: getBridgeErrorMessage(error, t('status.loadingError.readLiveMessages'), t),
             phase: 'error',
-            value: messages.value,
-          });
+            value: current.value,
+          }));
         }
       });
 
@@ -3058,7 +3993,8 @@ export default function App() {
           usedRestFallback = true;
         }
 
-        reconnectTimeout = window.setTimeout(connect, 5000);
+        reconnectTimeout = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, WS_RECONNECT_MAX_MS);
       });
     }
 
@@ -3067,6 +4003,12 @@ export default function App() {
     return () => {
       isDisposed = true;
       window.clearTimeout(reconnectTimeout);
+
+      if (visibilityReconnect) {
+        document.removeEventListener('visibilitychange', visibilityReconnect);
+        visibilityReconnect = null;
+      }
+
       socket?.close();
     };
   }, [selectedChatKey, actionsKey, isAccountUnlocked, selectedClosedGroupReadKey]);
@@ -3079,19 +4021,40 @@ export default function App() {
     const address = account.address;
     let socket: WebSocket | null = null;
     let reconnectTimeout = 0;
+    let reconnectDelay = WS_RECONNECT_BASE_MS;
+    let visibilityReconnect: (() => void) | null = null;
     let isDisposed = false;
 
     function handleMessage(event: MessageEvent) {
       try {
         const nextActiveChats = parseActiveChats(event.data);
 
-        setActiveChats((current) => ({
-          phase: 'ready',
-          value: {
-            ...current.value,
-            groups: nextActiveChats.groups ?? current.value.groups,
-          },
-        }));
+        // A live frame proves the node is reachable; reset the backoff.
+        reconnectDelay = WS_RECONNECT_BASE_MS;
+
+        setActiveChats((current) => {
+          const nextGroups = nextActiveChats.groups;
+
+          // Most frames repeat an unchanged list; keep the same state object
+          // so the groups-derived memos (groupActivityById → sortedGroups →
+          // unreadGroupIds) and the memoized GroupList bail out instead of
+          // recomputing per frame — the same reference-stable rule the group
+          // message socket applies via mergeMessages.
+          if (
+            current.phase === 'ready' &&
+            (nextGroups === undefined || areActiveGroupChatsEqual(current.value.groups, nextGroups))
+          ) {
+            return current;
+          }
+
+          return {
+            phase: 'ready',
+            value: {
+              ...current.value,
+              groups: nextGroups ?? current.value.groups,
+            },
+          };
+        });
 
         // The public stream's group entries carry live timestamps; fold them in
         // as an activity floor too so the sidebar indicator survives a stream
@@ -3103,7 +4066,7 @@ export default function App() {
             let next: Map<number, number | null> | null = null;
 
             for (const group of groupActivity) {
-              if (typeof group.timestamp !== 'number') {
+              if (typeof group.timestamp !== 'number' || isReactionActiveChatEntry(group)) {
                 continue;
               }
 
@@ -3128,7 +4091,7 @@ export default function App() {
             let next: Map<string, number | null> | null = null;
 
             for (const direct of directActivity) {
-              if (typeof direct.timestamp !== 'number') {
+              if (typeof direct.timestamp !== 'number' || isReactionActiveChatEntry(direct)) {
                 continue;
               }
 
@@ -3154,6 +4117,24 @@ export default function App() {
         return;
       }
 
+      // Hidden tab: hold the reconnect until visible, then connect at once.
+      // An already-open socket is unaffected, so a healthy stream keeps
+      // feeding unread state while the tab is hidden.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        if (!visibilityReconnect) {
+          visibilityReconnect = () => {
+            if (document.visibilityState !== 'hidden' && visibilityReconnect) {
+              document.removeEventListener('visibilitychange', visibilityReconnect);
+              visibilityReconnect = null;
+              connect();
+            }
+          };
+          document.addEventListener('visibilitychange', visibilityReconnect);
+        }
+
+        return;
+      }
+
       socket = new WebSocket(buildActiveChatsWebSocketUrl(address));
       socket.addEventListener('message', handleMessage);
       socket.addEventListener('close', () => {
@@ -3161,7 +4142,8 @@ export default function App() {
           return;
         }
 
-        reconnectTimeout = window.setTimeout(connect, 5000);
+        reconnectTimeout = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, WS_RECONNECT_MAX_MS);
       });
     }
 
@@ -3170,6 +4152,12 @@ export default function App() {
     return () => {
       isDisposed = true;
       window.clearTimeout(reconnectTimeout);
+
+      if (visibilityReconnect) {
+        document.removeEventListener('visibilitychange', visibilityReconnect);
+        visibilityReconnect = null;
+      }
+
       socket?.close();
     };
   }, [account?.address]);
@@ -3182,6 +4170,7 @@ export default function App() {
     const interval = window.setInterval(() => {
       void loadAccountJoinRequests(account, actions, { quiet: true });
       void loadAdminJoinRequests(account, actions, { quiet: true });
+      void loadGroupInvites(account, { quiet: true });
     }, 30000);
 
     return () => window.clearInterval(interval);
@@ -3277,6 +4266,42 @@ export default function App() {
         }`}
       >
         <aside className="sidebar" aria-label={t('aria.navigation')} inert={isMembersOverlay || undefined}>
+          {pendingGroupInvites.length > 0 || (!!account && groupInvites.phase === 'error') ? (
+            <section className="panel">
+              <div className="panel__header">
+                <h2 className="panel__title">{t('label.invites')}</h2>
+                <span className="panel__count">{pendingGroupInvites.length}</span>
+              </div>
+              {groupInvites.phase === 'error' ? <p className="error">{groupInvites.error}</p> : null}
+              <ul className="invite-list">
+                {pendingGroupInvites.map((invite) => {
+                  const inviteGroup = groups.value.find((candidate) => candidate.groupId === invite.groupId);
+                  const title = inviteGroup ? getGroupTitle(inviteGroup, t) : `id:${invite.groupId}`;
+
+                  return (
+                    <li className="invite-row" key={`${invite.groupId}:${invite.inviter ?? ''}`}>
+                      <span className="invite-row__text">
+                        <span className="invite-row__group">{title}</span>
+                        {invite.inviter ? (
+                          <span className="invite-row__inviter">
+                            {t('label.invite.from', { name: getShortAddress(invite.inviter) })}
+                          </span>
+                        ) : null}
+                      </span>
+                      <button
+                        className="button button--secondary"
+                        disabled={!canUseSelectedAccount || !canJoinGroup || inviteActionGroupId !== null}
+                        onClick={() => void handleAcceptInvite(invite)}
+                        type="button"
+                      >
+                        {inviteActionGroupId === invite.groupId ? t('button.sending') : t('button.join')}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
           <section className={`panel${isDirectCollapsed ? ' panel--collapsed' : ''}`}>
             <div className="panel__header">
               <button
@@ -3344,11 +4369,13 @@ export default function App() {
             ) : (
               <DirectList
                 activityByAddress={directActivityByAddress}
+                avatarProfiles={avatarProfiles}
                 canOpen={canOpenDirectChat}
                 collapsed={isDirectCollapsed}
                 directs={mergedDirects}
-                onRemove={removeDirect}
-                onSelect={selectDirect}
+                onRemove={handleRemoveDirect}
+                onSelect={handleSelectDirect}
+                previewByAddress={directPreviewByAddress}
                 removableAddresses={removableDirectAddresses}
                 selectedAddress={selectedDirectAddress}
                 t={t}
@@ -3420,7 +4447,8 @@ export default function App() {
                 collapsed={isGroupsCollapsed}
                 groups={sortedGroups}
                 memberCountsByGroupId={syntheticMemberCountsByGroupId}
-                onSelect={selectGroup}
+                onSelect={handleSelectGroup}
+                previewByGroupId={groupPreviewByGroupId}
                 selectedGroupId={selectedGroupId}
                 t={t}
                 unreadGroupIds={unreadGroupIds}
@@ -3430,7 +4458,20 @@ export default function App() {
           </section>
         </aside>
 
-        <section className="chat-pane" aria-label={t('aria.selectedChat')} inert={isMembersOverlay || undefined}>
+        <section
+          aria-label={t('aria.selectedChat')}
+          className="chat-pane"
+          inert={isMembersOverlay || undefined}
+          onDragEnter={handleAttachmentDragEnter}
+          onDragLeave={handleAttachmentDragLeave}
+          onDragOver={handleAttachmentDragOver}
+          onDrop={handleAttachmentDrop}
+        >
+          {isDraggingAttachment ? (
+            <div aria-hidden="true" className="chat-pane__drop-overlay">
+              <span>{t('label.composer.dropFile')}</span>
+            </div>
+          ) : null}
           <div className="chat-pane__header">
             <button
               aria-label={t('button.back')}
@@ -3550,7 +4591,18 @@ export default function App() {
             </div>
           </div>
 
-          {messages.phase === 'error' ? <p className="error">{messages.error}</p> : null}
+          {messages.phase === 'error' ? (
+            <div className="chat-pane__load-error">
+              <p className="error">{messages.error}</p>
+              <button
+                className="button button--secondary"
+                onClick={() => void loadMessages(selectedChat)}
+                type="button"
+              >
+                {t('button.retry')}
+              </button>
+            </div>
+          ) : null}
           {writeError ? <p className="error">{writeError}</p> : null}
           {privateGroupKeyError ? <p className="error">{privateGroupKeyError}</p> : null}
           {privateGroupKeyStatus ? <p className="muted">{privateGroupKeyStatus}</p> : null}
@@ -3567,7 +4619,10 @@ export default function App() {
           <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
             {liveAnnouncement}
           </div>
-          {messages.phase === 'loading' ? (
+          {messages.phase === 'loading' || (messages.phase === 'ready' && selectedChat !== null && !hasSelectedMessages) ? (
+            // The second arm covers the transient frame right after a chat
+            // switch, before the load effect runs: `messages` still holds the
+            // previous chat then, and must not flash under the new header.
             <LoadingRows count={4} label={t('label.loading')} />
           ) : (
             <MessageList
@@ -3581,24 +4636,20 @@ export default function App() {
               olderMessagesError={olderMessagesState.error}
               olderMessagesReachedStart={olderMessagesState.reachedStart}
               olderMessagesLoading={olderMessagesState.loading}
-              onEdit={startEdit}
-              onLoadOlder={() => void loadOlderMessages()}
+              onDelete={setDeleteTarget}
+              onEdit={handleStartEdit}
+              onLoadOlder={handleLoadOlderMessages}
               onOpenAccount={setAccountInfoTarget}
               onOpenAvatar={setAvatarLightboxImage}
-              onReact={(message, reaction, contentState) => void handleMessageReaction(message, reaction, contentState)}
-              onReply={startReply}
-              onScrollPositionChange={(chatKey, position) => {
-                scrollPositionsRef.current.set(chatKey, position);
-
-                // Persist the bookmark so the reading position survives a restart.
-                if (account) {
-                  writeScrollBookmarks(account.address, scrollPositionsRef.current);
-                }
-              }}
+              onOpenImage={setAvatarLightboxImage}
+              onReact={handleReactToMessage}
+              onReply={handleStartReply}
+              onScrollPositionChange={handleScrollPositionChange}
               now={now}
               pendingReactionKey={reactionPendingKey}
               scrollChatKey={selectedChatKey}
               selfAddress={account?.address ?? null}
+              selfName={normalizeRegisteredName(account?.name) ?? null}
               sentMessageNonce={sentMessageNonce}
               systemMessages={selectedTransactions}
               t={t}
@@ -3618,6 +4669,43 @@ export default function App() {
             </div>
           ) : (
             <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
+              {isComposerEmojiOpen ? (
+                <div className="composer__emoji-panel">
+                  <Suspense fallback={<p className="muted">{t('label.loading')}</p>}>
+                    <ComposerEmojiPicker
+                      autoFocusSearch={false}
+                      emojiStyle={'native' as EmojiStyle}
+                      height="min(320px, 50dvh)"
+                      lazyLoadEmojis
+                      onEmojiClick={(emoji: EmojiClickData) => insertComposerEmoji(emoji.emoji)}
+                      previewConfig={{ showPreview: false }}
+                      searchPlaceHolder={t('label.search')}
+                      theme={'auto' as Theme}
+                      width="100%"
+                    />
+                  </Suspense>
+                </div>
+              ) : null}
+              {stagedAttachment ? (
+                <div className="composer__attachment">
+                  <span aria-hidden="true">📎</span>
+                  <span className="composer__attachment-name">{stagedAttachment.filename}</span>
+                  <span className="composer__attachment-size">
+                    {stagedAttachment.phase === 'processing'
+                      ? t('status.attachment.processing')
+                      : formatAttachmentSize(stagedAttachment.size)}
+                  </span>
+                  <button
+                    aria-label={t('label.attachment.remove')}
+                    className="icon-button composer__attachment-remove"
+                    onClick={clearStagedAttachment}
+                    type="button"
+                  >
+                    <CloseIcon />
+                  </button>
+                </div>
+              ) : null}
+              {attachmentError ? <p className="error composer__attachment-error">{attachmentError}</p> : null}
               {composeContext ? (
                 <div className="composer__context">
                   <div className="composer__context-text">
@@ -3645,7 +4733,11 @@ export default function App() {
               ) : null}
               <textarea
                 aria-label={t('label.common.message')}
-                disabled={!canComposeMessage || sendPending}
+                // Not disabled during a pending send: disabling the focused
+                // element blurs it (forcing a re-click per message) and blocks
+                // typing the next message while the bridge approval runs.
+                // Double-sends are already guarded by canSubmitMessage.
+                disabled={!canComposeMessage}
                 maxLength={4000}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
@@ -3654,11 +4746,52 @@ export default function App() {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
+                onPaste={handleComposerPaste}
                 placeholder={t('placeholder.message')}
                 ref={composerRef}
                 rows={1}
                 value={draft}
               />
+              {selectedChat?.kind === 'group' ? (
+                <>
+                  <input
+                    hidden
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+
+                      if (file) {
+                        stageAttachment(file);
+                      }
+
+                      // Selecting the same file twice must still re-fire.
+                      event.target.value = '';
+                    }}
+                    ref={attachmentInputRef}
+                    type="file"
+                  />
+                  <button
+                    aria-label={t('label.composer.attach')}
+                    className="icon-button composer__attach"
+                    disabled={!canAttach || sendPending || stagedAttachment?.phase === 'processing'}
+                    onClick={() => attachmentInputRef.current?.click()}
+                    title={canAttach ? t('label.composer.attach') : t('action.attachUnavailable')}
+                    type="button"
+                  >
+                    <span aria-hidden="true">📎</span>
+                  </button>
+                </>
+              ) : null}
+              <button
+                aria-expanded={isComposerEmojiOpen}
+                aria-label={t('label.composer.emoji')}
+                className="icon-button composer__emoji-toggle"
+                disabled={!canComposeMessage}
+                onClick={() => setComposerEmojiOpen((current) => !current)}
+                title={t('label.composer.emoji')}
+                type="button"
+              >
+                <span aria-hidden="true">🙂</span>
+              </button>
               <button
                 className="button"
                 disabled={!canSubmitMessage}
@@ -3780,6 +4913,14 @@ export default function App() {
         <AvatarLightbox
           image={avatarLightboxImage}
           onClose={() => setAvatarLightboxImage(null)}
+          t={t}
+        />
+      ) : null}
+      {deleteTarget ? (
+        <ConfirmDeleteMessageDialog
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void handleDeleteMessage(deleteTarget)}
+          pending={deletePending}
           t={t}
         />
       ) : null}

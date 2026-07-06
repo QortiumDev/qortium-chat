@@ -26,22 +26,45 @@ export type StoredReadWatermarks = {
 
 const PREFIX = 'qortium-chat';
 
+// The probe verdict is cached per storage object: getStorage runs on the
+// scroll-bookmark hot path, and re-probing with a setItem/removeItem per call
+// triples the synchronous storage ops. Keyed on object identity so a swapped
+// storage (tests, embeds) is re-probed.
+let probedStorage: Storage | null = null;
+let probeResult: Storage | null = null;
+
 function getStorage(): Storage | null {
+  let storage: Storage;
+
   try {
     if (typeof window === 'undefined' || !window.localStorage) {
       return null;
     }
 
-    // Touch the API: some embeds expose localStorage but throw on use.
-    const probe = `${PREFIX}:__probe__`;
-
-    window.localStorage.setItem(probe, '1');
-    window.localStorage.removeItem(probe);
-
-    return window.localStorage;
+    storage = window.localStorage;
   } catch {
     return null;
   }
+
+  if (storage === probedStorage) {
+    return probeResult;
+  }
+
+  probedStorage = storage;
+
+  try {
+    // Touch the API: some embeds expose localStorage but throw on use.
+    const probe = `${PREFIX}:__probe__`;
+
+    storage.setItem(probe, '1');
+    storage.removeItem(probe);
+
+    probeResult = storage;
+  } catch {
+    probeResult = null;
+  }
+
+  return probeResult;
 }
 
 function readJson<T>(key: string): T | null {

@@ -120,4 +120,28 @@ describe('group member helpers', () => {
       { member: 'Qb', primaryName: 'bob' },
     ]);
   });
+
+  it('orders synthetic members by each sender latest non-reaction message', () => {
+    const members = getActiveMessageGroupMembers(
+      [
+        message({ sender: 'Qa', senderName: 'alice', signature: 'sig-a', timestamp: 10 }),
+        message({ sender: 'Qb', senderName: 'bob', signature: 'sig-b', timestamp: 20 }),
+        message({
+          chatReference: 'sig-a',
+          data: encodeText(buildReactionMessageText('🙏', true)),
+          sender: 'Qc',
+          signature: 'sig-reaction',
+          timestamp: 40,
+        }),
+        message({ sender: 'Qa', senderName: 'alice-current', signature: 'sig-a-2', timestamp: 50 }),
+        message({ sender: 'Qb', senderName: 'bob-current', signature: 'sig-b-2', timestamp: 70 }),
+      ],
+      0,
+    );
+
+    expect(members).toEqual([
+      { member: 'Qb', primaryName: 'bob-current' },
+      { member: 'Qa', primaryName: 'alice-current' },
+    ]);
+  });
 });
