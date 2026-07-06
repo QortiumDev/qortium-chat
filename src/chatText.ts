@@ -112,6 +112,16 @@ export function buildChatMessageText(text: string, repliedTo?: string | null) {
   return repliedTo ? JSON.stringify({ message: text, repliedTo }) : text;
 }
 
+// A "delete" is an edit whose revision carries an empty body — nothing leaves
+// the chain (the original stays until chat retention expires); clients render
+// the empty revision as a deleted-message note. The JSON envelope keeps the
+// transaction payload itself non-empty (a zero-byte CHAT payload may be
+// rejected) and unwraps to body '' through the normal decode path, so older
+// clients degrade to their generic empty-message placeholder.
+export function buildDeletedMessageText(repliedTo?: string | null) {
+  return JSON.stringify(repliedTo ? { message: '', repliedTo } : { message: '' });
+}
+
 export function buildReactionMessageText(content: string, contentState: boolean) {
   const normalizedContent = normalizeReactionContent(content);
 
@@ -127,7 +137,9 @@ export function buildReactionMessageText(content: string, contentState: boolean)
   });
 }
 
-type DecodableChatMessage = Pick<
+// Exported so callers can decode payload-bearing shapes that are not full
+// ChatMessages (e.g. active-chats entries for sidebar previews).
+export type DecodableChatMessage = Pick<
   ChatMessage,
   'data' | 'decryptionStatus' | 'encoding' | 'isEncrypted' | 'isText' | 'status'
 >;
@@ -267,15 +279,27 @@ function computeDecodeChatMessage(
   }
 }
 
-export function formatTimestamp(timestamp: number | null | undefined) {
+// Same per-locale cache rationale as the relative formats below: the message
+// list builds ~100 timestamp titles per render.
+const dateTimeFormats = new Map<string, Intl.DateTimeFormat>();
+
+export function formatTimestamp(timestamp: number | null | undefined, locale?: string) {
   if (!timestamp) {
     return '';
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(timestamp));
+  const key = locale ?? '';
+  let format = dateTimeFormats.get(key);
+
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+    dateTimeFormats.set(key, format);
+  }
+
+  return format.format(new Date(timestamp));
 }
 
 const MINUTE_MS = 60 * 1000;
@@ -323,7 +347,7 @@ export function getSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName
 }
 
 // Single-line preview of a message body for reply previews and sidebar snippets.
-export function getMessageSnippet(message: ChatMessage, t: TranslateFunction, maxLength = 140) {
+export function getMessageSnippet(message: DecodableChatMessage, t: TranslateFunction, maxLength = 140) {
   const body = decodeChatMessage(message, t).body || t('message.empty');
   const flattened = body.replace(/\s+/g, ' ').trim();
 

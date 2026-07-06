@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react';
-import { getDirectTitle } from './accountDisplay';
+import { getAvatarView, getDirectTitle, UserAvatar, type AvatarProfilesByAddress } from './accountDisplay';
 import { formatTimeAgo, formatTimestamp } from './chatText';
 import { getGroupTitle, isGeneralChatGroup } from './generalChat';
 import { CloseIcon, LockIcon } from './icons';
@@ -12,6 +12,7 @@ export const GroupList = memo(function GroupList({
   groups,
   memberCountsByGroupId,
   onSelect,
+  previewByGroupId,
   selectedGroupId,
   t,
   unreadGroupIds,
@@ -22,6 +23,7 @@ export const GroupList = memo(function GroupList({
   groups: GroupData[];
   memberCountsByGroupId?: ReadonlyMap<number, number>;
   onSelect: (group: GroupData) => void;
+  previewByGroupId?: ReadonlyMap<number, string>;
   selectedGroupId: number | null;
   t: TranslateFunction;
   unreadGroupIds: ReadonlySet<number>;
@@ -44,6 +46,9 @@ export const GroupList = memo(function GroupList({
         const isUnread = unreadGroupIds.has(group.groupId);
         const memberCount =
           memberCountsByGroupId?.get(group.groupId) ?? (isGeneralChatGroup(group) ? undefined : group.memberCount);
+        // Closed groups' stream payloads are encrypted — never show those as a
+        // decoded "preview"; their rows stay as before.
+        const preview = group.isOpen === false ? undefined : previewByGroupId?.get(group.groupId);
 
         return (
           <li key={group.groupId}>
@@ -65,11 +70,12 @@ export const GroupList = memo(function GroupList({
                 <span className="group-row__name">{getGroupTitle(group, t)}</span>
               </span>
               {lastMessageTimestamp ? (
-                <span className="group-row__time" title={formatTimestamp(lastMessageTimestamp)}>
-                  {formatTimeAgo(lastMessageTimestamp, now)}
+                <span className="group-row__time" title={formatTimestamp(lastMessageTimestamp, t.locale)}>
+                  {formatTimeAgo(lastMessageTimestamp, now, t.locale)}
                 </span>
               ) : null}
             </span>
+            {preview ? <span className="group-row__preview">{preview}</span> : null}
             <span className="group-row__footer">
               <span className="group-row__id">{`id:${group.groupId}`}</span>
               {!isGeneralChatGroup(group) && group.isOpen === false ? (
@@ -85,8 +91,8 @@ export const GroupList = memo(function GroupList({
               {typeof memberCount === 'number' ? (
                 <span className="group-row__members">
                   {isGeneralChatGroup(group)
-                    ? t('group.meta.activeCount', { count: memberCount.toLocaleString() })
-                    : t('group.meta.memberCount', { count: memberCount.toLocaleString() })}
+                    ? t('group.meta.activeCount', { count: memberCount.toLocaleString(t.locale) })
+                    : t('group.meta.memberCount', { count: memberCount.toLocaleString(t.locale) })}
                 </span>
               ) : null}
             </span>
@@ -105,6 +111,8 @@ export const DirectList = memo(function DirectList({
   directs: directEntries,
   onRemove,
   onSelect,
+  previewByAddress,
+  avatarProfiles,
   removableAddresses,
   selectedAddress,
   t,
@@ -117,6 +125,8 @@ export const DirectList = memo(function DirectList({
   directs: ActiveDirectChat[];
   onRemove: (address: string) => void;
   onSelect: (direct: ActiveDirectChat) => void;
+  previewByAddress?: ReadonlyMap<string, string>;
+  avatarProfiles: AvatarProfilesByAddress;
   removableAddresses: ReadonlySet<string>;
   selectedAddress: string | null;
   t: TranslateFunction;
@@ -160,6 +170,8 @@ export const DirectList = memo(function DirectList({
         const lastMessageTimestamp = activityByAddress.get(direct.address);
         const isUnread = unreadAddresses.has(direct.address);
         const isRemovable = removableAddresses.has(direct.address);
+        const profile = avatarProfiles.get(direct.address);
+        const { avatarSrc, name } = getAvatarView(profile, direct.name);
         const title = getDirectTitle(direct);
 
         return (
@@ -174,6 +186,7 @@ export const DirectList = memo(function DirectList({
               title={canOpen ? t('action.directTooltip') : t('action.directReadOnly')}
               type="button"
             >
+              <UserAvatar className="direct-row__avatar" name={name} src={avatarSrc} />
               <span className="direct-row__main">
                 {isUnread ? (
                   <span
@@ -186,9 +199,12 @@ export const DirectList = memo(function DirectList({
                 <span className="direct-row__title">{title}</span>
               </span>
               {lastMessageTimestamp && !isRemovable ? (
-                <small title={formatTimestamp(lastMessageTimestamp)}>
-                  {formatTimeAgo(lastMessageTimestamp, now)}
+                <small title={formatTimestamp(lastMessageTimestamp, t.locale)}>
+                  {formatTimeAgo(lastMessageTimestamp, now, t.locale)}
                 </small>
+              ) : null}
+              {previewByAddress?.get(direct.address) ? (
+                <span className="direct-row__preview">{previewByAddress.get(direct.address)}</span>
               ) : null}
             </button>
             {isRemovable ? (

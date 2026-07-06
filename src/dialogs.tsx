@@ -21,6 +21,66 @@ import {
   type PendingApprovalTransaction,
 } from './types';
 
+// Deleting a chat message cannot remove anything from the chain — it sends an
+// empty edit revision that clients render as "Message deleted". The dialog's
+// job is honesty: say exactly that before the user commits.
+export function ConfirmDeleteMessageDialog({
+  onCancel,
+  onConfirm,
+  pending,
+  t,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+  pending: boolean;
+  t: TranslateFunction;
+}) {
+  const cardRef = useModalDialog<HTMLElement>(onCancel);
+
+  return (
+    <div
+      aria-label={t('dialog.deleteMessage.title')}
+      aria-modal="true"
+      className="account-dialog"
+      onClick={onCancel}
+      role="dialog"
+    >
+      <section
+        className="account-dialog__card"
+        onClick={(event) => event.stopPropagation()}
+        ref={cardRef}
+        tabIndex={-1}
+      >
+        <header className="account-dialog__header">
+          <div className="account-dialog__heading">
+            <h2>{t('dialog.deleteMessage.title')}</h2>
+          </div>
+          <button
+            aria-label={t('button.close')}
+            className="account-dialog__close"
+            onClick={onCancel}
+            title={t('button.close')}
+            type="button"
+          >
+            X
+          </button>
+        </header>
+
+        <p className="muted">{t('dialog.deleteMessage.body')}</p>
+
+        <div className="account-dialog__actions">
+          <button className="button button--secondary" onClick={onCancel} type="button">
+            {t('button.cancel')}
+          </button>
+          <button className="button" disabled={pending} onClick={onConfirm} type="button">
+            {pending ? t('button.sending') : t('button.delete')}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function AccountInfoDialog({
   canMention,
   canOpenDirect,
@@ -378,7 +438,7 @@ export function GroupApprovalDialog({
                       </div>
                       <div>
                         <dt>{t('label.approval.time')}</dt>
-                        <dd>{transaction.timestamp ? formatTimestamp(transaction.timestamp) : '-'}</dd>
+                        <dd>{transaction.timestamp ? formatTimestamp(transaction.timestamp, t.locale) : '-'}</dd>
                       </div>
                       {typeof transaction.blockHeight === 'number' ? (
                         <div>

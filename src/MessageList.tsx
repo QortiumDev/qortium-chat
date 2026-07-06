@@ -1,6 +1,8 @@
 import {
   Fragment,
+  lazy,
   memo,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -8,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import EmojiPicker, { type EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
+import type { EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   DEFAULT_REACTION_OPTIONS,
   decodeChatMessage,
@@ -52,6 +54,12 @@ import { DownIcon, UpIcon } from './icons';
 import { type TranslateFunction } from './i18n';
 import { type ChatMessage, type ChatScrollPosition, type TrackedTransaction } from './types';
 
+// Loaded on demand: the full picker only mounts after React → '+', and its
+// bundle (~300 KB, a third of the app's JS) must not weigh down every app
+// start. The type-only import above keeps the package out of the main chunk,
+// so its enum values are passed as their literal strings at the use site.
+const EmojiPicker = lazy(() => import('emoji-picker-react'));
+
 function getReactionDetailsDomId(messageSignature: string, reaction: string) {
   const signaturePart = messageSignature.replace(/[^A-Za-z0-9_-]/g, '-');
   const reactionPart = Array.from(reaction)
@@ -74,7 +82,15 @@ type ImagePreviewState =
       phase: 'error';
     };
 
-function MessageImagePreview({ resource, t }: { resource: QdnImageResource; t: TranslateFunction }) {
+function MessageImagePreview({
+  onOpenImage,
+  resource,
+  t,
+}: {
+  onOpenImage: (image: AvatarLightboxImage) => void;
+  resource: QdnImageResource;
+  t: TranslateFunction;
+}) {
   const [state, setState] = useState<ImagePreviewState>({ phase: 'loading' });
 
   useEffect(() => {
@@ -122,7 +138,15 @@ function MessageImagePreview({ resource, t }: { resource: QdnImageResource; t: T
     <>
       {state.previews.map((preview) => (
         <figure className="message__image-preview" key={preview.qdnUrl}>
-          <img alt={preview.alt} src={preview.src} />
+          <button
+            aria-label={`${t('button.viewImagePreview')}: ${preview.alt}`}
+            className="message__image-preview-button"
+            onClick={() => onOpenImage({ alt: preview.alt, name: preview.alt, src: preview.src })}
+            title={preview.qdnUrl}
+            type="button"
+          >
+            <img alt={preview.alt} src={preview.src} />
+          </button>
           <figcaption>{preview.alt}</figcaption>
         </figure>
       ))}
@@ -130,11 +154,19 @@ function MessageImagePreview({ resource, t }: { resource: QdnImageResource; t: T
   );
 }
 
-function MessageImagePreviews({ resources, t }: { resources: QdnImageResource[]; t: TranslateFunction }) {
+function MessageImagePreviews({
+  onOpenImage,
+  resources,
+  t,
+}: {
+  onOpenImage: (image: AvatarLightboxImage) => void;
+  resources: QdnImageResource[];
+  t: TranslateFunction;
+}) {
   return (
     <div className="message__image-previews">
       {resources.map((resource, index) => (
-        <MessageImagePreview key={`${resource.qdnUrl}-${index}`} resource={resource} t={t} />
+        <MessageImagePreview key={`${resource.qdnUrl}-${index}`} onOpenImage={onOpenImage} resource={resource} t={t} />
       ))}
     </div>
   );
@@ -200,20 +232,22 @@ function MessageReactionPicker({
       </div>
       {fullPickerOpen ? (
         <div className="message__emoji-picker-panel">
-          <EmojiPicker
-            allowExpandReactions
-            autoFocusSearch={false}
-            emojiStyle={EmojiStyle.NATIVE}
-            height="min(360px, 60dvh)"
-            lazyLoadEmojis
-            onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
-            onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
-            previewConfig={{ showPreview: false }}
-            reactions={[...DEFAULT_REACTION_OPTIONS]}
-            searchPlaceHolder={t('label.search')}
-            theme={Theme.AUTO}
-            width="100%"
-          />
+          <Suspense fallback={<p className="muted">{t('label.loading')}</p>}>
+            <EmojiPicker
+              allowExpandReactions
+              autoFocusSearch={false}
+              emojiStyle={'native' as EmojiStyle}
+              height="min(360px, 60dvh)"
+              lazyLoadEmojis
+              onEmojiClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+              onReactionClick={(emoji: EmojiClickData) => selectReaction(emoji.emoji)}
+              previewConfig={{ showPreview: false }}
+              reactions={[...DEFAULT_REACTION_OPTIONS]}
+              searchPlaceHolder={t('label.search')}
+              theme={'auto' as Theme}
+              width="100%"
+            />
+          </Suspense>
         </div>
       ) : null}
     </div>
@@ -278,9 +312,9 @@ function MessageReactionDetails({
               <time
                 className="message__reaction-reactor-time"
                 dateTime={new Date(reactor.timestamp).toISOString()}
-                title={formatTimestamp(reactor.timestamp)}
+                title={formatTimestamp(reactor.timestamp, t.locale)}
               >
-                {formatTimeAgo(reactor.timestamp, now)}
+                {formatTimeAgo(reactor.timestamp, now, t.locale)}
               </time>
             </li>
           );
@@ -319,6 +353,9 @@ function ReactionPopover({
   width: number;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
+  // Bumped by the keep-open resize path so the position math below re-reads
+  // the (soft-keyboard-shrunken) viewport instead of going stale.
+  const [, forceReposition] = useState(0);
 
   // Focus the popover on open and restore focus to the trigger on close. Mount
   // only, so a parent re-render (the 30s clock, a new message) cannot re-steal
@@ -346,6 +383,10 @@ function ReactionPopover({
       // A mobile soft keyboard fires resize; keep the popover open while its
       // search field is focused, else the stale anchor warrants a dismiss.
       if (cardRef.current?.contains(document.activeElement)) {
+        // Recompute the position against the new viewport so the panel —
+        // including the field being typed into — is not left hanging above
+        // the visible area by a full keyboard height.
+        forceReposition((tick) => tick + 1);
         return;
       }
 
@@ -459,16 +500,19 @@ export const MessageList = memo(function MessageList({
   olderMessagesError,
   olderMessagesLoading,
   olderMessagesReachedStart,
+  onDelete,
   onEdit,
   onLoadOlder,
   onOpenAccount,
   onOpenAvatar,
+  onOpenImage,
   onReact,
   onReply,
   onScrollPositionChange,
   pendingReactionKey,
   scrollChatKey,
   selfAddress,
+  selfName,
   sentMessageNonce,
   systemMessages,
   t,
@@ -486,16 +530,19 @@ export const MessageList = memo(function MessageList({
   olderMessagesError: string;
   olderMessagesLoading: boolean;
   olderMessagesReachedStart: boolean;
+  onDelete: (thread: MessageThread) => void;
   onEdit: (thread: MessageThread) => void;
   onLoadOlder: () => void;
   onOpenAccount: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
+  onOpenImage: (image: AvatarLightboxImage) => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   onReply: (message: ChatMessage) => void;
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
   pendingReactionKey: string;
   scrollChatKey: string;
   selfAddress: string | null;
+  selfName: string | null;
   sentMessageNonce: number;
   systemMessages: TrackedTransaction[];
   t: TranslateFunction;
@@ -505,6 +552,18 @@ export const MessageList = memo(function MessageList({
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottomRef = useRef(true);
+  // Highlights rows that @mention the account's registered name. Anchored so
+  // "@alice" does not also match a mention of "@alicezz"; senders mention via
+  // the account dialog's Mention button, which inserts `@Name `.
+  const mentionPattern = useMemo(() => {
+    if (!selfName) {
+      return null;
+    }
+
+    const escapedName = selfName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    return new RegExp(`@${escapedName}(?![\\w-])`, 'i');
+  }, [selfName]);
   // Set when the user sends, so the message that lands a moment later scrolls into
   // view even if their scroll position was not at the bottom.
   const forceBottomRef = useRef(false);
@@ -533,6 +592,13 @@ export const MessageList = memo(function MessageList({
     { anchorKey: string; anchorOffset: number; anchorTimestamp: number; attempts: number } | null
   >(null);
   const restoringRef = useRef(false);
+  // Last position applied or saved for the current chat. When the pane loses
+  // layout (narrow-mode display:none swaps list/chat views) the browser drops
+  // its scroll state entirely; on regaining layout this is re-applied.
+  const lastPositionRef = useRef<ChatScrollPosition | null>(null);
+  // True while the list pane has zero layout; a true→false transition (observed
+  // by the ResizeObserver below) triggers the re-apply.
+  const wasHiddenRef = useRef(false);
   const itemsRef = useRef(new Map<string, HTMLLIElement>());
   // The "new messages" divider element, so the jump-to-unread control can scroll
   // it into view and so its viewport position drives whether that control shows.
@@ -601,30 +667,36 @@ export const MessageList = memo(function MessageList({
     () => buildMessageReactionIndex(messages, selfAddress),
     [messages, selfAddress],
   );
-  const threadsBySignature = useMemo(() => {
-    const bySignature = new Map<string, MessageThread>();
+  const renderedThreads = useMemo(
+    () => threads.map((thread, index) => ({ key: getMessageKey(thread.original, index), thread })),
+    [threads],
+  );
+  const threadTargetsBySignature = useMemo(() => {
+    const bySignature = new Map<string, { key: string; thread: MessageThread }>();
 
-    for (const thread of threads) {
+    for (const { key, thread } of renderedThreads) {
       if (thread.original.signature) {
-        bySignature.set(thread.original.signature, thread);
+        bySignature.set(thread.original.signature, { key, thread });
       }
 
       for (const revision of thread.revisions) {
         if (revision.signature) {
-          bySignature.set(revision.signature, thread);
+          bySignature.set(revision.signature, { key, thread });
         }
       }
     }
 
     return bySignature;
-  }, [threads]);
+  }, [renderedThreads]);
   const threadByKey = useMemo(() => {
     const byKey = new Map<string, MessageThread>();
 
-    threads.forEach((thread, index) => byKey.set(getMessageKey(thread.original, index), thread));
+    for (const { key, thread } of renderedThreads) {
+      byKey.set(key, thread);
+    }
 
     return byKey;
-  }, [threads]);
+  }, [renderedThreads]);
   // Resolve which message/reaction the open popover belongs to. Looked up live
   // (not snapshotted) so reaction counts stay current while it is open.
   const reactionPopoverContent = useMemo(() => {
@@ -680,6 +752,12 @@ export const MessageList = memo(function MessageList({
   }
 
   function updateBottomState(list: HTMLOListElement) {
+    // A hidden pane (display:none) measures 0/0/0, which reads as "at bottom"
+    // and would corrupt the stick intent and hide the scroll-to-bottom button.
+    if (list.clientHeight === 0) {
+      return;
+    }
+
     const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
 
     // stickToBottomRef is the INTENT to stay pinned to the bottom, not merely
@@ -785,6 +863,7 @@ export const MessageList = memo(function MessageList({
         updateBottomState(nextList);
         programmaticScrollRef.current = false;
         scrollSettleRafRef.current = 0;
+        savePosition(nextList);
         return;
       }
 
@@ -811,12 +890,23 @@ export const MessageList = memo(function MessageList({
   function pinToBottom() {
     const list = listRef.current;
 
-    if (!list) {
+    // Never write scrollTop while the pane has no layout: scrollHeight is 0
+    // then, so the write would zero the position the browser may still restore.
+    if (!list || list.clientHeight === 0) {
       return;
     }
 
     list.scrollTop = list.scrollHeight;
     updateBottomState(list);
+  }
+
+  // The down-arrow button: riding it to the bottom overrides an in-flight
+  // bookmark seek — cancel the seek so its scrollToAnchor cannot later yank the
+  // view back up, and lift the save suppression so the landing gets persisted.
+  function handleScrollToBottomClick() {
+    pendingBookmarkRef.current = null;
+    restoringRef.current = false;
+    scrollToBottom();
   }
 
   function scrollToBottom() {
@@ -868,6 +958,7 @@ export const MessageList = memo(function MessageList({
         updateBottomState(nextList);
         programmaticScrollRef.current = false;
         scrollSettleRafRef.current = 0;
+        savePosition(nextList);
         return;
       }
 
@@ -908,6 +999,8 @@ export const MessageList = memo(function MessageList({
   }
 
   function restoreScrollPosition(position: ChatScrollPosition | undefined) {
+    lastPositionRef.current = position ?? { atBottom: true };
+
     if (!position || position.atBottom) {
       scrollToBottom();
       return;
@@ -930,9 +1023,17 @@ export const MessageList = memo(function MessageList({
 
   function finishBookmarkRestore() {
     pendingBookmarkRef.current = null;
-    // Re-enable saving once the restore scroll has settled.
+    // Re-enable saving once the restore scroll has settled, then record where
+    // the restore actually landed (scroll input during the suppression window
+    // would otherwise leave the stored bookmark pointing somewhere stale).
     window.setTimeout(() => {
       restoringRef.current = false;
+
+      const list = listRef.current;
+
+      if (list) {
+        savePosition(list);
+      }
     }, 500);
   }
 
@@ -1003,20 +1104,62 @@ export const MessageList = memo(function MessageList({
 
     // itemsRef preserves insertion (render) order, top to bottom, so the first
     // message whose bottom is past the viewport top is the topmost visible one.
-    for (const [key, element] of itemsRef.current) {
-      const rect = element.getBoundingClientRect();
+    // Rows are in document order, so their rect bottoms are monotonic — binary
+    // search keeps this at O(log n) rect reads per scroll event instead of
+    // walking every row above the viewport (this runs on the scroll hot path,
+    // and paged-in history makes the list arbitrarily long).
+    const items = [...itemsRef.current];
+    let low = 0;
+    let high = items.length;
 
-      if (rect.bottom > listTop + 1) {
-        return {
-          anchorKey: key,
-          anchorOffset: rect.top - listTop,
-          anchorTimestamp: threadByKey.get(key)?.original.timestamp ?? 0,
-          atBottom: false,
-        };
+    while (low < high) {
+      const middle = (low + high) >> 1;
+
+      if (items[middle][1].getBoundingClientRect().bottom > listTop + 1) {
+        high = middle;
+      } else {
+        low = middle + 1;
       }
     }
 
+    const anchor = items[low];
+
+    if (anchor) {
+      const [key, element] = anchor;
+      const rect = element.getBoundingClientRect();
+
+      return {
+        anchorKey: key,
+        anchorOffset: rect.top - listTop,
+        anchorTimestamp: threadByKey.get(key)?.original.timestamp ?? 0,
+        atBottom: false,
+      };
+    }
+
     return { atBottom: true };
+  }
+
+  // Persist the current reading position so returning to this chat restores it.
+  // Guarded so transient states never clobber a real bookmark: only after the
+  // initial restore has been applied, never mid-seek, and never while the pane
+  // has no layout (a hidden list measures as "at bottom"). Called from user
+  // scroll events AND from programmatic-scroll completions — the settle loops
+  // suppress per-frame saves, so without a completion save, riding the down
+  // arrow to the bottom would leave the stale pre-scroll bookmark behind.
+  function savePosition(list: HTMLOListElement) {
+    if (
+      !didRestoreScrollRef.current ||
+      restoringRef.current ||
+      programmaticScrollRef.current ||
+      list.clientHeight === 0
+    ) {
+      return;
+    }
+
+    const position = computeScrollPosition(list);
+
+    lastPositionRef.current = position;
+    onScrollPositionChange(scrollChatKey, position);
   }
 
   // Manual retry after an error — bypasses the auto-trigger's error guard.
@@ -1046,6 +1189,8 @@ export const MessageList = memo(function MessageList({
     didRestoreScrollRef.current = false;
     pendingBookmarkRef.current = null;
     restoringRef.current = false;
+    lastPositionRef.current = null;
+    wasHiddenRef.current = false;
     closeReactionPopover();
   }, [scrollChatKey]);
 
@@ -1071,7 +1216,11 @@ export const MessageList = memo(function MessageList({
   }, [initialScrollPosition, messages.length, scrollChatKey]);
 
   // Re-attempt the restore once the list actually has layout — covers the mobile
-  // case where the pane was hidden (0 height) when messages first arrived.
+  // case where the pane was hidden (0 height) when messages first arrived. Also
+  // watches for the pane LOSING layout after the restore (narrow-mode view swap
+  // sets it display:none): the browser drops the scroll state with the layout,
+  // so on becoming visible again the last known position is re-applied instead
+  // of leaving the reader stranded at the top.
   useEffect(() => {
     const list = listRef.current;
 
@@ -1080,9 +1229,26 @@ export const MessageList = memo(function MessageList({
     }
 
     const observer = new ResizeObserver(() => {
-      if (!didRestoreScrollRef.current && list.clientHeight > 0 && messages.length > 0) {
-        didRestoreScrollRef.current = true;
-        restoreScrollPosition(initialScrollPosition);
+      if (list.clientHeight === 0) {
+        if (didRestoreScrollRef.current) {
+          wasHiddenRef.current = true;
+        }
+
+        return;
+      }
+
+      if (!didRestoreScrollRef.current) {
+        if (messages.length > 0) {
+          didRestoreScrollRef.current = true;
+          restoreScrollPosition(initialScrollPosition);
+        }
+
+        return;
+      }
+
+      if (wasHiddenRef.current) {
+        wasHiddenRef.current = false;
+        restoreScrollPosition(lastPositionRef.current ?? initialScrollPosition);
       }
     });
 
@@ -1120,6 +1286,17 @@ export const MessageList = memo(function MessageList({
     // is not left short when scrollHeight shifts without a new last message.
     if (stickToBottomRef.current) {
       pinToBottom();
+      return;
+    }
+
+    // Not pinned: the feed's geometry changed without any scroll input (restore
+    // landed mid-feed, a bookmark seek is paging history in, new messages grew
+    // the feed below), so recompute the scroll-to-bottom button's visibility —
+    // it must appear without requiring the user to move the scroll first.
+    const list = listRef.current;
+
+    if (list) {
+      updateBottomState(list);
     }
   }, [lastMessageKey, systemMessagesKey, messages]);
 
@@ -1190,14 +1367,55 @@ export const MessageList = memo(function MessageList({
     expandedTimeTimeoutRef.current = window.setTimeout(() => setExpandedTimeKey(''), 5000);
   }
 
-  function scrollToThread(threadKey: string) {
-    const item = itemsRef.current.get(threadKey);
+  function syncReplyJumpScrollState() {
+    const list = listRef.current;
 
-    if (!item) {
+    if (!list || list.clientHeight === 0) {
       return;
     }
 
-    item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+
+    if (isAtBottom) {
+      return;
+    }
+
+    updateBottomState(list);
+    savePosition(list);
+  }
+
+  function scrollToThread(threadKey: string) {
+    const item = itemsRef.current.get(threadKey);
+    const list = listRef.current;
+
+    if (!item || !list || list.clientHeight === 0) {
+      return;
+    }
+
+    if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(scrollSettleRafRef.current);
+      scrollSettleRafRef.current = 0;
+    }
+
+    // A reply-preview click is an explicit reader jump away from the newest
+    // messages, so it must drop bottom-stick intent just like a manual scroll.
+    pendingBookmarkRef.current = null;
+    restoringRef.current = false;
+    stickToBottomRef.current = false;
+    programmaticScrollRef.current = true;
+
+    const listRect = list.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    const centerOffset = Math.max(12, (list.clientHeight - item.clientHeight) / 2);
+    const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+    const targetScrollTop = list.scrollTop + itemRect.top - listRect.top - centerOffset;
+
+    list.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
+
+    window.requestAnimationFrame(() => {
+      programmaticScrollRef.current = false;
+      syncReplyJumpScrollState();
+    });
     setHighlightedKey(threadKey);
     window.clearTimeout(highlightTimeoutRef.current);
     highlightTimeoutRef.current = window.setTimeout(() => setHighlightedKey(''), 1800);
@@ -1301,6 +1519,19 @@ export const MessageList = memo(function MessageList({
           onScroll={(event) => {
             const list = event.currentTarget;
 
+            // Scroll events on a zero-layout pane (narrow-mode display:none
+            // swap, browser clamping scrollTop as layout collapses) carry no
+            // usable position — acting on them corrupts stick intent and saves.
+            if (list.clientHeight === 0) {
+              return;
+            }
+
+            // Native scrollbar dragging fires `scroll` without wheel/touch/key
+            // input events, so treat any non-settle-loop scroll as user intent.
+            if (!programmaticScrollRef.current) {
+              noteUserScroll();
+            }
+
             updateBottomState(list);
 
             // The feed moving (e.g. a new message auto-scrolling) would leave a
@@ -1310,15 +1541,17 @@ export const MessageList = memo(function MessageList({
             }
 
             // Remember where the user is reading so it can be restored on return.
-            // Skip until the initial position is applied (so transient mount/restore
-            // scrolls don't overwrite the saved position) and while a settle loop is
-            // programmatically driving scrollTop (so its frames don't clobber the
-            // user's anchor). Saved as a message anchor — see computeScrollPosition.
-            if (didRestoreScrollRef.current && !programmaticScrollRef.current && !restoringRef.current) {
-              onScrollPositionChange(scrollChatKey, computeScrollPosition(list));
+            // Skipped while a settle loop is programmatically driving scrollTop
+            // (so its frames don't clobber the user's anchor); savePosition adds
+            // the restore-state guards. Saved as a message anchor — see
+            // computeScrollPosition.
+            if (!programmaticScrollRef.current) {
+              savePosition(list);
             }
 
-            maybeLoadOlder(list);
+            if (!programmaticScrollRef.current) {
+              maybeLoadOlder(list);
+            }
           }}
           ref={listRef}
         >
@@ -1341,18 +1574,22 @@ export const MessageList = memo(function MessageList({
               <span className="muted">{t('hint.olderMessagesExpired')}</span>
             </li>
           ) : null}
-          {threads.map((thread, index) => {
+          {renderedThreads.map(({ key: threadKey, thread }, index) => {
             const { latest, original, revisions } = thread;
             const decoded = decodeChatMessage(latest, t);
-            const threadKey = getMessageKey(original, index);
             const isOwn = selfAddress !== null && original.sender === selfAddress;
             const isEdited = revisions.length > 0;
             const isHistoryOpen = isEdited && openHistories.has(threadKey);
             const previousVersions = isHistoryOpen ? [original, ...revisions.slice(0, -1)] : [];
-            const repliedThread = decoded.repliedTo ? threadsBySignature.get(decoded.repliedTo) : undefined;
+            const repliedTarget = decoded.repliedTo ? threadTargetsBySignature.get(decoded.repliedTo) : undefined;
+            const repliedThread = repliedTarget?.thread;
             const isHighlighted = highlightedKey === threadKey;
             const isContinuation = isThreadContinuation(threads[index - 1], thread);
             const canEdit = isOwn && decoded.kind === 'text';
+            // A deleted message is a thread whose accepted revisions end in an
+            // empty body. Edit stays available on it (re-editing restores the
+            // message); Delete disappears (already deleted).
+            const isThreadDeleted = thread.revisions.length > 0 && decoded.kind === 'text' && !decoded.body;
             const isTimeExpanded = expandedTimeKey === threadKey;
             const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
             const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
@@ -1438,6 +1675,11 @@ export const MessageList = memo(function MessageList({
                       {t('button.edit')}
                     </button>
                   ) : null}
+                  {canReplyOrEdit && canEdit && !isThreadDeleted ? (
+                    <button onClick={() => onDelete(thread)} type="button">
+                      {t('button.delete')}
+                    </button>
+                  ) : null}
                 </div>
               ) : null;
 
@@ -1449,7 +1691,7 @@ export const MessageList = memo(function MessageList({
                   </li>
                 ) : null}
               <li
-                className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}`}
+                className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}${!isOwn && mentionPattern?.test(decoded.body) ? ' message--mention' : ''}`}
                 ref={(element) => {
                   if (element) {
                     itemsRef.current.set(threadKey, element);
@@ -1475,7 +1717,7 @@ export const MessageList = memo(function MessageList({
                   repliedThread ? (
                     <button
                       className="message__reply-preview"
-                      onClick={() => scrollToThread(decoded.repliedTo ?? '')}
+                      onClick={() => scrollToThread(repliedTarget.key)}
                       title={t('action.goToOriginal')}
                       type="button"
                     >
@@ -1494,9 +1736,17 @@ export const MessageList = memo(function MessageList({
                   )
                 ) : null}
                 <div className="message__body">
-                  {decoded.body ? renderMessageTextWithAppLinks(decoded.body, t) : t('message.empty')}
+                  {decoded.body ? (
+                    renderMessageTextWithAppLinks(decoded.body, t)
+                  ) : (
+                    <span className="message__body-placeholder">
+                      {isThreadDeleted ? t('message.deleted') : t('message.empty')}
+                    </span>
+                  )}
                 </div>
-                {areImagePreviewsOpen ? <MessageImagePreviews resources={imageResources} t={t} /> : null}
+                {areImagePreviewsOpen ? (
+                  <MessageImagePreviews onOpenImage={onOpenImage} resources={imageResources} t={t} />
+                ) : null}
                 <MessageReactionChips
                   onToggleReactionDetails={toggleReactionDetails}
                   openReactionDetailsKey={openReactionDetailsKey}
@@ -1509,10 +1759,10 @@ export const MessageList = memo(function MessageList({
                   <button
                     className="message__time"
                     onClick={() => toggleTimeDisplay(threadKey)}
-                    title={formatTimestamp(original.timestamp)}
+                    title={formatTimestamp(original.timestamp, t.locale)}
                     type="button"
                   >
-                    {isTimeExpanded ? formatTimestamp(original.timestamp) : formatTimeAgo(original.timestamp, now)}
+                    {isTimeExpanded ? formatTimestamp(original.timestamp, t.locale) : formatTimeAgo(original.timestamp, now, t.locale)}
                   </button>
                   {isEdited ? (
                     <button
@@ -1536,7 +1786,7 @@ export const MessageList = memo(function MessageList({
                         <li key={getMessageKey(version, versionIndex)}>
                           <span className="message__history-meta">
                             {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
-                            {formatTimestamp(version.timestamp)}
+                            {formatTimestamp(version.timestamp, t.locale)}
                           </span>
                           <span className="message__history-body">
                             {versionBody ? renderMessageTextWithAppLinks(versionBody, t) : t('message.empty')}
@@ -1576,7 +1826,7 @@ export const MessageList = memo(function MessageList({
           </button>
         ) : null}
         {showScrollToBottom ? (
-          <button aria-label={t('aria.scrollToBottom')} className="message-feed__scroll-bottom" onClick={scrollToBottom} type="button">
+          <button aria-label={t('aria.scrollToBottom')} className="message-feed__scroll-bottom" onClick={handleScrollToBottomClick} type="button">
             <DownIcon />
           </button>
         ) : null}

@@ -3,10 +3,12 @@ import { sortMessagesByTimestamp } from './messageThreads';
 import type {
   ActiveChats,
   ChatActionResult,
+  QdnPublishResult,
   ChatMessage,
   GroupApprovalResult,
   GroupApprovalVote,
   GroupData,
+  GroupInvite,
   GroupJoinRequest,
   GroupMember,
   GroupMembersResponse,
@@ -37,9 +39,31 @@ function appendQueryValue(query: URLSearchParams, key: string, value: string | n
   query.set(key, String(value));
 }
 
+// Raw Core error bodies (JSON payloads, HTML error pages) must not surface
+// verbatim in user-facing banners. Extract a JSON `message` when one exists;
+// either way the thrown message leads with the ' failed with HTTP ' phrase
+// that getBridgeErrorMessage maps to a localized banner, so the raw detail is
+// only visible to developers inspecting the error.
+function getNodeApiErrorMessage<T>(result: NodeApiFetchResult<T>, label: string) {
+  const base = `${label} failed with HTTP ${result.status}.`;
+
+  try {
+    const parsed = JSON.parse(result.body) as unknown;
+    const message =
+      parsed && typeof parsed === 'object' && typeof (parsed as { message?: unknown }).message === 'string'
+        ? ((parsed as { message: string }).message)
+        : '';
+
+    return message ? `${base} ${message.slice(0, 200)}` : base;
+  } catch {
+    // Non-JSON body (HTML error page, plain text): omit it.
+    return base;
+  }
+}
+
 function assertOk<T>(result: NodeApiFetchResult<T>, label: string) {
   if (!result.ok) {
-    throw new Error(result.body || `${label} failed with HTTP ${result.status}.`);
+    throw new Error(getNodeApiErrorMessage(result, label));
   }
 
   return result.data;
@@ -391,14 +415,35 @@ export async function getGroupApprovalVotes() {
   return votes;
 }
 
+export function buildGroupInvitesPath(address: string) {
+  return `/groups/invites/${encodeURIComponent(address)}`;
+}
+
+export async function getGroupInvites(address: string) {
+  // Keyless read: pending invitations sent TO this address. No dedicated
+  // bridge action exists, so this always rides FETCH_NODE_API.
+  return fetchNodeApiData<GroupInvite[]>(buildGroupInvitesPath(address), 'Group invites');
+}
+
 export function buildBlockHeightPath() {
   return '/blocks/height';
 }
 
 export async function getCurrentBlockHeight() {
-  // Keyless read returning the tip height as a bare number; used to compute the
-  // approval window's relative ETA.
-  return fetchNodeApiData<number>(buildBlockHeightPath(), 'Block height');
+  // Keyless read returning the tip height; used to compute the approval
+  // window's relative ETA. Core serves /blocks/height as text/plain with a
+  // bare-digit body, which neither the bridge nor the fallback parser treats
+  // as JSON — the value arrives as a string and must be coerced here.
+  const height = await fetchNodeApiData<number | string>(buildBlockHeightPath(), 'Block height');
+  // Number('') is 0, so an empty body must fail rather than read as height 0.
+  const parsed =
+    typeof height === 'number' ? height : height.trim() === '' ? Number.NaN : Number(height);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error('Block height failed to parse as a number.');
+  }
+
+  return parsed;
 }
 
 export async function submitGroupApproval(pendingSignature: string, approval: boolean, groupId?: number) {
@@ -492,14 +537,17 @@ export async function getPrivateDirectActiveChats(actions?: QdnAction[]) {
 export async function getGroupMessages(
   group: GroupData,
   actions?: QdnAction[],
-  options: { before?: number; decryptPrivate?: boolean } = {},
+  options: { before?: number; decryptPrivate?: boolean; limit?: number } = {},
 ) {
   const groupId = group.groupId;
   const shouldDecryptPrivate = options.decryptPrivate !== false;
+  // `limit` lets cheap callers (the sidebar activity sweep) request a small
+  // window instead of the full transcript page.
+  const limit = options.limit ?? DEFAULT_LIST_LIMIT;
   const messageRequest = {
     encoding: 'BASE64',
     groupId,
-    limit: DEFAULT_LIST_LIMIT,
+    limit,
     reverse: true,
     // When set, return the window of messages immediately older than this
     // timestamp so callers can page backward through the full history.
@@ -529,7 +577,7 @@ export async function getGroupMessages(
   }
 
   const messages = await fetchNodeApiData<ChatMessage[]>(
-    buildGroupMessagesPath(groupId, DEFAULT_LIST_LIMIT, options.before),
+    buildGroupMessagesPath(groupId, limit, options.before),
     'Group messages',
   );
 
@@ -603,13 +651,15 @@ export async function resolvePrivateGroupChatKeyRequests(
 export async function getDirectMessages(
   otherAddress: string,
   actions?: QdnAction[],
-  options: { before?: number } = {},
+  options: { before?: number; limit?: number } = {},
 ) {
   if (hasBridgeAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
     const messages = await qdnRequest<ChatMessage[]>({
       action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
       encoding: 'BASE64',
-      limit: DEFAULT_LIST_LIMIT,
+      // `limit` lets cheap callers (the sidebar activity sweep) request a
+      // small window instead of the full transcript page.
+      limit: options.limit ?? DEFAULT_LIST_LIMIT,
       otherAddress,
       reverse: true,
       ...(typeof options.before === 'number' ? { before: options.before } : {}),
@@ -619,6 +669,33 @@ export async function getDirectMessages(
   }
 
   throw new Error('Direct private chat reads require Qortium Home direct chat support.');
+}
+
+export async function publishQdnAttachment({
+  dataBase64,
+  filename,
+  identifier,
+  name,
+  service,
+}: {
+  dataBase64: string;
+  filename: string;
+  identifier: string;
+  name: string;
+  service: 'ATTACHMENT' | 'IMAGE';
+}) {
+  // Privileged write: Qortium Home shows its publish-approval prompt (target
+  // resource, size, fee), builds the ARBITRARY transaction from the inline
+  // base64, and signs — the app never touches key material. `base64` +
+  // `filename` is Home's inline-source contract.
+  return qdnRequest<QdnPublishResult>({
+    action: 'PUBLISH_QDN_RESOURCE',
+    base64: dataBase64,
+    filename,
+    identifier,
+    name,
+    service,
+  });
 }
 
 export async function joinGroup(groupId: number) {

@@ -13,6 +13,8 @@ import {
   buildMemberGroupsPath,
   buildNameInfoPath,
   buildBlockHeightPath,
+  buildGroupInvitesPath,
+  getGroupInvites,
   buildGroupApprovalVotesPath,
   buildPendingTransactionsPath,
   buildSelfRewardSharesPath,
@@ -22,6 +24,7 @@ import {
   submitGroupApproval,
   getActiveChats,
   getAccountNames,
+  getCurrentBlockHeight,
   getAccountGroupJoinRequests,
   getAdminGroupJoinRequests,
   getDirectMessages,
@@ -134,6 +137,54 @@ describe('Core API path builders', () => {
       maxBytes: 2097152,
       path: '/transactions/search?txType=GROUP_APPROVAL&confirmationStatus=CONFIRMED&limit=100&reverse=true&offset=100',
     });
+  });
+
+  it('reads pending group invites over the keyless FETCH_NODE_API fallback', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      data: [{ expiry: null, groupId: 5, invitee: 'Qme', inviter: 'Qadmin' }],
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getGroupInvites('Qme')).resolves.toEqual([
+      { expiry: null, groupId: 5, invitee: 'Qme', inviter: 'Qadmin' },
+    ]);
+    expect(buildGroupInvitesPath('Q/odd address')).toBe('/groups/invites/Q%2Fodd%20address');
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/groups/invites/Qme',
+    });
+  });
+
+  it('coerces the text/plain block height body to a number', async () => {
+    // Core serves /blocks/height as text/plain with a bare-digit body, so the
+    // bridge and fallback parsers both deliver the digits as a string.
+    qdnRequestMock.mockResolvedValueOnce({ data: '39994', ok: true, status: 200, statusText: 'OK' });
+
+    await expect(getCurrentBlockHeight()).resolves.toBe(39994);
+
+    // A parser that does return a number passes through unchanged.
+    qdnRequestMock.mockResolvedValueOnce({ data: 40073, ok: true, status: 200, statusText: 'OK' });
+
+    await expect(getCurrentBlockHeight()).resolves.toBe(40073);
+  });
+
+  it('rejects a block height body that is not a number', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      data: '<html>bad gateway</html>',
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getCurrentBlockHeight()).rejects.toThrow('Block height failed to parse as a number.');
+
+    // Number('') is 0 — an empty body must fail, not read as height 0.
+    qdnRequestMock.mockResolvedValueOnce({ data: '', ok: true, status: 200, statusText: 'OK' });
+
+    await expect(getCurrentBlockHeight()).rejects.toThrow('Block height failed to parse as a number.');
   });
 
   it('submits an approve or oppose vote through the GROUP_APPROVAL bridge action', async () => {
@@ -458,6 +509,40 @@ describe('Core API path builders', () => {
       limit: 100,
       reverse: true,
     });
+  });
+
+  it('forwards a caller limit through group and direct message reads', async () => {
+    // The sidebar activity sweep fetches small windows instead of full pages.
+    qdnRequestMock
+      .mockResolvedValueOnce([{ sender: 'Qa', timestamp: 10, txGroupId: 7 }])
+      .mockResolvedValueOnce([{ sender: 'Qb', timestamp: 20, txGroupId: 0 }]);
+
+    await getGroupMessages({ groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES'], {
+      limit: 10,
+    });
+
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'SEARCH_CHAT_MESSAGES',
+      encoding: 'BASE64',
+      groupId: 7,
+      limit: 10,
+      reverse: true,
+    });
+
+    await getDirectMessages('Qpeer', ['SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES'], { limit: 10 });
+
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
+      encoding: 'BASE64',
+      limit: 10,
+      otherAddress: 'Qpeer',
+      reverse: true,
+    });
+
+    // The keyless REST fallback carries the same limit in its path.
+    expect(buildGroupMessagesPath(7, 10)).toBe(
+      '/chat/messages?txGroupId=7&encoding=BASE64&limit=10&reverse=true',
+    );
   });
 
   it('fails closed for closed-group message reads when private bridge support is absent', async () => {

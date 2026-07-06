@@ -515,8 +515,13 @@
   --qc-color-text: #e4e8f0;
   --qc-color-text-secondary: #8892a4;
   --qc-color-text-soft: #8892a4;
-  --qc-color-muted: #6f7a8c;
-  --qc-color-text-faint: #6f7a8c;
+  /* WCAG AA (≥4.5:1) on every dark-Modern background these tokens sit on —
+     #1c1f28 (5.08), #222633 (4.65), #111318 (5.74) — matching the AA bar the
+     Classic dark palette was raised to; a step dimmer than text-secondary so
+     the hierarchy holds. Timestamps and the always-visible message action
+     buttons render at 11px, so the 4.5:1 normal-text threshold applies. */
+  --qc-color-muted: #8390a3;
+  --qc-color-text-faint: #8390a3;
   --qc-color-avatar: #6f7a8c;
   --qc-color-avatar-text: #111318;
   --qc-color-chip-bg: #222633;
@@ -718,11 +723,20 @@ samp,
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  /* viewport-fit=cover extends the shell into landscape cutouts; inset the
+     panes past them (physical sides — env() values do not flip under RTL). */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   background: var(--qc-color-frame-bg);
 }
 
 .layout--members-open {
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(240px, 310px);
+  /* Guarantee the conversation column a floor: the two side columns otherwise
+     grow to their 340px/310px limits before the 1fr chat column receives any
+     space, squeezing it to ~211px just above the 860px single-view breakpoint
+     (and staying cramped until ~1030px). 320px keeps the column sums inside
+     the narrowest viewports this rule can see (861px minus a scrollbar). */
+  grid-template-columns: minmax(280px, 340px) minmax(320px, 1fr) minmax(240px, 310px);
 }
 
 .sidebar {
@@ -766,13 +780,51 @@ samp,
 
 .panel__header span,
 .members-drawer__header span,
-.group-row__meta,
 .chat-pane p,
 .muted,
 .empty,
 .message__meta,
 .direct-row small {
   color: var(--qc-color-muted);
+}
+
+/* Invitation rows: group + inviter with an accept action. */
+.invite-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.invite-row__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.invite-row__group {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invite-row__inviter {
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+}
+
+.invite-row .button {
+  flex: 0 0 auto;
 }
 
 .account-summary {
@@ -1145,12 +1197,46 @@ samp,
 }
 
 .direct-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  column-gap: 10px;
+  row-gap: 2px;
   padding: 9px 12px;
   text-align: start;
+}
+
+.direct-row__avatar {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  color: var(--qc-color-accent-contrast);
+  font-size: var(--qc-text-small);
+  font-weight: 700;
+  background: var(--qc-color-accent);
+  border-radius: var(--qc-radius-pill);
+  object-fit: cover;
+}
+
+/* One-line last-message previews under sidebar rows (from active-chats data
+   already in memory; closed groups and undecrypted directs show none). */
+.group-row__preview,
+.direct-row__preview {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  line-height: var(--qc-line-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.direct-row__preview {
+  grid-column: 2 / -1;
 }
 
 /* A removable direct sits in a relative wrapper with the remove control floated
@@ -1220,7 +1306,7 @@ samp,
   color: var(--qc-color-text-secondary);
 }
 
-.direct-row span,
+.direct-row span:not(.direct-row__avatar),
 .direct-row small {
   min-width: 0;
   overflow: hidden;
@@ -1230,9 +1316,17 @@ samp,
 
 .direct-row__main {
   display: flex;
+  grid-column: 2;
+  grid-row: 1;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.direct-row small {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
 }
 
 .group-row__heading {
@@ -1265,11 +1359,15 @@ samp,
 }
 
 .chat-pane {
+  /* Anchor for the drag-and-drop attachment overlay. */
+  position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   padding: 18px;
+  /* Keep the composer clear of the home-indicator area (viewport-fit=cover). */
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   overflow: hidden;
   background:
     radial-gradient(520px 180px at 50% -80px, var(--qc-color-accent-soft), transparent 70%),
@@ -1422,6 +1520,8 @@ samp,
 }
 
 .member-chip {
+  /* Anchor for the absolutely-positioned presence dot over the avatar corner. */
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1451,6 +1551,20 @@ samp,
 
 .member-chip__avatar.user-avatar--fallback {
   font-size: var(--qc-text-small);
+}
+
+/* Presence dot on the avatar corner, shown when Core reports the member
+   online. Fixed green (not the accent) so "online" reads consistently across
+   accent themes; the chip-background ring separates it from the avatar. */
+.member-chip__online {
+  position: absolute;
+  inset-inline-start: 30px;
+  bottom: 6px;
+  width: 10px;
+  height: 10px;
+  background: #31a06a;
+  border: 2px solid var(--qc-color-chip-bg);
+  border-radius: 50%;
 }
 
 .member-chip__text {
@@ -1747,6 +1861,19 @@ button.member-chip__name-button:focus-visible {
   contain-intrinsic-size: auto 56px;
 }
 
+/* Rows whose body @mentions the account's registered name get an accent rail
+   so they stand out while scanning; works in both Classic and Modern (Modern
+   uses the same rail treatment for selected rows). */
+.message--mention {
+  border-inline-start: 3px solid var(--qc-color-accent);
+}
+
+/* Deleted-message tombstones and empty bodies read as annotations, not text. */
+.message__body-placeholder {
+  color: var(--qc-color-muted);
+  font-style: italic;
+}
+
 .message--encrypted,
 .message--binary,
 .message--unsupported,
@@ -1819,6 +1946,9 @@ button.message__reply-preview:focus-visible {
 
 .message__footer {
   display: flex;
+  /* Same wrapping rule as .message__meta: continuation messages host the
+     action buttons here, and they must not clip off narrow bubbles. */
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 12px;
   margin-top: 4px;
@@ -1892,7 +2022,9 @@ button.message__reply-preview:focus-visible {
 
 .message__actions {
   display: flex;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
+  flex: 0 1 auto;
+  min-width: 0;
   gap: 12px;
 }
 
@@ -1965,14 +2097,84 @@ button.message__reply-preview:focus-visible {
   font-weight: 800;
 }
 
-.message__emoji-picker-panel {
+.message__emoji-picker-panel,
+.composer__emoji-panel {
   width: 100%;
   overflow: hidden;
   border: 1px solid var(--qc-color-border-subtle);
   border-radius: var(--qc-radius-sm);
 }
 
-.message__emoji-picker-panel .EmojiPickerReact {
+/* Full row above the composer's context banner / textarea (the composer is a
+   wrapping flex row). */
+.composer__emoji-panel {
+  flex: 1 1 100%;
+}
+
+/* Staged-attachment chip: filename + size + remove, its own composer row. */
+.composer__attachment {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: var(--qc-text-small);
+  background: var(--qc-color-control-bg);
+  border: 1px solid var(--qc-color-border-subtle);
+  border-radius: var(--qc-radius-sm);
+}
+
+.composer__attachment-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__attachment-size {
+  flex: 0 0 auto;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+}
+
+.composer__attachment-remove {
+  margin-inline-start: auto;
+}
+
+.composer__attachment-error {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.composer__attach {
+  flex: 0 0 auto;
+  font-size: 17px;
+}
+
+/* Shown while a file drag hovers the conversation pane. pointer-events: none
+   keeps the underlying pane the drop target. */
+.chat-pane__drop-overlay {
+  position: absolute;
+  z-index: 60;
+  inset: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--qc-color-accent-readable);
+  font-weight: 600;
+  background: var(--qc-color-accent-soft);
+  border: 2px dashed var(--qc-color-accent);
+  border-radius: var(--qc-radius-md);
+  pointer-events: none;
+}
+
+.composer__emoji-toggle {
+  flex: 0 0 auto;
+  font-size: 17px;
+}
+
+.message__emoji-picker-panel .EmojiPickerReact,
+.composer__emoji-panel .EmojiPickerReact {
   --epr-bg-color: var(--qc-color-surface);
   --epr-category-label-bg-color: var(--qc-color-surface);
   --epr-text-color: var(--qc-color-text);
@@ -2174,6 +2376,10 @@ button.message__reply-preview:focus-visible,
 
 .message__meta {
   display: flex;
+  /* Attachment-bearing messages can put many action buttons in this row; let
+     them wrap under the sender line rather than extend past the bubble, where
+     the row's paint containment (content-visibility) clips them untappable. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -2335,6 +2541,22 @@ button.message__reply-preview:focus-visible,
   object-fit: contain;
   background: var(--qc-color-input-bg);
   border-radius: 4px;
+}
+
+.message__image-preview-button {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: zoom-in;
+}
+
+.message__image-preview-button:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
 }
 
 .message__image-preview figcaption,
@@ -2667,6 +2889,17 @@ button.message__reply-preview:focus-visible,
   box-shadow: none;
 }
 
+/* Nested reply/edit affordances keep their accent rail (Modern uses the same
+   rail language for selected rows) but adopt Modern's radius and border
+   weight elsewhere, matching the sibling image-preview/code-block conversions
+   above. */
+:root[data-ui='modern'] .message__reply-preview,
+:root[data-ui='modern'] .composer__context {
+  border-width: 1.5px;
+  border-inline-start-width: 3px;
+  border-radius: 8px;
+}
+
 :root[data-ui='modern'] .account-dialog {
   background: rgb(13 13 13 / 38%);
 }
@@ -2820,6 +3053,24 @@ button.message__reply-preview:focus-visible,
   margin: 10px 0 0;
   font-size: var(--qc-text-caption);
   line-height: var(--qc-line-small);
+}
+
+/* Failed main-feed load: error text with an inline retry, replacing the
+   transcript (a stale one must never render under the wrong chat header). */
+.chat-pane__load-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chat-pane__load-error .error {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-pane__load-error .button {
+  flex: 0 0 auto;
 }
 
 /* Visually hidden but available to assistive technology (e.g. live regions). */
@@ -3007,6 +3258,8 @@ button.message__reply-preview:focus-visible,
     inset-block: 0;
     inset-inline-end: 0;
     width: min(330px, 86vw);
+    /* Full-height overlay: keep its scrollable tail above the home indicator. */
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
     border-inline-start: 1px solid var(--qc-color-border);
     box-shadow: var(--qc-shadow-pop);
     animation: qortium-drawer-in 200ms var(--qc-ease-pop);
@@ -3054,6 +3307,11 @@ button.message__reply-preview:focus-visible,
     padding: 14px;
   }
 
+  .chat-pane,
+  .members-drawer {
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
   .composer {
     flex-wrap: wrap;
   }
@@ -3063,7 +3321,11 @@ button.message__reply-preview:focus-visible,
     width: 100%;
   }
 
-  .composer .button {
+  /* Full-width send, scoped to the composer's own (direct-child) buttons: the
+     Cancel button nested in the reply/edit context banner must keep its
+     natural width — at width:100% it cannot shrink and crushes the banner's
+     "Replying to…"/"Editing" text to zero. */
+  .composer > .button {
     width: 100%;
   }
 
@@ -3239,6 +3501,37 @@ button.message__reply-preview:focus-visible,
   .avatar-lightbox__close,
   .message__reaction-details-close,
   .message__reaction-quick-row button {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* The 44px remove target outgrows the row's reserved end strip; widen the
+     strip so a tap near the row's trailing text opens the chat, not Remove. */
+  .direct-row-wrap--removable .direct-row {
+    padding-inline-end: 56px;
+  }
+
+  /* The primary per-message controls (Reply/React/Edit, timestamp, edited
+     marker, reaction chips) are compact text buttons on desktop; give them a
+     taller tap area on touch. 34px keeps message rows readable while clearing
+     WCAG 2.5.8's 24px minimum with margin. */
+  .message__actions button,
+  .message__time,
+  .message__edited {
+    min-height: 34px;
+  }
+
+  .message__reaction-chip {
+    height: 34px;
+  }
+
+  .message-feed__jump-unread {
+    height: 44px;
+  }
+
+  /* Touch-first control: the back button only exists in the ≤860px single-view
+     layout, so it gets the full 44px target. */
+  .chat-pane__back {
     width: 44px;
     height: 44px;
   }

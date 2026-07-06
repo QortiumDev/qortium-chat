@@ -1,4 +1,7 @@
-import chatIcon from './assets/brand/qortium-chat-icon.png';
+// The WebP is the same icon at ~28% of the PNG's size; it is inlined into the
+// bundle (see vite.config.ts), so the smaller encoding matters. Every
+// QDN-capable browser supports WebP (the avatar pipeline already allows it).
+import chatIcon from './assets/brand/qortium-chat-icon.webp';
 
 // Self-contained icons used across the chat UI. Most are stroke-based and inherit
 // color via `currentColor`; sizing comes from the consuming CSS.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildChatMessageText,
+  buildDeletedMessageText,
   buildReactionMessageText,
   decodeChatMessage,
   formatTimeAgo,
@@ -226,5 +227,20 @@ describe('chat text helpers', () => {
     expect(formatTimestamp(undefined)).toBe('');
     expect(getSenderLabel({ sender: 'Q123456789abcdef', senderName: 'Alice' })).toBe('Alice');
     expect(getSenderLabel({ sender: 'Q123456789abcdef' })).toBe('Q1234567...abcdef');
+  });
+
+  it('builds delete revisions that decode to an empty body', () => {
+    // Non-empty transaction payload, empty display body, reply target kept.
+    expect(buildDeletedMessageText('sig1').length).toBeGreaterThan(0);
+
+    const withReply = decodeChatMessage({ data: base64(buildDeletedMessageText('sig1')), isText: true });
+
+    expect(withReply.body).toBe('');
+    expect(withReply.repliedTo).toBe('sig1');
+
+    const withoutReply = decodeChatMessage({ data: base64(buildDeletedMessageText()), isText: true });
+
+    expect(withoutReply.body).toBe('');
+    expect(withoutReply.repliedTo).toBeNull();
   });
 });
