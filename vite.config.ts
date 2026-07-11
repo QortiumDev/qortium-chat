@@ -20,7 +20,22 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(`v${packageJson.version}`),
   },
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      // QAVS manifest (qortium-home docs/APP_VERSIONING.md): X.Y declares the
+      // minimum platform level the app is built against; Home reads this file
+      // from the published root to show the compatibility badge.
+      name: 'qortium-app-manifest',
+      generateBundle() {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'qortium-app.json',
+          source: `${JSON.stringify({ name: 'Chat', version: packageJson.version }, null, 2)}\n`,
+        });
+      },
+    },
+  ],
   test: {
     environment: 'node',
     globals: true,
