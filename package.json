@@ -1,6 +1,6 @@
 {
   "name": "qortium-chat",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "license": "0BSD",
   "description": "A small QDN chat app for Qortium Home.",
@@ -13,6 +13,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/comic-neue": "^5.2.7",
+    "@fontsource/fredoka": "^5.2.10",
     "@vitejs/plugin-react": "^6.0.3",
     "emoji-picker-react": "^4.19.1",
     "react": "^19.2.7",
