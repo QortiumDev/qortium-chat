@@ -30,6 +30,8 @@ describe('display settings helpers', () => {
     expect(normalizeTextSize('extra-large')).toBe('extra-large');
     expect(normalizeAccent('blue')).toBe('blue');
     expect(normalizeUiStyle('MODERN')).toBe('modern');
+    expect(normalizeUiStyle(' FUN ')).toBe('fun');
+    expect(normalizeUiStyle('chibi')).toBeNull();
     expect(normalizeLanguage('zh-Hant')).toBe('zh-TW');
     expect(normalizeLanguage('zh_Hans')).toBe('zh-CN');
     expect(normalizeTextSize('huge')).toBe('huge');
@@ -103,6 +105,10 @@ describe('display settings helpers', () => {
       ...current,
       uiStyle: 'modern',
     });
+    expect(getDisplaySettingsUpdateFromMessage({ action: 'UI_STYLE_CHANGED', requestedHandler: 'UI', uiStyle: 'fun' }, current)).toEqual({
+      ...current,
+      uiStyle: 'fun',
+    });
   });
 
   it('updates batched settings and ignores invalid messages', () => {
@@ -114,7 +120,7 @@ describe('display settings helpers', () => {
           textSize: 'small',
           theme: 'dark',
           accent: 'red',
-          uiStyle: 'modern',
+          uiStyle: 'fun',
         },
         current,
       ),
@@ -123,7 +129,7 @@ describe('display settings helpers', () => {
       textSize: 'small',
       theme: 'dark',
       accent: 'red',
-      uiStyle: 'modern',
+      uiStyle: 'fun',
     });
     expect(getDisplaySettingsUpdateFromMessage({ action: 'TEXT_SIZE_CHANGED', textSize: 'extra-huge' }, current)).toBeNull();
     expect(getDisplaySettingsUpdateFromMessage({ action: 'UI_STYLE_CHANGED', uiStyle: 'banana' }, current)).toBeNull();
@@ -160,7 +166,7 @@ describe('display settings helpers', () => {
       textSize: 'huge',
       theme: 'dark',
       accent: 'purple',
-      uiStyle: 'modern',
+      uiStyle: 'fun',
     });
 
     expect(root.dataset).toMatchObject({
@@ -168,7 +174,7 @@ describe('display settings helpers', () => {
       textSize: 'huge',
       theme: 'dark',
       accent: 'purple',
-      ui: 'modern',
+      ui: 'fun',
     });
     expect(root.dir).toBe('rtl');
     expect(root.lang).toBe('ar');
