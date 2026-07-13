@@ -5,11 +5,14 @@ chat, open direct chats, send direct private chat, and read public or approved
 private chat using the current `qdnRequest` bridge.
 
 On Home versions that expose app notifications, the bell beside the selected
-account lets the user opt in to Chat notifications. Chat registers one durable
-incoming-direct-message rule for the selected account, re-registers it after an
-account change, and removes it when the bell is turned off. While Chat is loaded,
-mentions and replies in the selected group can also produce a notification when
-the app is not focused. The app feature-detects the notification actions, so
+account opens separate choices for direct chat activity, mentions, and replies.
+Chat registers a durable incoming-direct rule only when that choice is selected,
+re-registers it after an account change, and removes it when direct notifications
+are turned off. Direct activity can include edits or reactions because Core's
+background event deliberately excludes message content. While Chat is loaded,
+the mention and reply choices independently control notifications from the
+selected group when the app is not focused. Existing bell preferences migrate
+without changing behavior. The app feature-detects the notification actions, so
 older Home versions and browser development remain unaffected.
 
 For minting groups, the selected group header shows whether the selected

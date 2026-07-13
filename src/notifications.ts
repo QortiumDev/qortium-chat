@@ -2,12 +2,22 @@ import { qdnRequest } from './qdnRequest';
 import type { ChatMessage, QdnAction } from './types';
 
 export const DIRECT_MESSAGE_NOTIFICATION_ID = 'chat.direct';
-export const CHAT_NOTIFICATIONS_STORAGE_KEY = 'qortium-chat-notifications-v1';
+export const CHAT_NOTIFICATIONS_STORAGE_KEY = 'qortium-chat-notifications-v2';
+export const LEGACY_CHAT_NOTIFICATIONS_STORAGE_KEY = 'qortium-chat-notifications-v1';
 export const CHAT_APP_LINK = 'qdn://APP/Chat/Chat';
 
-type NotificationPreference = {
-  enabled: boolean;
-  version: 1;
+export type ChatNotificationPreferences = {
+  direct: boolean;
+  mentions: boolean;
+  replies: boolean;
+  version: 2;
+};
+
+export const DISABLED_CHAT_NOTIFICATION_PREFERENCES: ChatNotificationPreferences = {
+  direct: false,
+  mentions: false,
+  replies: false,
+  version: 2,
 };
 
 type QdnRequestFunction = typeof qdnRequest;
@@ -30,22 +40,47 @@ export function canShowChatNotifications(actions: QdnAction[]) {
   return actions.some((action) => action.toUpperCase() === 'SHOW_NOTIFICATION');
 }
 
-export function readChatNotificationsEnabled(storage: Pick<Storage, 'getItem'> = window.localStorage) {
-  try {
-    const parsed: unknown = JSON.parse(storage.getItem(CHAT_NOTIFICATIONS_STORAGE_KEY) ?? 'null');
-    return isRecord(parsed) && parsed.version === 1 && parsed.enabled === true;
-  } catch {
-    return false;
-  }
+function isChatNotificationPreferences(value: unknown): value is ChatNotificationPreferences {
+  return (
+    isRecord(value) &&
+    value.version === 2 &&
+    typeof value.direct === 'boolean' &&
+    typeof value.mentions === 'boolean' &&
+    typeof value.replies === 'boolean'
+  );
 }
 
-export function writeChatNotificationsEnabled(
-  enabled: boolean,
+export function hasAnyChatNotificationsEnabled(preferences: ChatNotificationPreferences) {
+  return preferences.direct || preferences.mentions || preferences.replies;
+}
+
+export function readChatNotificationPreferences(
+  storage: Pick<Storage, 'getItem'> = window.localStorage,
+): ChatNotificationPreferences {
+  try {
+    const parsed: unknown = JSON.parse(storage.getItem(CHAT_NOTIFICATIONS_STORAGE_KEY) ?? 'null');
+
+    if (isChatNotificationPreferences(parsed)) {
+      return parsed;
+    }
+
+    const legacy: unknown = JSON.parse(storage.getItem(LEGACY_CHAT_NOTIFICATIONS_STORAGE_KEY) ?? 'null');
+    if (isRecord(legacy) && legacy.version === 1 && legacy.enabled === true) {
+      return { direct: true, mentions: true, replies: true, version: 2 };
+    }
+  } catch {
+    // Invalid or unavailable storage falls back to an explicit opt-out.
+  }
+
+  return { ...DISABLED_CHAT_NOTIFICATION_PREFERENCES };
+}
+
+export function writeChatNotificationPreferences(
+  preferences: ChatNotificationPreferences,
   storage: Pick<Storage, 'setItem'> = window.localStorage,
 ) {
-  const preference: NotificationPreference = { enabled, version: 1 };
   try {
-    storage.setItem(CHAT_NOTIFICATIONS_STORAGE_KEY, JSON.stringify(preference));
+    storage.setItem(CHAT_NOTIFICATIONS_STORAGE_KEY, JSON.stringify(preferences));
   } catch {
     // The active session can still honor the choice when storage is unavailable.
   }
@@ -82,9 +117,10 @@ export async function disableDirectMessageNotifications(request: QdnRequestFunct
 // Re-register an enabled preference for the current account without ever
 // prompting. If Home's durable grant was revoked, turn the local preference off
 // so reopening Chat does not repeatedly ask for permission.
-export async function reconcileDirectMessageNotifications(
+export async function reconcileChatNotifications(
   accountAddress: string,
   title: string,
+  preferences: ChatNotificationPreferences,
   request: QdnRequestFunction = qdnRequest,
 ) {
   const permission = await request<unknown>({ action: 'NOTIFICATION_HAS_PERMISSION' });
@@ -94,7 +130,11 @@ export async function reconcileDirectMessageNotifications(
     return false;
   }
 
-  await enableDirectMessageNotifications(accountAddress, title, request);
+  if (preferences.direct) {
+    await enableDirectMessageNotifications(accountAddress, title, request);
+  } else {
+    await disableDirectMessageNotifications(request);
+  }
   return true;
 }
 
@@ -105,7 +145,16 @@ function buildMentionPattern(name: string) {
 
 export type ChatAttentionKind = 'mention' | 'reply';
 
-export function getChatAttentionKind({
+export function getEnabledChatAttentionKind(
+  attention: ChatAttentionKind[],
+  preferences: ChatNotificationPreferences,
+) {
+  return attention.find((kind) => (
+    kind === 'reply' ? preferences.replies : preferences.mentions
+  )) ?? null;
+}
+
+export function getChatAttentionKinds({
   body,
   message,
   messages,
@@ -119,23 +168,25 @@ export function getChatAttentionKind({
   repliedTo: string | null | undefined;
   selfAddress: string;
   selfName: string | null;
-}): ChatAttentionKind | null {
+}): ChatAttentionKind[] {
   if (message.sender === selfAddress) {
-    return null;
+    return [];
   }
+
+  const attention: ChatAttentionKind[] = [];
 
   if (repliedTo) {
     const target = messages.find((candidate) => candidate.signature === repliedTo);
     if (target?.sender === selfAddress) {
-      return 'reply';
+      attention.push('reply');
     }
   }
 
   if (selfName && buildMentionPattern(selfName).test(body)) {
-    return 'mention';
+    attention.push('mention');
   }
 
-  return null;
+  return attention;
 }
 
 export async function showChatAttentionNotification(

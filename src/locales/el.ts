@@ -298,6 +298,8 @@ export const STRINGS = {
   'action.mention': 'Αναφέρετε τον/την {account} στο μήνυμά σας',
   'action.notifications.enable': 'Ενεργοποίηση ειδοποιήσεων συνομιλίας',
   'action.notifications.disable': 'Απενεργοποίηση ειδοποιήσεων συνομιλίας',
+  'action.notifications.settings': 'Ρυθμίσεις ειδοποιήσεων συνομιλίας',
+  'notification.settings.scope': 'Η δραστηριότητα άμεσης συνομιλίας λειτουργεί στο παρασκήνιο και μπορεί να περιλαμβάνει επεξεργασίες ή αντιδράσεις. Οι αναφορές και οι απαντήσεις ισχύουν μόνο για την ανοιχτή ομάδα.',
   'notification.direct.title': 'Νέο άμεσο μήνυμα',
   'notification.mention.title': 'Σας ανέφεραν',
   'notification.reply.title': 'Νέα απάντηση στο μήνυμά σας',

@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'Упомяните {account} в сообщении',
   'action.notifications.enable': 'Включить уведомления чата',
   'action.notifications.disable': 'Отключить уведомления чата',
+  'action.notifications.settings': 'Настройки уведомлений чата',
+  'notification.settings.scope': 'Активность личного чата отслеживается в фоновом режиме и может включать изменения или реакции. Упоминания и ответы относятся только к открытой группе.',
   'notification.direct.title': 'Новое личное сообщение',
   'notification.mention.title': 'Вас упомянули',
   'notification.reply.title': 'Новый ответ на ваше сообщение',

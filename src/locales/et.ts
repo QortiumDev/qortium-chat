@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'Maini kasutajat {account} oma sõnumis',
   'action.notifications.enable': 'Luba vestluse teavitused',
   'action.notifications.disable': 'Keela vestluse teavitused',
+  'action.notifications.settings': 'Vestluse teavituste seaded',
+  'notification.settings.scope': 'Otsevestluse tegevus töötab taustal ja võib hõlmata muudatusi või reaktsioone. Mainimised ja vastused kehtivad ainult avatud grupis.',
   'notification.direct.title': 'Uus otsesõnum',
   'notification.mention.title': 'Sind mainiti',
   'notification.reply.title': 'Uus vastus sinu sõnumile',

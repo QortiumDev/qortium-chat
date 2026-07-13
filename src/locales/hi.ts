@@ -298,6 +298,8 @@ export const STRINGS = {
   'action.mention': 'संदेश में {account} का उल्लेख करें',
   'action.notifications.enable': 'चैट सूचनाएँ चालू करें',
   'action.notifications.disable': 'चैट सूचनाएँ बंद करें',
+  'action.notifications.settings': 'चैट सूचना सेटिंग्स',
+  'notification.settings.scope': 'सीधी चैट गतिविधि पृष्ठभूमि में चलती है और इसमें संपादन या प्रतिक्रियाएँ शामिल हो सकती हैं। उल्लेख और उत्तर केवल खुले समूह पर लागू होते हैं।',
   'notification.direct.title': 'नया सीधा संदेश',
   'notification.mention.title': 'आपका उल्लेख किया गया',
   'notification.reply.title': 'आपके संदेश का नया उत्तर',

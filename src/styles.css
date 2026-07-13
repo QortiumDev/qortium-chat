@@ -710,6 +710,90 @@ samp,
   fill: var(--qc-color-accent-soft);
 }
 
+.notification-settings {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.notification-settings__popover {
+  position: absolute;
+  z-index: 80;
+  inset-block-start: calc(100% + 8px);
+  inset-inline-end: 0;
+  width: min(340px, calc(100vw - 32px));
+  padding: 16px;
+  color: var(--qc-color-text);
+  background: var(--qc-color-surface-raised);
+  border: 1px solid var(--qc-color-border-strong);
+  border-radius: var(--qc-radius-md);
+  box-shadow: var(--qc-shadow-pop);
+}
+
+.notification-settings__title {
+  display: block;
+  font-size: var(--qc-text-body);
+  line-height: var(--qc-line-tight);
+}
+
+.notification-settings__scope,
+.notification-settings__error {
+  margin: 7px 0 0;
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-normal);
+}
+
+.notification-settings__scope {
+  color: var(--qc-color-muted);
+}
+
+.notification-settings__error {
+  color: var(--qc-color-error);
+}
+
+.notification-settings__choices {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.notification-settings__choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-tight);
+  border-radius: var(--qc-radius-sm);
+  cursor: pointer;
+}
+
+.notification-settings__choice:hover {
+  background: var(--qc-color-control-hover);
+}
+
+.notification-settings__choice:has(input:focus-visible) {
+  background: var(--qc-color-control-hover);
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 1px;
+}
+
+.notification-settings__choice:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.notification-settings__choice input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--qc-color-accent);
+}
+
 .topbar__account .account-summary {
   max-width: min(520px, 54vw);
   margin-top: 0;
@@ -3306,6 +3390,11 @@ button.message__reply-preview:focus-visible,
     margin-top: 12px;
   }
 
+  .notification-settings__popover {
+    inset-inline-start: 0;
+    inset-inline-end: auto;
+  }
+
   .topbar__account .account-summary,
   .topbar__account .account-connect {
     max-width: none;
@@ -3813,6 +3902,7 @@ button.message__reply-preview:focus-visible,
 }
 
 :root[data-ui='fun'] .reaction-popover,
+:root[data-ui='fun'] .notification-settings__popover,
 :root[data-ui='fun'] .account-dialog__card {
   border: 3px solid var(--qc-fun-outline);
   border-radius: var(--qc-radius-md);
@@ -3826,6 +3916,7 @@ button.message__reply-preview:focus-visible,
 }
 
 :root[data-theme='dark'][data-ui='fun'] .reaction-popover,
+:root[data-theme='dark'][data-ui='fun'] .notification-settings__popover,
 :root[data-theme='dark'][data-ui='fun'] .account-dialog__card,
 :root[data-theme='dark'][data-ui='fun'] .message,
 :root[data-theme='dark'][data-ui='fun'] .group-row,

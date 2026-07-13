@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'Erwähne {account} in deiner Nachricht',
   'action.notifications.enable': 'Chat-Benachrichtigungen aktivieren',
   'action.notifications.disable': 'Chat-Benachrichtigungen deaktivieren',
+  'action.notifications.settings': 'Chat-Benachrichtigungseinstellungen',
+  'notification.settings.scope': 'Direktchat-Aktivitäten funktionieren im Hintergrund und können Bearbeitungen oder Reaktionen umfassen. Erwähnungen und Antworten gelten nur für die geöffnete Gruppe.',
   'notification.direct.title': 'Neue Direktnachricht',
   'notification.mention.title': 'Du wurdest erwähnt',
   'notification.reply.title': 'Neue Antwort auf deine Nachricht',

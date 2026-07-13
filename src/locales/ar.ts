@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'اذكر {account} في رسالتك',
   'action.notifications.enable': 'تمكين إشعارات الدردشة',
   'action.notifications.disable': 'تعطيل إشعارات الدردشة',
+  'action.notifications.settings': 'إعدادات إشعارات الدردشة',
+  'notification.settings.scope': 'يعمل نشاط الدردشة المباشرة في الخلفية وقد يتضمن تعديلات أو تفاعلات. تنطبق الإشارات والردود على المجموعة المفتوحة فقط.',
   'notification.direct.title': 'رسالة مباشرة جديدة',
   'notification.mention.title': 'تمت الإشارة إليك',
   'notification.reply.title': 'رد جديد على رسالتك',

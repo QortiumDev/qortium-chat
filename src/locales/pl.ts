@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'Wspomnij {account} w wiadomości',
   'action.notifications.enable': 'Włącz powiadomienia czatu',
   'action.notifications.disable': 'Wyłącz powiadomienia czatu',
+  'action.notifications.settings': 'Ustawienia powiadomień czatu',
+  'notification.settings.scope': 'Aktywność czatu bezpośredniego działa w tle i może obejmować edycje lub reakcje. Wzmianki i odpowiedzi dotyczą tylko otwartej grupy.',
   'notification.direct.title': 'Nowa wiadomość bezpośrednia',
   'notification.mention.title': 'Wspomniano o Tobie',
   'notification.reply.title': 'Nowa odpowiedź na Twoją wiadomość',

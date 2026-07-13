@@ -110,11 +110,14 @@ import {
   canShowChatNotifications,
   disableDirectMessageNotifications,
   enableDirectMessageNotifications,
-  getChatAttentionKind,
-  readChatNotificationsEnabled,
-  reconcileDirectMessageNotifications,
+  getEnabledChatAttentionKind,
+  getChatAttentionKinds,
+  hasAnyChatNotificationsEnabled,
+  readChatNotificationPreferences,
+  reconcileChatNotifications,
   showChatAttentionNotification,
-  writeChatNotificationsEnabled,
+  writeChatNotificationPreferences,
+  type ChatNotificationPreferences,
 } from './notifications';
 import {
   mergePersistedDirect,
@@ -753,10 +756,14 @@ export default function App() {
   // incoming messages. See the announce effect below.
   const [liveAnnouncement, setLiveAnnouncement] = useState('');
   const lastAnnouncedRef = useRef<{ chatKey: string; signature: string }>({ chatKey: '', signature: '' });
-  const [chatNotificationsEnabled, setChatNotificationsEnabled] = useState(readChatNotificationsEnabled);
+  const [chatNotificationPreferences, setChatNotificationPreferences] = useState(readChatNotificationPreferences);
   const [chatNotificationsBusy, setChatNotificationsBusy] = useState(false);
   const [chatNotificationsError, setChatNotificationsError] = useState('');
-  const chatNotificationsDesiredRef = useRef(chatNotificationsEnabled);
+  const [isChatNotificationMenuOpen, setChatNotificationMenuOpen] = useState(false);
+  const chatNotificationsEnabled = hasAnyChatNotificationsEnabled(chatNotificationPreferences);
+  const chatNotificationsDesiredRef = useRef(chatNotificationPreferences);
+  const chatNotificationSettingsRef = useRef<HTMLDivElement | null>(null);
+  const chatNotificationToggleRef = useRef<HTMLButtonElement | null>(null);
   // Account/language reconciliation and button clicks can overlap. Serialize
   // them so a late passive re-registration can never resurrect a rule after the
   // user has switched the bell off.
@@ -3084,37 +3091,61 @@ export default function App() {
     }
   }
 
-  async function toggleChatNotifications() {
+  async function updateChatNotificationPreference(
+    key: Exclude<keyof ChatNotificationPreferences, 'version'>,
+    enabled: boolean,
+  ) {
     if (!account || !canManageNotifications || chatNotificationsBusy) {
       return;
     }
 
     setChatNotificationsBusy(true);
     setChatNotificationsError('');
-    const nextEnabled = !chatNotificationsEnabled;
-    chatNotificationsDesiredRef.current = nextEnabled;
+    const previousPreferences = chatNotificationPreferences;
+    const nextPreferences = { ...previousPreferences, [key]: enabled };
+    chatNotificationsDesiredRef.current = nextPreferences;
 
     try {
       const operation = chatNotificationOperationRef.current.then(async () => {
-        if (!nextEnabled) {
-          await disableDirectMessageNotifications();
-          return;
+        let directRuleRegistered = false;
+
+        if (hasAnyChatNotificationsEnabled(nextPreferences)) {
+          const permission = await qdnRequest<unknown>({ action: 'NOTIFICATION_HAS_PERMISSION' });
+          const permissionGranted = (
+            !!permission &&
+            typeof permission === 'object' &&
+            'granted' in permission &&
+            permission.granted === true
+          );
+
+          if (!permissionGranted) {
+            if (nextPreferences.direct) {
+              await enableDirectMessageNotifications(account.address, t('notification.direct.title'));
+              directRuleRegistered = true;
+            } else {
+              // SHOW_NOTIFICATION uses the same durable Home grant. Because this
+              // click occurs in the focused app, Home grants permission and then
+              // suppresses the setup notification as already focused.
+              await showChatAttentionNotification(t('action.notifications.enable'));
+            }
+          }
         }
 
-        await enableDirectMessageNotifications(account.address, t('notification.direct.title'));
+        if (nextPreferences.direct) {
+          if (!directRuleRegistered) {
+            await enableDirectMessageNotifications(account.address, t('notification.direct.title'));
+          }
+        } else {
+          await disableDirectMessageNotifications();
+        }
       });
       chatNotificationOperationRef.current = operation.then(() => undefined, () => undefined);
       await operation;
 
-      if (!nextEnabled) {
-        writeChatNotificationsEnabled(false);
-        setChatNotificationsEnabled(false);
-      } else {
-        writeChatNotificationsEnabled(true);
-        setChatNotificationsEnabled(true);
-      }
+      writeChatNotificationPreferences(nextPreferences);
+      setChatNotificationPreferences(nextPreferences);
     } catch (error) {
-      chatNotificationsDesiredRef.current = chatNotificationsEnabled;
+      chatNotificationsDesiredRef.current = previousPreferences;
       setChatNotificationsError(getErrorMessage(error, t('label.error')));
     } finally {
       setChatNotificationsBusy(false);
@@ -3216,6 +3247,37 @@ export default function App() {
     }
   }, [isDirectFormVisible]);
 
+  useEffect(() => {
+    if (!isChatNotificationMenuOpen) {
+      return;
+    }
+
+    function closeNotificationMenuOnOutsidePointer(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        !chatNotificationSettingsRef.current?.contains(event.target)
+      ) {
+        setChatNotificationMenuOpen(false);
+      }
+    }
+
+    function closeNotificationMenuOnEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      setChatNotificationMenuOpen(false);
+      chatNotificationToggleRef.current?.focus();
+    }
+
+    document.addEventListener('pointerdown', closeNotificationMenuOnOutsidePointer);
+    window.addEventListener('keydown', closeNotificationMenuOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeNotificationMenuOnOutsidePointer);
+      window.removeEventListener('keydown', closeNotificationMenuOnEscape);
+    };
+  }, [isChatNotificationMenuOpen]);
+
   // Baseline the read watermark for any chat the first time its activity is seen,
   // so pre-existing history is not flagged as unread. Established entries are left
   // alone so genuinely new activity can surface as unread.
@@ -3260,12 +3322,11 @@ export default function App() {
       setLiveAnnouncement(`${getMessageSenderLabel(newest, undefined)}: ${getMessageSnippet(newest, t)}`);
 
       if (
-        chatNotificationsEnabled &&
         canShowNotifications &&
         selectedChat?.kind === 'group' &&
         account
       ) {
-        const attention = getChatAttentionKind({
+        const attention = getChatAttentionKinds({
           body: decoded.body,
           message: newest,
           messages: [...olderMessages, ...list],
@@ -3274,8 +3335,10 @@ export default function App() {
           selfName: account.name,
         });
 
-        if (attention) {
-          const title = attention === 'reply'
+        const enabledAttention = getEnabledChatAttentionKind(attention, chatNotificationPreferences);
+
+        if (enabledAttention) {
+          const title = enabledAttention === 'reply'
             ? t('notification.reply.title')
             : t('notification.mention.title');
           void showChatAttentionNotification(title).catch(() => {
@@ -3290,7 +3353,8 @@ export default function App() {
   }, [
     account,
     canShowNotifications,
-    chatNotificationsEnabled,
+    chatNotificationPreferences.mentions,
+    chatNotificationPreferences.replies,
     messages,
     messagesChatKey,
     olderMessages,
@@ -3308,11 +3372,16 @@ export default function App() {
 
     let isDisposed = false;
 
-    const operation = chatNotificationOperationRef.current.then(() => (
-      chatNotificationsDesiredRef.current
-        ? reconcileDirectMessageNotifications(account.address, t('notification.direct.title'))
-        : false
-    ));
+    const operation = chatNotificationOperationRef.current.then(() => {
+      const desiredPreferences = chatNotificationsDesiredRef.current;
+      return hasAnyChatNotificationsEnabled(desiredPreferences)
+        ? reconcileChatNotifications(
+            account.address,
+            t('notification.direct.title'),
+            desiredPreferences,
+          )
+        : false;
+    });
     chatNotificationOperationRef.current = operation.then(() => undefined, () => undefined);
 
     void operation
@@ -3324,9 +3393,15 @@ export default function App() {
         if (granted) {
           return;
         }
-        chatNotificationsDesiredRef.current = false;
-        writeChatNotificationsEnabled(false);
-        setChatNotificationsEnabled(false);
+        const disabledPreferences: ChatNotificationPreferences = {
+          direct: false,
+          mentions: false,
+          replies: false,
+          version: 2,
+        };
+        chatNotificationsDesiredRef.current = disabledPreferences;
+        writeChatNotificationPreferences(disabledPreferences);
+        setChatNotificationPreferences(disabledPreferences);
       })
       .catch((error) => {
         if (!isDisposed) {
@@ -3337,7 +3412,15 @@ export default function App() {
     return () => {
       isDisposed = true;
     };
-  }, [account?.address, canManageNotifications, chatNotificationsEnabled, displaySettings.language]);
+  }, [
+    account?.address,
+    canManageNotifications,
+    chatNotificationPreferences.direct,
+    chatNotificationPreferences.mentions,
+    chatNotificationPreferences.replies,
+    chatNotificationsEnabled,
+    displaySettings.language,
+  ]);
 
   useEffect(() => {
     setLastReadByAddress((current) => {
@@ -4385,27 +4468,67 @@ export default function App() {
         </div>
         <div className="topbar__account">
           {canManageNotifications ? (
-            <button
-              aria-label={
-                chatNotificationsEnabled
-                  ? t('action.notifications.disable')
-                  : t('action.notifications.enable')
-              }
-              aria-pressed={chatNotificationsEnabled}
-              className="icon-button topbar__notification-toggle"
-              disabled={chatNotificationsBusy}
-              onClick={() => void toggleChatNotifications()}
-              title={
-                chatNotificationsError || (
-                  chatNotificationsEnabled
-                    ? t('action.notifications.disable')
-                    : t('action.notifications.enable')
-                )
-              }
-              type="button"
-            >
-              <BellIcon />
-            </button>
+            <div className="notification-settings" ref={chatNotificationSettingsRef}>
+              <button
+                aria-controls="chat-notification-settings"
+                aria-expanded={isChatNotificationMenuOpen}
+                aria-haspopup="dialog"
+                aria-label={t('action.notifications.settings')}
+                aria-pressed={chatNotificationsEnabled}
+                className="icon-button topbar__notification-toggle"
+                onClick={() => setChatNotificationMenuOpen((open) => !open)}
+                ref={chatNotificationToggleRef}
+                title={chatNotificationsError || t('action.notifications.settings')}
+                type="button"
+              >
+                <BellIcon />
+              </button>
+              {isChatNotificationMenuOpen ? (
+                <div
+                  aria-label={t('action.notifications.settings')}
+                  className="notification-settings__popover"
+                  id="chat-notification-settings"
+                  role="dialog"
+                >
+                  <strong className="notification-settings__title">
+                    {t('action.notifications.settings')}
+                  </strong>
+                  <p className="notification-settings__scope">{t('notification.settings.scope')}</p>
+                  <fieldset className="notification-settings__choices" disabled={chatNotificationsBusy}>
+                    <legend className="sr-only">{t('action.notifications.settings')}</legend>
+                    <label className="notification-settings__choice">
+                      <input
+                        checked={chatNotificationPreferences.direct}
+                        onChange={(event) => void updateChatNotificationPreference('direct', event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>{t('notification.direct.title')}</span>
+                    </label>
+                    <label className="notification-settings__choice">
+                      <input
+                        checked={chatNotificationPreferences.mentions}
+                        disabled={!canShowNotifications}
+                        onChange={(event) => void updateChatNotificationPreference('mentions', event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>{t('notification.mention.title')}</span>
+                    </label>
+                    <label className="notification-settings__choice">
+                      <input
+                        checked={chatNotificationPreferences.replies}
+                        disabled={!canShowNotifications}
+                        onChange={(event) => void updateChatNotificationPreference('replies', event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>{t('notification.reply.title')}</span>
+                    </label>
+                  </fieldset>
+                  {chatNotificationsError ? (
+                    <p className="notification-settings__error" role="alert">{chatNotificationsError}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           <AccountSummary
             account={account}

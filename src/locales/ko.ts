@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': '메시지에 {account} 멘션',
   'action.notifications.enable': '채팅 알림 켜기',
   'action.notifications.disable': '채팅 알림 끄기',
+  'action.notifications.settings': '채팅 알림 설정',
+  'notification.settings.scope': '다이렉트 채팅 활동은 백그라운드에서 작동하며 편집이나 반응을 포함할 수 있습니다. 멘션과 답글은 열려 있는 그룹에만 적용됩니다.',
   'notification.direct.title': '새 다이렉트 메시지',
   'notification.mention.title': '회원님이 언급되었습니다',
   'notification.reply.title': '메시지에 새 답글이 있습니다',

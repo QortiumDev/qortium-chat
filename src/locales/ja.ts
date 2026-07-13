@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'メッセージで {account} をメンション',
   'action.notifications.enable': 'チャット通知を有効にする',
   'action.notifications.disable': 'チャット通知を無効にする',
+  'action.notifications.settings': 'チャット通知設定',
+  'notification.settings.scope': 'ダイレクトチャットのアクティビティはバックグラウンドで動作し、編集やリアクションを含む場合があります。メンションと返信は開いているグループにのみ適用されます。',
   'notification.direct.title': '新しいダイレクトメッセージ',
   'notification.mention.title': 'あなたがメンションされました',
   'notification.reply.title': 'メッセージへの新しい返信',

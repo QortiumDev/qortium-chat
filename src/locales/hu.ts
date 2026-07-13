@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'Említsd meg a(z) {account} felhasználót az üzenetedben',
   'action.notifications.enable': 'Csevegési értesítések bekapcsolása',
   'action.notifications.disable': 'Csevegési értesítések kikapcsolása',
+  'action.notifications.settings': 'Csevegési értesítések beállításai',
+  'notification.settings.scope': 'A közvetlen csevegési tevékenység a háttérben működik, és szerkesztéseket vagy reakciókat is tartalmazhat. Az említések és válaszok csak a megnyitott csoportra vonatkoznak.',
   'notification.direct.title': 'Új közvetlen üzenet',
   'notification.mention.title': 'Megemlítettek',
   'notification.reply.title': 'Új válasz az üzenetedre',

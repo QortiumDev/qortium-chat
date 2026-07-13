@@ -298,6 +298,8 @@ export const STRINGS = {
   'action.mention': 'Nevn {account} i meldingen din',
   'action.notifications.enable': 'Slå på chatvarsler',
   'action.notifications.disable': 'Slå av chatvarsler',
+  'action.notifications.settings': 'Innstillinger for chatvarsler',
+  'notification.settings.scope': 'Direktechataktivitet fungerer i bakgrunnen og kan inkludere redigeringer eller reaksjoner. Omtaler og svar gjelder bare for den åpne gruppen.',
   'notification.direct.title': 'Ny direktemelding',
   'notification.mention.title': 'Du ble nevnt',
   'notification.reply.title': 'Nytt svar på meldingen din',

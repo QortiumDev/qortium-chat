@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'Vermeld {account} in je bericht',
   'action.notifications.enable': 'Chatmeldingen inschakelen',
   'action.notifications.disable': 'Chatmeldingen uitschakelen',
+  'action.notifications.settings': 'Instellingen voor chatmeldingen',
+  'notification.settings.scope': 'Directe chatactiviteit werkt op de achtergrond en kan bewerkingen of reacties bevatten. Vermeldingen en antwoorden gelden alleen voor de geopende groep.',
   'notification.direct.title': 'Nieuw direct bericht',
   'notification.mention.title': 'Je bent vermeld',
   'notification.reply.title': 'Nieuw antwoord op je bericht',

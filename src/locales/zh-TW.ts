@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': '在訊息中提及 {account}',
   'action.notifications.enable': '開啟聊天通知',
   'action.notifications.disable': '關閉聊天通知',
+  'action.notifications.settings': '聊天通知設定',
+  'notification.settings.scope': '私訊活動可在背景執行，並可能包含編輯或回應。提及和回覆僅適用於目前開啟的群組。',
   'notification.direct.title': '新的私訊',
   'notification.mention.title': '有人提及了你',
   'notification.reply.title': '你的訊息有新回覆',

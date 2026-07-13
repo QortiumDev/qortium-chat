@@ -300,6 +300,8 @@ export const STRINGS = {
   'action.mention': 'Mainitse käyttäjä {account} viestissäsi',
   'action.notifications.enable': 'Ota keskusteluilmoitukset käyttöön',
   'action.notifications.disable': 'Poista keskusteluilmoitukset käytöstä',
+  'action.notifications.settings': 'Keskusteluilmoitusten asetukset',
+  'notification.settings.scope': 'Yksityiskeskustelun toiminta toimii taustalla ja voi sisältää muokkauksia tai reaktioita. Maininnat ja vastaukset koskevat vain avointa ryhmää.',
   'notification.direct.title': 'Uusi yksityisviesti',
   'notification.mention.title': 'Sinut mainittiin',
   'notification.reply.title': 'Uusi vastaus viestiisi',
