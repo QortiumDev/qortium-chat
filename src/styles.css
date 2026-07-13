@@ -700,6 +700,16 @@ samp,
   justify-content: flex-end;
 }
 
+.topbar__notification-toggle[aria-pressed='true'] {
+  color: var(--qc-color-accent-readable);
+  background: var(--qc-color-accent-soft);
+  border-color: var(--qc-color-accent);
+}
+
+.topbar__notification-toggle[aria-pressed='true'] svg {
+  fill: var(--qc-color-accent-soft);
+}
+
 .topbar__account .account-summary {
   max-width: min(520px, 54vw);
   margin-top: 0;

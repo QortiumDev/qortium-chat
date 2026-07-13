@@ -4,6 +4,14 @@ A small QDN app for Qortium Home that can browse groups, join groups, send group
 chat, open direct chats, send direct private chat, and read public or approved
 private chat using the current `qdnRequest` bridge.
 
+On Home versions that expose app notifications, the bell beside the selected
+account lets the user opt in to Chat notifications. Chat registers one durable
+incoming-direct-message rule for the selected account, re-registers it after an
+account change, and removes it when the bell is turned off. While Chat is loaded,
+mentions and replies in the selected group can also produce a notification when
+the app is not focused. The app feature-detects the notification actions, so
+older Home versions and browser development remain unaffected.
+
 For minting groups, the selected group header shows whether the selected
 account is currently minting on the connected node, and joined members who are
 not minting yet get a Start minting button that asks Qortium Home (via the
@@ -80,4 +88,7 @@ joins, group chat sends, closed-group chat reads, direct private chat reads,
 direct private chat sends, and minting key registration are delegated to
 Qortium Home's account-safe approval bridge; the app never sees the minting
 key. Browser development remains read-only and cannot decrypt or send direct
-private chat without Home.
+private chat without Home. Background direct-message notifications require
+Home to remain running; Android delivery currently requires Home to remain in
+the foreground. Closed-tab group mention detection is not available because
+Core deliberately excludes message content from notification events.

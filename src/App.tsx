@@ -97,6 +97,7 @@ import {
 } from './accountDisplay';
 import {
   BackIcon,
+  BellIcon,
   BrandMark,
   CloseIcon,
   DownIcon,
@@ -104,6 +105,17 @@ import {
   PlusIcon,
   SearchIcon,
 } from './icons';
+import {
+  canManageChatNotifications,
+  canShowChatNotifications,
+  disableDirectMessageNotifications,
+  enableDirectMessageNotifications,
+  getChatAttentionKind,
+  readChatNotificationsEnabled,
+  reconcileDirectMessageNotifications,
+  showChatAttentionNotification,
+  writeChatNotificationsEnabled,
+} from './notifications';
 import {
   mergePersistedDirect,
   readLastChat,
@@ -741,6 +753,14 @@ export default function App() {
   // incoming messages. See the announce effect below.
   const [liveAnnouncement, setLiveAnnouncement] = useState('');
   const lastAnnouncedRef = useRef<{ chatKey: string; signature: string }>({ chatKey: '', signature: '' });
+  const [chatNotificationsEnabled, setChatNotificationsEnabled] = useState(readChatNotificationsEnabled);
+  const [chatNotificationsBusy, setChatNotificationsBusy] = useState(false);
+  const [chatNotificationsError, setChatNotificationsError] = useState('');
+  const chatNotificationsDesiredRef = useRef(chatNotificationsEnabled);
+  // Account/language reconciliation and button clicks can overlap. Serialize
+  // them so a late passive re-registration can never resurrect a rule after the
+  // user has switched the bell off.
+  const chatNotificationOperationRef = useRef<Promise<void>>(Promise.resolve());
   // History loaded on demand behind the live tail. The live `messages` state is
   // capped at the latest 100; this buffer accumulates older windows paged in as
   // the user scrolls toward the top, so the full group history can be read.
@@ -884,6 +904,8 @@ export default function App() {
   const [deletePending, setDeletePending] = useState(false);
   const t = useMemo(() => createTranslator(displaySettings.language), [displaySettings.language]);
   const [now, setNow] = useState(() => Date.now());
+  const actions = bridge.value.actions;
+  const actionsKey = actions.join('\n');
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30000);
@@ -1049,6 +1071,8 @@ export default function App() {
   }, [directActivityByAddress, lastReadByAddress, selectedDirectAddress]);
   const hasUnreadGroups = unreadGroupIds.size > 0;
   const hasUnreadDirect = unreadDirectAddresses.size > 0;
+  const canManageNotifications = !!account && canManageChatNotifications(actions);
+  const canShowNotifications = canShowChatNotifications(actions);
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
   const selectedGroupMembersLabel = isSelectedGeneralChat ? t('label.common.active') : t('label.common.members');
   const hasSelectedMessages = selectedChatKey !== '' && messagesChatKey === selectedChatKey;
@@ -1175,8 +1199,6 @@ export default function App() {
       ),
     [trackedTransactions, selectedGroupId],
   );
-  const actions = bridge.value.actions;
-  const actionsKey = actions.join('\n');
   // The rendered feed is the live tail plus any older history paged in behind
   // it. The live tail only participates while it belongs to the selected chat
   // (`hasSelectedMessages`): after a failed switch load, `messages.value` still
@@ -3062,6 +3084,43 @@ export default function App() {
     }
   }
 
+  async function toggleChatNotifications() {
+    if (!account || !canManageNotifications || chatNotificationsBusy) {
+      return;
+    }
+
+    setChatNotificationsBusy(true);
+    setChatNotificationsError('');
+    const nextEnabled = !chatNotificationsEnabled;
+    chatNotificationsDesiredRef.current = nextEnabled;
+
+    try {
+      const operation = chatNotificationOperationRef.current.then(async () => {
+        if (!nextEnabled) {
+          await disableDirectMessageNotifications();
+          return;
+        }
+
+        await enableDirectMessageNotifications(account.address, t('notification.direct.title'));
+      });
+      chatNotificationOperationRef.current = operation.then(() => undefined, () => undefined);
+      await operation;
+
+      if (!nextEnabled) {
+        writeChatNotificationsEnabled(false);
+        setChatNotificationsEnabled(false);
+      } else {
+        writeChatNotificationsEnabled(true);
+        setChatNotificationsEnabled(true);
+      }
+    } catch (error) {
+      chatNotificationsDesiredRef.current = chatNotificationsEnabled;
+      setChatNotificationsError(getErrorMessage(error, t('label.error')));
+    } finally {
+      setChatNotificationsBusy(false);
+    }
+  }
+
   async function initializeSession() {
     setBridge({ phase: 'loading', value: bridge.value });
     let nextActions = bridge.value.actions;
@@ -3197,11 +3256,88 @@ export default function App() {
       newest.sender !== account?.address &&
       decodeChatMessage(newest, t).kind === 'text'
     ) {
+      const decoded = decodeChatMessage(newest, t);
       setLiveAnnouncement(`${getMessageSenderLabel(newest, undefined)}: ${getMessageSnippet(newest, t)}`);
+
+      if (
+        chatNotificationsEnabled &&
+        canShowNotifications &&
+        selectedChat?.kind === 'group' &&
+        account
+      ) {
+        const attention = getChatAttentionKind({
+          body: decoded.body,
+          message: newest,
+          messages: [...olderMessages, ...list],
+          repliedTo: decoded.repliedTo,
+          selfAddress: account.address,
+          selfName: account.name,
+        });
+
+        if (attention) {
+          const title = attention === 'reply'
+            ? t('notification.reply.title')
+            : t('notification.mention.title');
+          void showChatAttentionNotification(title).catch(() => {
+            // Direct/background registration remains enabled. A transient live
+            // notification failure should not interrupt the chat stream.
+          });
+        }
+      }
     }
 
     lastAnnouncedRef.current = { chatKey: messagesChatKey, signature };
-  }, [messages, messagesChatKey, account?.address, t]);
+  }, [
+    account,
+    canShowNotifications,
+    chatNotificationsEnabled,
+    messages,
+    messagesChatKey,
+    olderMessages,
+    selectedChat,
+    t,
+  ]);
+
+  // Durable rules are tagged with the account that was selected when they were
+  // registered. Reconcile after startup/account changes, but never prompt from
+  // this passive path: an explicit bell-button click is the only permission ask.
+  useEffect(() => {
+    if (!account || !chatNotificationsEnabled || !canManageNotifications) {
+      return;
+    }
+
+    let isDisposed = false;
+
+    const operation = chatNotificationOperationRef.current.then(() => (
+      chatNotificationsDesiredRef.current
+        ? reconcileDirectMessageNotifications(account.address, t('notification.direct.title'))
+        : false
+    ));
+    chatNotificationOperationRef.current = operation.then(() => undefined, () => undefined);
+
+    void operation
+      .then((granted) => {
+        if (isDisposed) {
+          return;
+        }
+        setChatNotificationsError('');
+        if (granted) {
+          return;
+        }
+        chatNotificationsDesiredRef.current = false;
+        writeChatNotificationsEnabled(false);
+        setChatNotificationsEnabled(false);
+      })
+      .catch((error) => {
+        if (!isDisposed) {
+          setChatNotificationsError(getErrorMessage(error, t('label.error')));
+        }
+      });
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [account?.address, canManageNotifications, chatNotificationsEnabled, displaySettings.language]);
 
   useEffect(() => {
     setLastReadByAddress((current) => {
@@ -4248,6 +4384,29 @@ export default function App() {
           <span className="topbar__version">{APP_VERSION}</span>
         </div>
         <div className="topbar__account">
+          {canManageNotifications ? (
+            <button
+              aria-label={
+                chatNotificationsEnabled
+                  ? t('action.notifications.disable')
+                  : t('action.notifications.enable')
+              }
+              aria-pressed={chatNotificationsEnabled}
+              className="icon-button topbar__notification-toggle"
+              disabled={chatNotificationsBusy}
+              onClick={() => void toggleChatNotifications()}
+              title={
+                chatNotificationsError || (
+                  chatNotificationsEnabled
+                    ? t('action.notifications.disable')
+                    : t('action.notifications.enable')
+                )
+              }
+              type="button"
+            >
+              <BellIcon />
+            </button>
+          ) : null}
           <AccountSummary
             account={account}
             error={accountError}
