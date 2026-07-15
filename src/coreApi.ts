@@ -232,6 +232,17 @@ export async function searchGroups(search: string, actions?: QdnAction[]) {
   return fetchNodeApiData<GroupData[]>(buildGroupsPath(search), 'Group search');
 }
 
+export async function getGroup(groupId: number, actions?: QdnAction[]) {
+  if (hasBridgeAction(actions, 'GET_GROUP')) {
+    return qdnRequest<GroupData>({
+      action: 'GET_GROUP',
+      groupId,
+    });
+  }
+
+  return fetchNodeApiData<GroupData>(`/groups/${groupId}`, 'Group info');
+}
+
 export async function getMemberGroups(address: string, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_ACCOUNT_GROUPS')) {
     return qdnRequest<GroupData[]>({

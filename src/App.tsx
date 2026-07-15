@@ -30,6 +30,7 @@ import {
   getAdminGroupJoinRequests,
   getCurrentBlockHeight,
   getDirectMessages,
+  getGroup,
   getGroupApprovalVotes,
   getGroupInvites,
   getGroupMembers,
@@ -789,6 +790,7 @@ export default function App() {
   // newest one until both have settled, so it wins over the normal first-group
   // fallback and a saved last chat without racing either source.
   const pendingDeepLinkRef = useRef<{ isInitial: boolean; target: ChatDeepLinkTarget } | null | undefined>(undefined);
+  const deepLinkResolutionRef = useRef(0);
 
   if (pendingDeepLinkRef.current === undefined) {
     const target = getInitialDeepLinkTarget();
@@ -3220,6 +3222,7 @@ export default function App() {
     }
 
     pendingDeepLinkRef.current = null;
+    const resolutionId = ++deepLinkResolutionRef.current;
 
     // Home supplies a single conversation target. When both optional fields are
     // present, prefer the direct conversation, matching the notification's most
@@ -3236,12 +3239,37 @@ export default function App() {
       return;
     }
 
+    if (pending.target.group === GENERAL_CHAT_GROUP_ID) {
+      selectGroup(withGeneralChatGroup([], '', t)[0]);
+      return;
+    }
+
+    if (pending.target.group !== undefined) {
+      void getGroup(pending.target.group, actions)
+        .then((resolvedGroup) => {
+          if (deepLinkResolutionRef.current === resolutionId) {
+            selectGroup(resolvedGroup);
+          }
+        })
+        .catch(() => {
+          if (
+            deepLinkResolutionRef.current === resolutionId &&
+            pending.isInitial &&
+            !hasSelectedChatRef.current &&
+            groups.value.length > 0
+          ) {
+            setSelectedChat({ group: groups.value[0], kind: 'group' });
+          }
+        });
+      return;
+    }
+
     // An unresolved URL group should behave like the pre-deep-link startup
     // path. Runtime requests retain the current conversation instead.
     if (pending.isInitial && !hasSelectedChatRef.current && groups.value.length > 0) {
       setSelectedChat({ group: groups.value[0], kind: 'group' });
     }
-  }, [activeChats.phase, deepLinkRevision, groups.phase, groups.value]);
+  }, [actionsKey, activeChats.phase, deepLinkRevision, groups.phase, groups.value]);
 
   useEffect(() => {
     if (!account || selectedGroupId === null || !isSelectedDevGroup || !isApproverOfSelectedGroup) {
