@@ -2,7 +2,8 @@
 
 A small QDN app for Qortium Home that can browse groups, join groups, send group
 chat, open direct chats, send direct private chat, and read public or approved
-private chat using the current `qdnRequest` bridge.
+private chat using the current `qdnRequest` bridge. The app follows Home's
+display settings, including the Classic, Modern, and Fun UI styles.
 
 On Home versions that expose app notifications, the bell beside the selected
 account opens separate choices for direct chat activity, mentions, and replies.
@@ -59,6 +60,15 @@ Set `QORTIUM_CHAT_QDN_NAME`, `QORTIUM_CHAT_QDN_IDENTIFIER`,
 `QORTIUM_CHAT_QDN_TITLE`, or `QORTIUM_CHAT_QDN_SERVICE` to publish another QDN
 resource.
 
+## Versioning
+
+Chat follows the Qortium app versioning standard (QAVS): the current app
+version is 1.4.3, where the `1.4` prefix declares the minimum Qortium platform
+level the app is built against and the last number is the app's own release
+counter. The build emits a `qortium-app.json` manifest (see `vite.config.ts`)
+that Qortium Home reads from the published root to show the compatibility
+badge.
+
 ## Qortium Home Smoke Check
 
 Before publishing a new QDN build:
@@ -74,13 +84,14 @@ Home, account approval succeeds, group search loads, joined groups and active
 direct chats load, group join/send requests open Home approval prompts, direct
 chat can be opened by address, direct private send/read requests use Home's
 approval bridge, joined group leave requests open a Home approval prompt, Home
-display settings update theme, text size, accent, and language in the app, and
+display settings update theme, text size, accent, UI style (Classic, Modern, or
+Fun), and language in the app, and
 encrypted/binary/unsupported message placeholders render in the selected
 language.
 
 For a publish pass, confirm the local Core is fully synchronized before running
 `npm run qdn:publish`. The expected identified render URL is
-`http://127.0.0.1:24891/render/APP/Chat?identifier=Chat`,
+`http://127.0.0.1:24891/render/APP/Chat/Chat`,
 and the published resource should report `READY` at
 `/arbitrary/resource/status/APP/Chat/Chat?build=true`.
 
