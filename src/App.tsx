@@ -30,6 +30,7 @@ import {
   getAdminGroupJoinRequests,
   getCurrentBlockHeight,
   getDirectMessages,
+  getGroup,
   getGroupApprovalVotes,
   getGroupInvites,
   getGroupMembers,
@@ -73,6 +74,12 @@ import {
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
+import {
+  getInitialDeepLinkTarget,
+  isPlausibleQortiumAddress,
+  parseOpenAppTargetMessage,
+  type ChatDeepLinkTarget,
+} from './deepLink';
 import {
   GENERAL_CHAT_GROUP_ID,
   getGroupTitle,
@@ -311,14 +318,6 @@ function LoadingRows({ count = 3, label }: { count?: number; label: string }) {
     </div>
   );
 }
-
-// Qortium/Qortal addresses are Base58, start with 'Q', and are ~34 chars. Anything
-// that does not match is treated as a registered name to resolve to an owner.
-function looksLikeQortalAddress(value: string) {
-  return /^Q[1-9A-HJ-NP-Za-km-z]{25,40}$/.test(value);
-}
-
-
 
 function mergeMessages(
   currentMessages: ChatMessage[],
@@ -787,6 +786,18 @@ export default function App() {
   const [loadedDirectActivityByAddress, setLoadedDirectActivityByAddress] =
     useState<ReadonlyMap<string, number | null>>(() => new Map());
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
+  // A target may arrive before the parallel group/account loads finish. Keep the
+  // newest one until both have settled, so it wins over the normal first-group
+  // fallback and a saved last chat without racing either source.
+  const pendingDeepLinkRef = useRef<{ isInitial: boolean; target: ChatDeepLinkTarget } | null | undefined>(undefined);
+  const deepLinkResolutionRef = useRef(0);
+
+  if (pendingDeepLinkRef.current === undefined) {
+    const target = getInitialDeepLinkTarget();
+
+    pendingDeepLinkRef.current = target ? { isInitial: true, target } : null;
+  }
+  const [deepLinkRevision, setDeepLinkRevision] = useState(0);
   const [search, setSearch] = useState('');
   const [isGroupSearchOpen, setGroupSearchOpen] = useState(false);
   // Sidebar sections start collapsed; unread items still render through a
@@ -1618,7 +1629,7 @@ export default function App() {
       const nextGroups = withGeneralChatGroup(await searchGroups(nextSearch, actionList), nextSearch, t);
 
       setGroups({ phase: 'ready', value: nextGroups });
-      if (!hasSelectedChatRef.current && nextGroups.length > 0) {
+      if (!hasSelectedChatRef.current && !pendingDeepLinkRef.current && nextGroups.length > 0) {
         setSelectedChat({ group: nextGroups[0], kind: 'group' });
       }
     } catch (error) {
@@ -1629,7 +1640,7 @@ export default function App() {
         phase: 'error',
         value: fallbackGroups,
       });
-      if (!hasSelectedChatRef.current && fallbackGroups.length > 0) {
+      if (!hasSelectedChatRef.current && !pendingDeepLinkRef.current && fallbackGroups.length > 0) {
         setSelectedChat({ group: fallbackGroups[0], kind: 'group' });
       }
     }
@@ -3038,7 +3049,7 @@ export default function App() {
 
     // Anything that does not look like an address is treated as a registered name
     // and resolved to its owner address so the chat opens for that account.
-    if (!looksLikeQortalAddress(value)) {
+    if (!isPlausibleQortiumAddress(value)) {
       setDirectLookupPending(true);
 
       try {
@@ -3191,6 +3202,74 @@ export default function App() {
   useEffect(() => {
     void initializeSession();
   }, []);
+
+  // Initial URL targets and runtime Home targets share this one resolver. It
+  // intentionally waits for both initial lists: group targets need the group
+  // catalogue, and waiting for active chats prevents a late load from racing a
+  // just-opened direct conversation. A later runtime message replaces any
+  // earlier pending target before this effect gets a chance to apply it.
+  useEffect(() => {
+    const pending = pendingDeepLinkRef.current;
+
+    if (
+      !pending ||
+      groups.phase === 'idle' ||
+      groups.phase === 'loading' ||
+      activeChats.phase === 'idle' ||
+      activeChats.phase === 'loading'
+    ) {
+      return;
+    }
+
+    pendingDeepLinkRef.current = null;
+    const resolutionId = ++deepLinkResolutionRef.current;
+
+    // Home supplies a single conversation target. When both optional fields are
+    // present, prefer the direct conversation, matching the notification's most
+    // specific recipient target.
+    if (pending.target.address) {
+      selectDirect({ address: pending.target.address });
+      return;
+    }
+
+    const group = groups.value.find((candidate) => candidate.groupId === pending.target.group);
+
+    if (group) {
+      selectGroup(group);
+      return;
+    }
+
+    if (pending.target.group === GENERAL_CHAT_GROUP_ID) {
+      selectGroup(withGeneralChatGroup([], '', t)[0]);
+      return;
+    }
+
+    if (pending.target.group !== undefined) {
+      void getGroup(pending.target.group, actions)
+        .then((resolvedGroup) => {
+          if (deepLinkResolutionRef.current === resolutionId) {
+            selectGroup(resolvedGroup);
+          }
+        })
+        .catch(() => {
+          if (
+            deepLinkResolutionRef.current === resolutionId &&
+            pending.isInitial &&
+            !hasSelectedChatRef.current &&
+            groups.value.length > 0
+          ) {
+            setSelectedChat({ group: groups.value[0], kind: 'group' });
+          }
+        });
+      return;
+    }
+
+    // An unresolved URL group should behave like the pre-deep-link startup
+    // path. Runtime requests retain the current conversation instead.
+    if (pending.isInitial && !hasSelectedChatRef.current && groups.value.length > 0) {
+      setSelectedChat({ group: groups.value[0], kind: 'group' });
+    }
+  }, [actionsKey, activeChats.phase, deepLinkRevision, groups.phase, groups.value]);
 
   useEffect(() => {
     if (!account || selectedGroupId === null || !isSelectedDevGroup || !isApproverOfSelectedGroup) {
@@ -3962,6 +4041,13 @@ export default function App() {
   useEffect(() => {
     function handleHostMessage(event: MessageEvent) {
       setDisplaySettings((current) => getDisplaySettingsUpdateFromMessage(event.data, current) ?? current);
+
+      const target = parseOpenAppTargetMessage(event.data);
+
+      if (target) {
+        pendingDeepLinkRef.current = { isInitial: false, target };
+        setDeepLinkRevision((current) => current + 1);
+      }
 
       if (isSelectedAccountChangedMessage(event.data)) {
         void connectSelectedAccount(actions);

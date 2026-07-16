@@ -29,6 +29,7 @@ import {
   getAdminGroupJoinRequests,
   getDirectMessages,
   getGroupJoinRequests,
+  getGroup,
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
@@ -248,6 +249,29 @@ describe('Core API path builders', () => {
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,
       path: '/groups/search?limit=100&reverse=false&query=fallback&visibility=ALL',
+    });
+  });
+
+  it('resolves a group by id through the bridge or node fallback', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({ groupId: 42, groupName: 'Bridge group' })
+      .mockResolvedValueOnce({
+        body: '{}',
+        contentType: 'application/json',
+        data: { groupId: 43, groupName: 'Node group' },
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+      });
+
+    await expect(getGroup(42, ['GET_GROUP'])).resolves.toEqual({ groupId: 42, groupName: 'Bridge group' });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, { action: 'GET_GROUP', groupId: 42 });
+
+    await expect(getGroup(43, [])).resolves.toEqual({ groupId: 43, groupName: 'Node group' });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/groups/43',
     });
   });
 
