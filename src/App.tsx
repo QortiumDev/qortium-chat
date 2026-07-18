@@ -68,6 +68,7 @@ import {
   sortMessagesByTimestamp,
   type MessageThread,
 } from './messageThreads';
+import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupPreviews';
 import {
   getReactionPendingKey,
 } from './messageReactions';
@@ -783,6 +784,11 @@ export default function App() {
   const [cachedGeneralChatMembers, setCachedGeneralChatMembers] = useState<GroupMember[]>(emptyMembers);
   const [loadedGroupActivityById, setLoadedGroupActivityById] =
     useState<ReadonlyMap<number, number | null>>(() => new Map());
+  // Conversation loads can resolve edit revisions that active-chats excludes.
+  // Cache those bodies by the original activity identity so switching groups
+  // does not immediately fall back to stale original text.
+  const [loadedGroupPreviewById, setLoadedGroupPreviewById] =
+    useState<ReadonlyMap<number, GroupPreviewRevision>>(() => new Map());
   const [loadedDirectActivityByAddress, setLoadedDirectActivityByAddress] =
     useState<ReadonlyMap<string, number | null>>(() => new Map());
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
@@ -1160,11 +1166,11 @@ export default function App() {
   );
   const selectedAdminJoinRequests =
     selectedGroupId === null || isSelectedGeneralChat ? [] : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
-  // One-line last-message previews for the sidebar rows, decoded from the
-  // active-chats data already in memory (no extra fetches). Group entries from
-  // the public stream carry the payload but no isText flag (verified against
-  // live Core); group chat payloads are text, so it is asserted here. Closed
-  // groups' encrypted payloads are filtered out at render via group.isOpen.
+  // One-line last-message previews for the sidebar rows. The active-chats entry
+  // owns activity ordering/timestamps; a matching loaded conversation thread
+  // can replace only its stale original body with the latest accepted edit.
+  // This does not add any fetches. Closed groups' encrypted payloads remain
+  // filtered out at render via group.isOpen.
   const groupPreviewByGroupId = useMemo(() => {
     const previews = new Map<number, string>();
 
@@ -1175,11 +1181,25 @@ export default function App() {
         continue;
       }
 
-      const snippet = getMessageSnippet(
-        { data: activeGroup.data, encoding: activeGroup.encoding ?? 'BASE64', isText: true },
-        t,
-        80,
-      );
+      const loadedRevision = loadedGroupPreviewById.get(activeGroup.groupId);
+      const isCurrentRevision =
+        !!loadedRevision &&
+        loadedRevision.activityTimestamp === activeGroup.timestamp &&
+        loadedRevision.originalData === activeGroup.data &&
+        loadedRevision.originalSender === (activeGroup.sender ?? null) &&
+        loadedRevision.originalSignature === (activeGroup.signature ?? null);
+
+      // Once loaded history proves the active entry was deleted, leave the row
+      // preview empty. Showing either the original body or a tombstone would
+      // defeat the sender's request to remove the message from visible chat UI.
+      if (isCurrentRevision && loadedRevision.isDeleted) {
+        continue;
+      }
+
+      const previewMessage = isCurrentRevision
+        ? loadedRevision.latest
+        : { data: activeGroup.data, encoding: activeGroup.encoding ?? 'BASE64' as const, isText: true };
+      const snippet = getMessageSnippet(previewMessage, t, 80);
 
       previews.set(
         activeGroup.groupId,
@@ -1188,7 +1208,7 @@ export default function App() {
     }
 
     return previews;
-  }, [activeChats.value.groups, t]);
+  }, [activeChats.value.groups, loadedGroupPreviewById, t]);
   // Direct entries come from the decrypted private list when Home provides it;
   // anything still encrypted stays preview-less rather than showing a stub.
   const directPreviewByAddress = useMemo(() => {
@@ -3325,6 +3345,53 @@ export default function App() {
       directSearchInputRef.current?.focus();
     }
   }, [isDirectFormVisible]);
+
+  // The active-chats endpoint intentionally excludes chatReference rows, so it
+  // keeps the original message body after an edit. Whenever a group's real
+  // conversation window is loaded (initial REST read, websocket update, or
+  // post-send refresh), resolve that active entry through the same edit-thread
+  // model as MessageList and cache only the resulting preview body.
+  useEffect(() => {
+    if (!selectedGroup || !hasSelectedMessages) {
+      return;
+    }
+
+    const activeGroup = (activeChats.value.groups ?? []).find(
+      (entry) => entry.groupId === selectedGroup.groupId,
+    );
+
+    if (!activeGroup) {
+      return;
+    }
+
+    const revision = resolveGroupPreviewRevision(activeGroup, messages.value);
+
+    if (!revision) {
+      return;
+    }
+
+    setLoadedGroupPreviewById((current) => {
+      const existing = current.get(selectedGroup.groupId);
+
+      if (
+        existing?.activityTimestamp === revision.activityTimestamp &&
+        existing.originalData === revision.originalData &&
+        existing.originalSender === revision.originalSender &&
+        existing.originalSignature === revision.originalSignature &&
+        existing.latest.signature === revision.latest.signature &&
+        existing.latest.data === revision.latest.data &&
+        existing.latest.status === revision.latest.status &&
+        existing.latest.decryptionStatus === revision.latest.decryptionStatus
+      ) {
+        return current;
+      }
+
+      const next = new Map(current);
+
+      next.set(selectedGroup.groupId, revision);
+      return next;
+    });
+  }, [activeChats.value.groups, hasSelectedMessages, messages.value, selectedGroup]);
 
   useEffect(() => {
     if (!isChatNotificationMenuOpen) {

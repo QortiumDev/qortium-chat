@@ -6,7 +6,7 @@ import {
   THREAD_CONTINUATION_WINDOW_MS,
   type MessageThread,
 } from './messageThreads';
-import { buildReactionMessageText } from './chatText';
+import { buildDeletedMessageText, buildReactionMessageText } from './chatText';
 import type { ChatMessage } from './types';
 
 function message(overrides: Partial<ChatMessage> & Pick<ChatMessage, 'sender' | 'timestamp'>): ChatMessage {
@@ -100,6 +100,64 @@ describe('buildMessageThreads', () => {
     const orphanReaction = reaction({ chatReference: 'sig-missing', sender: 'Qa', timestamp: 20 });
 
     expect(buildMessageThreads([orphanReaction])).toEqual([]);
+  });
+
+  it('omits a thread whose latest accepted revision deletes the message', () => {
+    const original = message({
+      data: base64('Original body'),
+      encoding: 'BASE64',
+      isText: true,
+      sender: 'Qa',
+      signature: 'sig-a',
+      timestamp: 10,
+    });
+    const deletion = message({
+      chatReference: 'sig-a',
+      data: base64(buildDeletedMessageText()),
+      encoding: 'BASE64',
+      isText: true,
+      sender: 'Qa',
+      signature: 'sig-delete',
+      timestamp: 20,
+    });
+
+    expect(buildMessageThreads([original, deletion])).toEqual([]);
+    expect(buildMessageThreads([original, deletion], { includeDeleted: true })).toEqual([
+      { latest: deletion, original, revisions: [deletion] },
+    ]);
+  });
+
+  it('shows a deleted thread again only after a later non-empty revision', () => {
+    const original = message({
+      data: base64('Original body'),
+      encoding: 'BASE64',
+      isText: true,
+      sender: 'Qa',
+      signature: 'sig-a',
+      timestamp: 10,
+    });
+    const deletion = message({
+      chatReference: 'sig-a',
+      data: base64(buildDeletedMessageText()),
+      encoding: 'BASE64',
+      isText: true,
+      sender: 'Qa',
+      signature: 'sig-delete',
+      timestamp: 20,
+    });
+    const restored = message({
+      chatReference: 'sig-a',
+      data: base64('Restored body'),
+      encoding: 'BASE64',
+      isText: true,
+      sender: 'Qa',
+      signature: 'sig-restored',
+      timestamp: 30,
+    });
+
+    expect(buildMessageThreads([original, deletion, restored])).toEqual([
+      { latest: restored, original, revisions: [deletion, restored] },
+    ]);
   });
 });
 

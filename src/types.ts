@@ -133,6 +133,7 @@ export type ActiveGroupChat = {
   groupName?: string;
   sender?: string;
   senderName?: string;
+  signature?: string | null;
   timestamp?: number | null;
 };
 
