@@ -1,5 +1,5 @@
 import type { ChatMessage } from './types';
-import { isReactionChatMessage } from './chatText';
+import { decodeChatMessage, isReactionChatMessage } from './chatText';
 
 // Stable React key / dedupe key for a message: its on-chain signature when present,
 // else a synthesized fallback from timestamp/sender/index for unsigned local rows.
@@ -20,6 +20,22 @@ export type MessageThread = {
   /** Accepted revisions in timestamp order (oldest first), excluding the original. */
   revisions: ChatMessage[];
 };
+
+export type BuildMessageThreadsOptions = {
+  /** Include deleted threads for non-feed consumers such as privacy-safe preview resolution. */
+  includeDeleted?: boolean;
+};
+
+/** An accepted empty-body revision is the deletion marker for a message thread. */
+export function isDeletedMessageThread(thread: MessageThread) {
+  if (thread.revisions.length === 0) {
+    return false;
+  }
+
+  const latest = decodeChatMessage(thread.latest);
+
+  return latest.kind === 'text' && !latest.body;
+}
 
 /** Successive messages from one sender closer together than this render as one visual group. */
 export const THREAD_CONTINUATION_WINDOW_MS = 5 * 60 * 1000;
@@ -50,7 +66,10 @@ export function getLatestNonReactionMessageTimestamp(messages: ChatMessage[]) {
   }, null);
 }
 
-export function buildMessageThreads(messages: ChatMessage[]): MessageThread[] {
+export function buildMessageThreads(
+  messages: ChatMessage[],
+  options: BuildMessageThreadsOptions = {},
+): MessageThread[] {
   const originalsBySignature = new Map<string, ChatMessage>();
   const revisionsByReference = new Map<string, ChatMessage[]>();
 
@@ -104,5 +123,7 @@ export function buildMessageThreads(messages: ChatMessage[]): MessageThread[] {
     });
   }
 
-  return threads;
+  return options.includeDeleted
+    ? threads
+    : threads.filter((thread) => !isDeletedMessageThread(thread));
 }

@@ -1188,13 +1188,18 @@ export default function App() {
         loadedRevision.originalData === activeGroup.data &&
         loadedRevision.originalSender === (activeGroup.sender ?? null) &&
         loadedRevision.originalSignature === (activeGroup.signature ?? null);
+
+      // Once loaded history proves the active entry was deleted, leave the row
+      // preview empty. Showing either the original body or a tombstone would
+      // defeat the sender's request to remove the message from visible chat UI.
+      if (isCurrentRevision && loadedRevision.isDeleted) {
+        continue;
+      }
+
       const previewMessage = isCurrentRevision
         ? loadedRevision.latest
         : { data: activeGroup.data, encoding: activeGroup.encoding ?? 'BASE64' as const, isText: true };
-      const snippet =
-        isCurrentRevision && loadedRevision.isDeleted
-          ? t('message.deleted')
-          : getMessageSnippet(previewMessage, t, 80);
+      const snippet = getMessageSnippet(previewMessage, t, 80);
 
       previews.set(
         activeGroup.groupId,

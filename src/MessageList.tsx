@@ -605,7 +605,6 @@ export const MessageList = memo(function MessageList({
   const dividerRef = useRef<HTMLLIElement>(null);
   const highlightTimeoutRef = useRef(0);
   const expandedTimeTimeoutRef = useRef(0);
-  const [openHistories, setOpenHistories] = useState<ReadonlySet<string>>(new Set());
   const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
   const [openReactionPickerKey, setOpenReactionPickerKey] = useState('');
   const [openReactionDetailsKey, setOpenReactionDetailsKey] = useState('');
@@ -1421,20 +1420,6 @@ export const MessageList = memo(function MessageList({
     highlightTimeoutRef.current = window.setTimeout(() => setHighlightedKey(''), 1800);
   }
 
-  function toggleHistory(threadKey: string) {
-    setOpenHistories((current) => {
-      const next = new Set(current);
-
-      if (next.has(threadKey)) {
-        next.delete(threadKey);
-      } else {
-        next.add(threadKey);
-      }
-
-      return next;
-    });
-  }
-
   function toggleImagePreview(threadKey: string) {
     setOpenImagePreviews((current) => {
       const next = new Set(current);
@@ -1579,17 +1564,11 @@ export const MessageList = memo(function MessageList({
             const decoded = decodeChatMessage(latest, t);
             const isOwn = selfAddress !== null && original.sender === selfAddress;
             const isEdited = revisions.length > 0;
-            const isHistoryOpen = isEdited && openHistories.has(threadKey);
-            const previousVersions = isHistoryOpen ? [original, ...revisions.slice(0, -1)] : [];
             const repliedTarget = decoded.repliedTo ? threadTargetsBySignature.get(decoded.repliedTo) : undefined;
             const repliedThread = repliedTarget?.thread;
             const isHighlighted = highlightedKey === threadKey;
             const isContinuation = isThreadContinuation(threads[index - 1], thread);
             const canEdit = isOwn && decoded.kind === 'text';
-            // A deleted message is a thread whose accepted revisions end in an
-            // empty body. Edit stays available on it (re-editing restores the
-            // message); Delete disappears (already deleted).
-            const isThreadDeleted = thread.revisions.length > 0 && decoded.kind === 'text' && !decoded.body;
             const isTimeExpanded = expandedTimeKey === threadKey;
             const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
             const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
@@ -1675,7 +1654,7 @@ export const MessageList = memo(function MessageList({
                       {t('button.edit')}
                     </button>
                   ) : null}
-                  {canReplyOrEdit && canEdit && !isThreadDeleted ? (
+                  {canReplyOrEdit && canEdit ? (
                     <button onClick={() => onDelete(thread)} type="button">
                       {t('button.delete')}
                     </button>
@@ -1740,7 +1719,7 @@ export const MessageList = memo(function MessageList({
                     renderMessageTextWithAppLinks(decoded.body, t)
                   ) : (
                     <span className="message__body-placeholder">
-                      {isThreadDeleted ? t('message.deleted') : t('message.empty')}
+                      {t('message.empty')}
                     </span>
                   )}
                 </div>
@@ -1765,37 +1744,12 @@ export const MessageList = memo(function MessageList({
                     {isTimeExpanded ? formatTimestamp(original.timestamp, t.locale) : formatTimeAgo(original.timestamp, now, t.locale)}
                   </button>
                   {isEdited ? (
-                    <button
-                      aria-expanded={isHistoryOpen}
-                      className="message__edited"
-                      onClick={() => toggleHistory(threadKey)}
-                      title={t('action.toggleEditHistory')}
-                      type="button"
-                    >
+                    <span className="message__edited">
                       {t('label.message.edited')} · {formatTimeAgo(latest.timestamp, now)}
-                    </button>
+                    </span>
                   ) : null}
                   {isContinuation ? actionButtons : null}
                 </div>
-                {isHistoryOpen ? (
-                  <ol className="message__history" aria-label={t('label.editHistory')}>
-                    {previousVersions.map((version, versionIndex) => {
-                      const versionBody = decodeChatMessage(version, t).body;
-
-                      return (
-                        <li key={getMessageKey(version, versionIndex)}>
-                          <span className="message__history-meta">
-                            {versionIndex === 0 ? `${t('label.message.original')} · ` : ''}
-                            {formatTimestamp(version.timestamp, t.locale)}
-                          </span>
-                          <span className="message__history-body">
-                            {versionBody ? renderMessageTextWithAppLinks(versionBody, t) : t('message.empty')}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                ) : null}
               </li>
               </Fragment>
             );

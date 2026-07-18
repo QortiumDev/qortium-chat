@@ -29,7 +29,10 @@ export function resolveGroupPreviewRevision(
     return null;
   }
 
-  const matchingThread = buildMessageThreads(messages).find((thread) => {
+  // Feed consumers omit deleted threads by default. Preview resolution includes
+  // them only so the sidebar can recognize the deletion and suppress its stale
+  // original body as soon as that conversation has been loaded.
+  const matchingThread = buildMessageThreads(messages, { includeDeleted: true }).find((thread) => {
     if (activeGroup.signature && thread.original.signature !== activeGroup.signature) {
       return false;
     }

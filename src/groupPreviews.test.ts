@@ -126,7 +126,7 @@ describe('resolveGroupPreviewRevision', () => {
     });
   });
 
-  it('marks an empty revision as a deleted-message preview', () => {
+  it('marks an empty revision so consumers can suppress the deleted preview', () => {
     const original = message({
       data: base64('Original body'),
       sender: 'Qa',

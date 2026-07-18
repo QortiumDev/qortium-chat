@@ -1962,7 +1962,7 @@ button.member-chip__name-button:focus-visible {
   border-inline-start: 3px solid var(--qc-color-accent);
 }
 
-/* Deleted-message tombstones and empty bodies read as annotations, not text. */
+/* Empty bodies read as annotations, not text. */
 .message__body-placeholder {
   color: var(--qc-color-muted);
   font-style: italic;
@@ -2070,48 +2070,9 @@ button.message__reply-preview:focus-visible {
 
 .message__edited {
   width: fit-content;
-  padding: 0;
   color: var(--qc-color-muted);
   font-size: var(--qc-text-tiny);
   line-height: var(--qc-line-small);
-  text-decoration: underline dotted;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.message__edited:hover,
-.message__edited:focus-visible {
-  color: var(--qc-color-text-secondary);
-  outline: none;
-}
-
-.message__history {
-  display: grid;
-  gap: 6px;
-  margin: 8px 0 0;
-  padding: 8px 0 0;
-  border-top: 1px dashed var(--qc-color-border);
-  list-style: none;
-}
-
-.message__history li {
-  display: grid;
-  gap: 1px;
-}
-
-.message__history-meta {
-  color: var(--qc-color-muted);
-  font-size: var(--qc-text-tiny);
-  line-height: var(--qc-line-small);
-}
-
-.message__history-body {
-  overflow-wrap: anywhere;
-  color: var(--qc-color-text-secondary);
-  font-size: var(--qc-text-small);
-  line-height: var(--qc-line-small);
-  white-space: pre-wrap;
 }
 
 .message__actions {
@@ -2441,7 +2402,6 @@ button.message__reply-preview:focus-visible {
    overrides the `outline: none` there. */
 button.message__reply-preview:focus-visible,
 .message__time:focus-visible,
-.message__edited:focus-visible,
 .message__actions button:focus-visible,
 .message__reaction-quick-row button:focus-visible,
 .message__reaction-chip:focus-visible,
@@ -3614,13 +3574,12 @@ button.message__reply-preview:focus-visible,
     padding-inline-end: 56px;
   }
 
-  /* The primary per-message controls (Reply/React/Edit, timestamp, edited
-     marker, reaction chips) are compact text buttons on desktop; give them a
+  /* The primary per-message controls (Reply/React/Edit, timestamp and reaction
+     chips) are compact text buttons on desktop; give them a
      taller tap area on touch. 34px keeps message rows readable while clearing
      WCAG 2.5.8's 24px minimum with margin. */
   .message__actions button,
-  .message__time,
-  .message__edited {
+  .message__time {
     min-height: 34px;
   }
 
@@ -3964,7 +3923,6 @@ button.message__reply-preview:focus-visible,
   .message-feed__scroll-bottom,
   .message-feed__jump-unread,
   .message__time,
-  .message__edited,
   .message__actions button,
   .message__reaction-quick-row button,
   .message__reaction-chip,
