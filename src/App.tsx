@@ -79,7 +79,9 @@ import {
   getInitialDeepLinkTarget,
   isPlausibleQortiumAddress,
   parseOpenAppTargetMessage,
+  writeChatRoute,
   type ChatDeepLinkTarget,
+  type ChatHistoryMode,
 } from './deepLink';
 import {
   GENERAL_CHAT_GROUP_ID,
@@ -795,13 +797,17 @@ export default function App() {
   // A target may arrive before the parallel group/account loads finish. Keep the
   // newest one until both have settled, so it wins over the normal first-group
   // fallback and a saved last chat without racing either source.
-  const pendingDeepLinkRef = useRef<{ isInitial: boolean; target: ChatDeepLinkTarget } | null | undefined>(undefined);
+  const pendingDeepLinkRef = useRef<{
+    historyMode: ChatHistoryMode;
+    isInitial: boolean;
+    target: ChatDeepLinkTarget | null;
+  } | null | undefined>(undefined);
   const deepLinkResolutionRef = useRef(0);
 
   if (pendingDeepLinkRef.current === undefined) {
     const target = getInitialDeepLinkTarget();
 
-    pendingDeepLinkRef.current = target ? { isInitial: true, target } : null;
+    pendingDeepLinkRef.current = { historyMode: 'replace', isInitial: true, target };
   }
   const [deepLinkRevision, setDeepLinkRevision] = useState(0);
   const [search, setSearch] = useState('');
@@ -1650,7 +1656,12 @@ export default function App() {
 
       setGroups({ phase: 'ready', value: nextGroups });
       if (!hasSelectedChatRef.current && !pendingDeepLinkRef.current && nextGroups.length > 0) {
-        setSelectedChat({ group: nextGroups[0], kind: 'group' });
+        selectGroup(nextGroups[0], {
+          historyMode: 'replace',
+          remember: false,
+          showConversation: false,
+          userInitiated: false,
+        });
       }
     } catch (error) {
       const fallbackGroups = withGeneralChatGroup(emptyGroups, nextSearch, t);
@@ -1661,7 +1672,12 @@ export default function App() {
         value: fallbackGroups,
       });
       if (!hasSelectedChatRef.current && !pendingDeepLinkRef.current && fallbackGroups.length > 0) {
-        setSelectedChat({ group: fallbackGroups[0], kind: 'group' });
+        selectGroup(fallbackGroups[0], {
+          historyMode: 'replace',
+          remember: false,
+          showConversation: false,
+          userInitiated: false,
+        });
       }
     }
   }
@@ -2915,31 +2931,66 @@ export default function App() {
     setDraft(draftsByChatKeyRef.current.get(nextKey) ?? '');
   }
 
-  function selectGroup(group: GroupData) {
+  type ChatSelectionOptions = {
+    historyMode?: ChatHistoryMode;
+    remember?: boolean;
+    showConversation?: boolean;
+    userInitiated?: boolean;
+  };
+
+  function selectGroup(group: GroupData, options: ChatSelectionOptions = {}) {
+    const {
+      historyMode = 'push',
+      remember = true,
+      showConversation = true,
+      userInitiated = true,
+    } = options;
+
     setWriteError('');
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
     switchDraftTo(getSelectedChatKey({ group, kind: 'group' }));
     setComposeContext(null);
-    userSelectedChatRef.current = true;
+    if (userInitiated) {
+      userSelectedChatRef.current = true;
+    }
     setSelectedChat({ group, kind: 'group' });
-    rememberLastChat({ group, kind: 'group' });
-    setMobileChatView(true);
+    if (remember) {
+      rememberLastChat({ group, kind: 'group' });
+    }
+    if (showConversation) {
+      setMobileChatView(true);
+    }
+    writeChatRoute({ group: group.groupId }, historyMode);
   }
 
-  function selectDirect(direct: ActiveDirectChat) {
+  function selectDirect(direct: ActiveDirectChat, options: ChatSelectionOptions = {}) {
+    const {
+      historyMode = 'push',
+      remember = true,
+      showConversation = true,
+      userInitiated = true,
+    } = options;
+
     setWriteError('');
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
     switchDraftTo(getSelectedChatKey({ direct, kind: 'direct' }));
     setComposeContext(null);
-    userSelectedChatRef.current = true;
+    if (userInitiated) {
+      userSelectedChatRef.current = true;
+    }
     setSelectedChat({ direct, kind: 'direct' });
-    rememberLastChat({ direct, kind: 'direct' });
-    rememberDirect(direct);
-    setMobileChatView(true);
+    if (remember) {
+      rememberLastChat({ direct, kind: 'direct' });
+      rememberDirect(direct);
+    }
+    if (showConversation) {
+      setMobileChatView(true);
+    }
+    writeChatRoute({ address: direct.address }, historyMode);
   }
 
   // Remove a persisted direct from the sidebar. If it is the open chat, fall back
@@ -2973,9 +3024,15 @@ export default function App() {
 
     if (selectedChat?.kind === 'direct' && selectedChat.direct.address === address) {
       if (generalChat) {
-        setSelectedChat({ group: generalChat, kind: 'group' });
+        selectGroup(generalChat, {
+          historyMode: 'replace',
+          remember: false,
+          showConversation: false,
+          userInitiated: false,
+        });
       } else {
         setSelectedChat(null);
+        writeChatRoute({}, 'replace');
       }
 
       setMobileChatView(false);
@@ -3090,15 +3147,10 @@ export default function App() {
       }
     }
 
-    setComposeContext(null);
     setDirectAddress('');
     setDirectSearchOpen(false);
     const direct: ActiveDirectChat = name ? { address, name } : { address };
-    userSelectedChatRef.current = true;
-    setSelectedChat({ direct, kind: 'direct' });
-    rememberLastChat({ direct, kind: 'direct' });
-    rememberDirect(direct);
-    setMobileChatView(true);
+    selectDirect(direct);
   }
 
   async function connectSelectedAccount(actionList = actions) {
@@ -3247,38 +3299,45 @@ export default function App() {
     // Home supplies a single conversation target. When both optional fields are
     // present, prefer the direct conversation, matching the notification's most
     // specific recipient target.
-    if (pending.target.address) {
-      selectDirect({ address: pending.target.address });
+    if (pending.target?.address) {
+      selectDirect(
+        { address: pending.target.address },
+        { historyMode: pending.historyMode },
+      );
       return;
     }
 
-    const group = groups.value.find((candidate) => candidate.groupId === pending.target.group);
+    const group = groups.value.find((candidate) => candidate.groupId === pending.target?.group);
 
     if (group) {
-      selectGroup(group);
+      selectGroup(group, { historyMode: pending.historyMode });
       return;
     }
 
-    if (pending.target.group === GENERAL_CHAT_GROUP_ID) {
-      selectGroup(withGeneralChatGroup([], '', t)[0]);
+    if (pending.target?.group === GENERAL_CHAT_GROUP_ID) {
+      selectGroup(withGeneralChatGroup([], '', t)[0], { historyMode: pending.historyMode });
       return;
     }
 
-    if (pending.target.group !== undefined) {
+    if (pending.target?.group !== undefined) {
       void getGroup(pending.target.group, actions)
         .then((resolvedGroup) => {
           if (deepLinkResolutionRef.current === resolutionId) {
-            selectGroup(resolvedGroup);
+            selectGroup(resolvedGroup, { historyMode: pending.historyMode });
           }
         })
         .catch(() => {
           if (
             deepLinkResolutionRef.current === resolutionId &&
-            pending.isInitial &&
-            !hasSelectedChatRef.current &&
+            ((pending.isInitial && !hasSelectedChatRef.current) || pending.historyMode === 'none') &&
             groups.value.length > 0
           ) {
-            setSelectedChat({ group: groups.value[0], kind: 'group' });
+            selectGroup(groups.value[0], {
+              historyMode: pending.historyMode,
+              remember: false,
+              showConversation: false,
+              userInitiated: false,
+            });
           }
         });
       return;
@@ -3287,7 +3346,25 @@ export default function App() {
     // An unresolved URL group should behave like the pre-deep-link startup
     // path. Runtime requests retain the current conversation instead.
     if (pending.isInitial && !hasSelectedChatRef.current && groups.value.length > 0) {
-      setSelectedChat({ group: groups.value[0], kind: 'group' });
+      selectGroup(groups.value[0], {
+        historyMode: pending.historyMode,
+        remember: false,
+        showConversation: false,
+        userInitiated: false,
+      });
+      return;
+    }
+
+    // A route without a conversation target can also be reached by Back from an
+    // older app build. Rehydrate the fallback without mutating that history
+    // entry; subsequent deliberate selections will push normally.
+    if (!pending.isInitial && !pending.target && groups.value.length > 0) {
+      selectGroup(groups.value[0], {
+        historyMode: 'none',
+        remember: false,
+        showConversation: false,
+        userInitiated: false,
+      });
     }
   }, [actionsKey, activeChats.phase, deepLinkRevision, groups.phase, groups.value]);
 
@@ -3858,12 +3935,22 @@ export default function App() {
     const saved = readLastChat(account.address);
 
     if (saved?.kind === 'direct') {
-      setSelectedChat({ direct: saved.direct, kind: 'direct' });
+      selectDirect(saved.direct, {
+        historyMode: 'replace',
+        remember: false,
+        showConversation: false,
+        userInitiated: false,
+      });
       return;
     }
 
     if (saved?.kind === 'group') {
-      setSelectedChat({ group: saved.group, kind: 'group' });
+      selectGroup(saved.group, {
+        historyMode: 'replace',
+        remember: false,
+        showConversation: false,
+        userInitiated: false,
+      });
       return;
     }
 
@@ -3872,7 +3959,12 @@ export default function App() {
     const generalChat = groups.value.find((group) => isGeneralChatGroup(group)) ?? null;
 
     if (generalChat) {
-      setSelectedChat({ group: generalChat, kind: 'group' });
+      selectGroup(generalChat, {
+        historyMode: 'replace',
+        remember: false,
+        showConversation: false,
+        userInitiated: false,
+      });
     }
   }, [account?.address]);
 
@@ -4106,13 +4198,31 @@ export default function App() {
   }, [displaySettings.language, t, unreadGroupIds, unreadDirectAddresses]);
 
   useEffect(() => {
+    function handlePopState() {
+      // Back/Forward owns the current history entry already. Queue its target
+      // through the normal async resolver, but never push or replace while
+      // rehydrating it.
+      pendingDeepLinkRef.current = {
+        historyMode: 'none',
+        isInitial: false,
+        target: getInitialDeepLinkTarget(),
+      };
+      setDeepLinkRevision((current) => current + 1);
+    }
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
     function handleHostMessage(event: MessageEvent) {
       setDisplaySettings((current) => getDisplaySettingsUpdateFromMessage(event.data, current) ?? current);
 
       const target = parseOpenAppTargetMessage(event.data);
 
       if (target) {
-        pendingDeepLinkRef.current = { isInitial: false, target };
+        pendingDeepLinkRef.current = { historyMode: 'push', isInitial: false, target };
         setDeepLinkRevision((current) => current + 1);
       }
 

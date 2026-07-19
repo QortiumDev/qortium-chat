@@ -6,6 +6,26 @@ export type ChatDeepLinkTarget = {
   group?: number;
 };
 
+export type ChatHistoryMode = 'none' | 'push' | 'replace';
+
+type LocationLike = {
+  hash?: string;
+  pathname?: string;
+  search?: string;
+};
+
+type HistoryLike = {
+  pushState(data: unknown, unused: string, url?: string | URL | null): void;
+  replaceState(data: unknown, unused: string, url?: string | URL | null): void;
+};
+
+type BrowserLike = {
+  history: HistoryLike;
+  location: LocationLike;
+};
+
+const CHAT_ROUTE_QUERY_KEYS = ['address', 'group'] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -55,6 +75,51 @@ export function parseDeepLinkSearch(search: string): ChatDeepLinkTarget | null {
   const query = new URLSearchParams(search);
 
   return parseTarget(query.get('address') ?? undefined, query.get('group') ?? undefined);
+}
+
+// Rewrite only the conversation target. Home's bridge/display parameters and
+// any future host-owned values must survive every in-app navigation.
+export function getChatRouteUrl(
+  target: ChatDeepLinkTarget,
+  location: LocationLike = typeof window === 'undefined' ? {} : window.location,
+): string {
+  const query = new URLSearchParams(location.search ?? '');
+
+  for (const key of CHAT_ROUTE_QUERY_KEYS) {
+    query.delete(key);
+  }
+
+  // A direct address is the more specific target when an incoming Home link
+  // carries both legacy fields. Serializing one target also canonicalizes the
+  // URL so later Back/Forward entries are unambiguous.
+  if (target.address) {
+    query.set('address', target.address);
+  } else if (target.group !== undefined) {
+    query.set('group', String(target.group));
+  }
+
+  const serializedQuery = query.toString();
+
+  return `${location.pathname || '/'}${serializedQuery ? `?${serializedQuery}` : ''}${location.hash ?? ''}`;
+}
+
+export function writeChatRoute(
+  target: ChatDeepLinkTarget,
+  mode: ChatHistoryMode,
+  browser: BrowserLike = window,
+): void {
+  if (mode === 'none') {
+    return;
+  }
+
+  const nextUrl = getChatRouteUrl(target, browser.location);
+  const currentUrl = `${browser.location.pathname || '/'}${browser.location.search ?? ''}${browser.location.hash ?? ''}`;
+
+  if (nextUrl === currentUrl) {
+    return;
+  }
+
+  browser.history[mode === 'replace' ? 'replaceState' : 'pushState']({}, '', nextUrl);
 }
 
 export function getInitialDeepLinkTarget(): ChatDeepLinkTarget | null {
