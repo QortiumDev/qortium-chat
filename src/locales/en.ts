@@ -89,6 +89,7 @@ export const EN_STRINGS = {
   'message.error': 'Error',
   'message.encrypted': 'Encrypted message',
   'message.privateGroupKeyMissing': 'Private group key missing',
+  'message.appData': 'App data',
   'message.binary': 'Binary message',
   'message.unsupportedEncoding': 'Unsupported message encoding',
   'message.decodeError': 'Unable to decode message',

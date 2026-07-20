@@ -1,5 +1,5 @@
 import type { ChatMessage, GroupData, GroupMember } from './types';
-import { isReactionChatMessage } from './chatText';
+import { isHiddenChatMessage } from './chatText';
 
 export type GroupMemberRole = 'admin' | 'member' | 'owner';
 
@@ -143,7 +143,7 @@ export function getActiveMessageGroupMembers(messages: ChatMessage[], groupId?: 
     typeof groupId === 'number' ? messages.filter((message) => message.txGroupId === groupId) : messages;
 
   for (const [index, message] of activeMessages.entries()) {
-    if (isReactionChatMessage(message)) {
+    if (isHiddenChatMessage(message)) {
       continue;
     }
 

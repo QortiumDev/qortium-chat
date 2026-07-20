@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'Viga',
   'message.encrypted': 'Krüpteeritud sõnum',
   'message.privateGroupKeyMissing': 'Privaatgrupi võti puudub',
+  'message.appData': 'Rakenduse andmed',
   'message.binary': 'Binaarne sõnum',
   'message.unsupportedEncoding': 'Toetamata sõnumikodeering',
   'message.decodeError': 'Sõnumi dešifreerimine nurjus',

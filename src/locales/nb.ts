@@ -89,6 +89,7 @@ export const STRINGS = {
   'message.error': 'Feil',
   'message.encrypted': 'Kryptert melding',
   'message.privateGroupKeyMissing': 'Manglende privat gruppenøkkel',
+  'message.appData': 'Appdata',
   'message.binary': 'Binær melding',
   'message.unsupportedEncoding': 'Ustøttet meldingskoding',
   'message.decodeError': 'Kan ikke dekode meldingen',

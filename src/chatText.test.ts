@@ -7,6 +7,8 @@ import {
   formatTimeAgo,
   formatTimestamp,
   getSenderLabel,
+  isHiddenChatMessage,
+  isMachineChatMessage,
 } from './chatText';
 
 function base64(value: string) {
@@ -242,5 +244,48 @@ describe('chat text helpers', () => {
 
     expect(withoutReply.body).toBe('');
     expect(withoutReply.repliedTo).toBeNull();
+  });
+});
+
+describe('machine messages', () => {
+  const chessEnvelope = JSON.stringify({ app: 'chess', qch1: { type: 'move', move: 'e2e4' } });
+
+  it('classifies app-marked JSON without a message field as machine', () => {
+    const decoded = decodeChatMessage({ data: base64(chessEnvelope), isText: true });
+
+    expect(decoded.kind).toBe('machine');
+    expect(decoded.machineApp).toBe('chess');
+    expect(decoded.body).toBe('App data');
+  });
+
+  it('detects machine payloads nested inside a direct-send wrapper', () => {
+    const wrapped = base64(JSON.stringify({ message: chessEnvelope }));
+
+    expect(decodeChatMessage({ data: wrapped, isText: true }).kind).toBe('machine');
+  });
+
+  it('keeps unmarked JSON and app-marked human messages as text', () => {
+    const plainJson = base64(JSON.stringify({ qch1: { type: 'move' } }));
+
+    expect(decodeChatMessage({ data: plainJson, isText: true }).kind).toBe('text');
+
+    const nonStringApp = base64(JSON.stringify({ app: 7, qch1: {} }));
+
+    expect(decodeChatMessage({ data: nonStringApp, isText: true }).kind).toBe('text');
+
+    // A string `message` field always wins: this is a human message that
+    // happens to carry an app marker.
+    const humanWithApp = base64(JSON.stringify({ app: 'chess', message: 'good game!' }));
+    const decoded = decodeChatMessage({ data: humanWithApp, isText: true });
+
+    expect(decoded.kind).toBe('text');
+    expect(decoded.body).toBe('good game!');
+  });
+
+  it('isHiddenChatMessage covers machine messages and reactions, not text', () => {
+    expect(isMachineChatMessage({ data: base64(chessEnvelope), isText: true })).toBe(true);
+    expect(isHiddenChatMessage({ data: base64(chessEnvelope), isText: true })).toBe(true);
+    expect(isHiddenChatMessage({ data: base64(buildReactionMessageText('👍', true)), isText: true })).toBe(true);
+    expect(isHiddenChatMessage({ data: base64('hello'), isText: true })).toBe(false);
   });
 });

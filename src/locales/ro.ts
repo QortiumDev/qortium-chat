@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'Eroare',
   'message.encrypted': 'Mesaj criptat',
   'message.privateGroupKeyMissing': 'Cheia grupului privat lipsește',
+  'message.appData': 'Date de aplicație',
   'message.binary': 'Mesaj binar',
   'message.unsupportedEncoding': 'Codificare mesaj nesuportată',
   'message.decodeError': 'Nu se poate decoda mesajul',

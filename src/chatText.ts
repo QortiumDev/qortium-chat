@@ -7,7 +7,9 @@ function localizeMessage(t: TranslateFunction | undefined, key: Parameters<Trans
 
 export type DisplayChatMessage = {
   body: string;
-  kind: 'binary' | 'empty' | 'encrypted' | 'reaction' | 'text' | 'unsupported';
+  kind: 'binary' | 'empty' | 'encrypted' | 'machine' | 'reaction' | 'text' | 'unsupported';
+  /** For kind 'machine': the sending app's registered marker (e.g. "chess"). */
+  machineApp?: string;
   reaction?: ChatReaction;
   repliedTo: string | null;
 };
@@ -53,12 +55,14 @@ function getEnvelopeReaction(envelope: { content?: unknown; contentState?: unkno
 
 type UnwrappedChatText = {
   body: string;
+  machineApp: string | null;
   reaction: ChatReaction | null;
   repliedTo: string | null;
 };
 
 function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
   let body = value;
+  let machineApp: string | null = null;
   let reaction: ChatReaction | null = null;
   let repliedTo: string | null = null;
 
@@ -80,6 +84,7 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     }
 
     const envelope = parsed as {
+      app?: unknown;
       content?: unknown;
       contentState?: unknown;
       message?: unknown;
@@ -88,6 +93,13 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     };
 
     if (typeof envelope.message !== 'string') {
+      // Machine-message convention shared with other QDN apps (e.g. Chess):
+      // a JSON object carrying a string `app` marker and no string `message`
+      // is app-to-app data, not human chat, and must not render in the feed.
+      if (typeof envelope.app === 'string' && envelope.app) {
+        machineApp = envelope.app;
+      }
+
       break;
     }
 
@@ -105,7 +117,7 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     }
   }
 
-  return { body, reaction, repliedTo };
+  return { body, machineApp, reaction, repliedTo };
 }
 
 export function buildChatMessageText(text: string, repliedTo?: string | null) {
@@ -154,6 +166,18 @@ function hasMissingPrivateGroupKey(message: DecodableChatMessage) {
 
 export function isReactionChatMessage(message: DecodableChatMessage) {
   return decodeChatMessage(message).kind === 'reaction';
+}
+
+export function isMachineChatMessage(message: DecodableChatMessage) {
+  return decodeChatMessage(message).kind === 'machine';
+}
+
+// Reactions and machine messages are both payloads that must not appear as
+// chat bubbles or drive unread/activity state; most filters want the union.
+export function isHiddenChatMessage(message: DecodableChatMessage) {
+  const kind = decodeChatMessage(message).kind;
+
+  return kind === 'machine' || kind === 'reaction';
 }
 
 type DecodeCacheEntry = {
@@ -254,13 +278,22 @@ function computeDecodeChatMessage(
   }
 
   try {
-    const { body, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
+    const { body, machineApp, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
 
     if (reaction) {
       return {
         body,
         kind: 'reaction',
         reaction,
+        repliedTo: null,
+      };
+    }
+
+    if (machineApp) {
+      return {
+        body: localizeMessage(t, 'message.appData', 'App data'),
+        kind: 'machine',
+        machineApp,
         repliedTo: null,
       };
     }

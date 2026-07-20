@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': '오류',
   'message.encrypted': '암호화된 메시지',
   'message.privateGroupKeyMissing': '비공개 그룹 키가 없습니다',
+  'message.appData': '앱 데이터',
   'message.binary': '바이너리 메시지',
   'message.unsupportedEncoding': '지원되지 않는 메시지 인코딩',
   'message.decodeError': '메시지를 디코딩할 수 없습니다',

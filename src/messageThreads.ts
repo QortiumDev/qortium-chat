@@ -1,5 +1,5 @@
 import type { ChatMessage } from './types';
-import { decodeChatMessage, isReactionChatMessage } from './chatText';
+import { decodeChatMessage, isHiddenChatMessage } from './chatText';
 
 // Stable React key / dedupe key for a message: its on-chain signature when present,
 // else a synthesized fallback from timestamp/sender/index for unsigned local rows.
@@ -56,9 +56,9 @@ export function sortMessagesByTimestamp(messages: ChatMessage[]) {
   return [...messages].sort((first, second) => first.timestamp - second.timestamp);
 }
 
-export function getLatestNonReactionMessageTimestamp(messages: ChatMessage[]) {
+export function getLatestActivityMessageTimestamp(messages: ChatMessage[]) {
   return messages.reduce<number | null>((latestTimestamp, message) => {
-    if (isReactionChatMessage(message)) {
+    if (isHiddenChatMessage(message)) {
       return latestTimestamp;
     }
 
@@ -74,7 +74,7 @@ export function buildMessageThreads(
   const revisionsByReference = new Map<string, ChatMessage[]>();
 
   for (const message of messages) {
-    if (isReactionChatMessage(message)) {
+    if (isHiddenChatMessage(message)) {
       continue;
     }
 
@@ -84,7 +84,7 @@ export function buildMessageThreads(
   }
 
   for (const message of messages) {
-    if (!message.chatReference || isReactionChatMessage(message)) {
+    if (!message.chatReference || isHiddenChatMessage(message)) {
       continue;
     }
 
@@ -97,7 +97,7 @@ export function buildMessageThreads(
   const threads: MessageThread[] = [];
 
   for (const message of messages) {
-    if (isReactionChatMessage(message)) {
+    if (isHiddenChatMessage(message)) {
       continue;
     }
 

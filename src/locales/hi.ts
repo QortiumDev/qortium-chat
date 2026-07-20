@@ -89,6 +89,7 @@ export const STRINGS = {
   'message.error': 'त्रुटि',
   'message.encrypted': 'एन्क्रिप्टेड संदेश',
   'message.privateGroupKeyMissing': 'निजी समूह कुंजी उपलब्ध नहीं',
+  'message.appData': 'ऐप डेटा',
   'message.binary': 'बाइनरी संदेश',
   'message.unsupportedEncoding': 'असमर्थित संदेश एनकोडिंग',
   'message.decodeError': 'संदेश डिकोड नहीं कर सका',

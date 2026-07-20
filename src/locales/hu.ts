@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'Hiba',
   'message.encrypted': 'Titkosított üzenet',
   'message.privateGroupKeyMissing': 'Hiányzik a privát csoportkulcs',
+  'message.appData': 'Alkalmazásadatok',
   'message.binary': 'Bináris üzenet',
   'message.unsupportedEncoding': 'Nem támogatott üzenetkódolás',
   'message.decodeError': 'A jelszó nem dekódolható',
