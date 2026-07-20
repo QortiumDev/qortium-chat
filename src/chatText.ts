@@ -53,6 +53,41 @@ function getEnvelopeReaction(envelope: { content?: unknown; contentState?: unkno
   };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// Machine-message convention shared with other QDN apps (e.g. Chess): a JSON
+// object carrying a string `app` marker, no string `message`, and at least one
+// other key holding an object payload is app-to-app data, not human chat, and
+// must not render in the feed.
+//
+// The rule is deliberately narrow. Requiring an object-valued payload key keeps
+// a human who types or pastes a flat JSON object of strings — `{"app":"myapp",
+// "name":"test"}`, an app manifest — visible instead of silently dropping their
+// message. The caller applies this at depth 0 only: a reply's text can quote an
+// envelope, and `buildChatMessageText` wraps it as `{message, repliedTo}`, so
+// matching after an unwrap would hide the human reply and discard `repliedTo`.
+function getMachineEnvelopeApp(parsed: unknown): string | null {
+  if (!isPlainObject(parsed)) {
+    return null;
+  }
+
+  const app = parsed.app;
+
+  if (typeof app !== 'string' || !app) {
+    return null;
+  }
+
+  if (typeof parsed.message === 'string') {
+    return null;
+  }
+
+  const hasPayload = Object.keys(parsed).some((key) => key !== 'app' && isPlainObject(parsed[key]));
+
+  return hasPayload ? app : null;
+}
+
 type UnwrappedChatText = {
   body: string;
   machineApp: string | null;
@@ -79,12 +114,20 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
       break;
     }
 
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isPlainObject(parsed)) {
       break;
     }
 
+    // Depth 0 only — see getMachineEnvelopeApp.
+    if (depth === 0) {
+      machineApp = getMachineEnvelopeApp(parsed);
+
+      if (machineApp) {
+        break;
+      }
+    }
+
     const envelope = parsed as {
-      app?: unknown;
       content?: unknown;
       contentState?: unknown;
       message?: unknown;
@@ -93,13 +136,6 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     };
 
     if (typeof envelope.message !== 'string') {
-      // Machine-message convention shared with other QDN apps (e.g. Chess):
-      // a JSON object carrying a string `app` marker and no string `message`
-      // is app-to-app data, not human chat, and must not render in the feed.
-      if (typeof envelope.app === 'string' && envelope.app) {
-        machineApp = envelope.app;
-      }
-
       break;
     }
 
