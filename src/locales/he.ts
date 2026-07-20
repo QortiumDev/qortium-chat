@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'שגיאה',
   'message.encrypted': 'הודעה מוצפנת',
   'message.privateGroupKeyMissing': 'חסר מפתח קבוצה פרטית',
+  'message.appData': 'נתוני אפליקציה',
   'message.binary': 'הודעה בינרית',
   'message.unsupportedEncoding': 'קידוד הודעה לא נתמך',
   'message.decodeError': 'לא ניתן לפענח את ההודעה',

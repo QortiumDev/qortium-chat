@@ -3,6 +3,7 @@ import type { ChatMessage } from './types';
 import {
   CHAT_NOTIFICATIONS_STORAGE_KEY,
   DIRECT_MESSAGE_NOTIFICATION_ID,
+  DIRECT_MESSAGE_SUBSCRIPTION_FILTER_KEYS,
   LEGACY_CHAT_NOTIFICATIONS_STORAGE_KEY,
   canManageChatNotifications,
   enableDirectMessageNotifications,
@@ -87,6 +88,26 @@ describe('chat notification preferences', () => {
         title: 'New direct message',
       }],
     });
+  });
+
+  // Guard for the machine-message limitation documented above
+  // directMessageSubscription: the rule is address-scoped only. Core validates
+  // CHAT_MESSAGE filters against a fixed allowlist (recipient/sender/txGroupId/
+  // involving) and rejects the whole registration on an unknown key, so a
+  // well-meaning attempt to add a content predicate here would not hide machine
+  // direct messages — it would disable every direct-message notification.
+  it('keeps the direct rule address-scoped with no content predicate', async () => {
+    const request = vi.fn().mockResolvedValue({});
+    await enableDirectMessageNotifications('Qme', 'New direct message', request);
+
+    const [{ subscriptions }] = request.mock.calls[0] as [{
+      subscriptions: { filters: Record<string, unknown> }[];
+    }];
+
+    expect(Object.keys(subscriptions[0].filters)).toEqual([
+      ...DIRECT_MESSAGE_SUBSCRIPTION_FILTER_KEYS,
+    ]);
+    expect(DIRECT_MESSAGE_SUBSCRIPTION_FILTER_KEYS).toEqual(['recipient']);
   });
 
   it('reconciles the direct rule only when selected and Home still has a durable grant', async () => {

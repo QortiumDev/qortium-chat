@@ -9,8 +9,9 @@ On Home versions that expose app notifications, the bell beside the selected
 account opens separate choices for direct chat activity, mentions, and replies.
 Chat registers a durable incoming-direct rule only when that choice is selected,
 re-registers it after an account change, and removes it when direct notifications
-are turned off. Direct activity can include edits or reactions because Core's
-background event deliberately excludes message content. While Chat is loaded,
+are turned off. Direct activity can include edits, reactions, or app-to-app data
+messages because Core's background event deliberately excludes message content,
+so nothing outside Chat can tell those apart from human chat. While Chat is loaded,
 the mention and reply choices independently control notifications from the
 selected group when the app is not focused. Existing bell preferences migrate
 without changing behavior. The app feature-detects the notification actions, so
@@ -63,7 +64,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 1.4.6, where the `1.4` prefix declares the minimum Qortium platform
+version is 1.4.7, where the `1.4` prefix declares the minimum Qortium platform
 level the app is built against and the last number is the app's own release
 counter. The build emits a `qortium-app.json` manifest (see `vite.config.ts`)
 that Qortium Home reads from the published root to show the compatibility
@@ -106,3 +107,11 @@ private chat without Home. Background direct-message notifications require
 Home to remain running; Android delivery currently requires Home to remain in
 the foreground. Closed-tab group mention detection is not available because
 Core deliberately excludes message content from notification events.
+
+App-to-app data messages are hidden from the message feed, unread counts, and
+in-app mention/reply notifications, but a direct one can still raise Home's
+background "New direct message" notification. That rule is evaluated by Core,
+whose CHAT_MESSAGE event carries only addresses and envelope metadata and whose
+filters are address-scoped, so Chat has no way to exclude a message it has not
+seen yet. Suppressing it requires Home to fetch, decrypt, and classify the
+message before displaying.

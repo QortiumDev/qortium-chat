@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'Erreur',
   'message.encrypted': 'Message chiffré',
   'message.privateGroupKeyMissing': 'Clé du groupe privé manquante',
+  'message.appData': 'Données d\'application',
   'message.binary': 'Message binaire',
   'message.unsupportedEncoding': 'Encodage de message non pris en charge',
   'message.decodeError': 'Impossible de déchiffrer le message',

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMessageThreads,
-  getLatestNonReactionMessageTimestamp,
+  getLatestActivityMessageTimestamp,
   isThreadContinuation,
   THREAD_CONTINUATION_WINDOW_MS,
   type MessageThread,
@@ -161,17 +161,17 @@ describe('buildMessageThreads', () => {
   });
 });
 
-describe('getLatestNonReactionMessageTimestamp', () => {
+describe('getLatestActivityMessageTimestamp', () => {
   it('returns the latest message timestamp while ignoring newer reactions', () => {
     const first = message({ sender: 'Qa', signature: 'sig-a', timestamp: 10 });
     const latestMessage = message({ sender: 'Qb', signature: 'sig-b', timestamp: 30 });
     const newerReaction = reaction({ chatReference: 'sig-a', sender: 'Qc', timestamp: 50 });
 
-    expect(getLatestNonReactionMessageTimestamp([newerReaction, first, latestMessage])).toBe(30);
+    expect(getLatestActivityMessageTimestamp([newerReaction, first, latestMessage])).toBe(30);
   });
 
   it('returns null when only reactions are loaded', () => {
-    expect(getLatestNonReactionMessageTimestamp([
+    expect(getLatestActivityMessageTimestamp([
       reaction({ chatReference: 'sig-a', sender: 'Qa', timestamp: 20 }),
     ])).toBeNull();
   });
@@ -201,5 +201,36 @@ describe('isThreadContinuation', () => {
 
   it('is never a continuation without a previous thread', () => {
     expect(isThreadContinuation(undefined, thread('Qa', 1_000))).toBe(false);
+  });
+});
+
+describe('machine message filtering', () => {
+  function machine(overrides: Partial<ChatMessage> & Pick<ChatMessage, 'sender' | 'timestamp'>) {
+    return message({
+      data: base64(JSON.stringify({ app: 'chess', qch1: { type: 'move', move: 'e2e4' } })),
+      encoding: 'BASE64',
+      isEncrypted: false,
+      isText: true,
+      signature: `machine-${overrides.sender}-${overrides.timestamp}`,
+      ...overrides,
+    });
+  }
+
+  it('excludes machine messages from threads', () => {
+    const human = message({ sender: 'Qa', signature: 'sig-a', timestamp: 10 });
+    const move = machine({ sender: 'Qb', timestamp: 20 });
+
+    const threads = buildMessageThreads([human, move]);
+
+    expect(threads).toHaveLength(1);
+    expect(threads[0].original.signature).toBe('sig-a');
+  });
+
+  it('excludes machine messages from activity timestamps', () => {
+    const human = message({ sender: 'Qa', signature: 'sig-a', timestamp: 10 });
+    const move = machine({ sender: 'Qb', timestamp: 50 });
+
+    expect(getLatestActivityMessageTimestamp([human, move])).toBe(10);
+    expect(getLatestActivityMessageTimestamp([move])).toBeNull();
   });
 });

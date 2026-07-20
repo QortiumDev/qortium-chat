@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': '错误',
   'message.encrypted': '加密消息',
   'message.privateGroupKeyMissing': '缺少私有群组密钥',
+  'message.appData': '应用数据',
   'message.binary': '二进制消息',
   'message.unsupportedEncoding': '不支持的消息编码',
   'message.decodeError': '无法解码消息',

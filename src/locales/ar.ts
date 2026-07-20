@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'خطأ',
   'message.encrypted': 'رسالة مشفرة',
   'message.privateGroupKeyMissing': 'مفتاح المجموعة الخاصة مفقود',
+  'message.appData': 'بيانات تطبيق',
   'message.binary': 'رسالة ثنائية',
   'message.unsupportedEncoding': 'ترميز غير مدعوم',
   'message.decodeError': 'تعذر فك تشفير الرسالة',

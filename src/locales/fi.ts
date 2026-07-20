@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'Virhe',
   'message.encrypted': 'Salattu viesti',
   'message.privateGroupKeyMissing': 'Yksityisen ryhmän avain puuttuu',
+  'message.appData': 'Sovelluksen data',
   'message.binary': 'Binaariviesti',
   'message.unsupportedEncoding': 'Viestikoodaus ei ole tuettu',
   'message.decodeError': 'Viestin purku epäonnistui',

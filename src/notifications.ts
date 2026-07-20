@@ -86,6 +86,31 @@ export function writeChatNotificationPreferences(
   }
 }
 
+// Filter keys Core accepts for a CHAT_MESSAGE subscription. Core validates the
+// whole registration against this allowlist and rejects an unknown key outright,
+// so adding a key here that Core does not know would silently disable every
+// direct-message notification rather than narrow it.
+export const DIRECT_MESSAGE_SUBSCRIPTION_FILTER_KEYS = ['recipient'] as const;
+
+// KNOWN LIMITATION — machine messages still notify.
+//
+// This rule is evaluated by Core, not by Chat. Core's CHAT_MESSAGE event carries
+// only sender/recipient/txGroupId/isText/isEncrypted/signature/created: message
+// content is deliberately never included, "including for plaintext chats"
+// (NotificationManager.onChatMessage). The only filter keys Core accepts are
+// recipient, sender, txGroupId, and involving — all address-scoped, with no
+// content predicate and no exclusion form.
+//
+// So a machine direct message (an app-to-app envelope hidden from the feed by
+// isMachineChatMessage) still raises Home's "New direct message" notification.
+// Chat cannot suppress it: registration is fire-and-forget, the event never
+// reaches this app, and Home displays it without asking. Same root cause as
+// edits and reactions notifying.
+//
+// Suppressing it requires Home to resolve the signature to the transaction,
+// decrypt it, and classify it before displaying — Core cannot do it at all,
+// because direct chats are encrypted to the recipient's key. Do not attempt a
+// fix here; there is no app-side lever.
 function directMessageSubscription(accountAddress: string, title: string) {
   return {
     event: 'CHAT_MESSAGE',

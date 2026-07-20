@@ -89,6 +89,7 @@ export const STRINGS = {
   'message.error': 'Σφάλμα',
   'message.encrypted': 'Κρυπτογραφημένο μήνυμα',
   'message.privateGroupKeyMissing': 'Λείπει το ιδιωτικό κλειδί ομάδας',
+  'message.appData': 'Δεδομένα εφαρμογής',
   'message.binary': 'Δυαδικό μήνυμα',
   'message.unsupportedEncoding': 'Μη υποστηριζόμενη κωδικοποίηση μηνύματος',
   'message.decodeError': 'Αδυναμία αποκωδικοποίησης μηνύματος',

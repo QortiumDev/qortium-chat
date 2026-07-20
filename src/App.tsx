@@ -60,10 +60,10 @@ import {
   buildReactionMessageText,
   decodeChatMessage,
   getMessageSnippet,
-  isReactionChatMessage,
+  isHiddenChatMessage,
 } from './chatText';
 import {
-  getLatestNonReactionMessageTimestamp,
+  getLatestActivityMessageTimestamp,
   getMessageKey,
   sortMessagesByTimestamp,
   type MessageThread,
@@ -360,13 +360,15 @@ function mergeMessages(
   return Number.isFinite(maxCount) ? merged.slice(-maxCount) : merged;
 }
 
-// An active-chats entry whose latest message is an emoji reaction must not
-// drive sidebar activity ("time ago", unread, sort): Core filters reactions
-// out of the stream via haschatreference=false, but a reaction published
-// without a chatReference (older clients, Home's network-mode keyless send)
-// slips through that filter — so the payload itself is checked here. Encrypted
-// payloads that cannot be decoded are indeterminate and keep their timestamp.
-function isReactionActiveChatEntry(entry: {
+// An active-chats entry whose latest message is an emoji reaction or an
+// app-to-app machine message must not drive sidebar activity ("time ago",
+// unread, sort) or previews: Core filters reactions out of the stream via
+// haschatreference=false, but a reaction published without a chatReference
+// (older clients, Home's network-mode keyless send) slips through that filter,
+// and machine messages are indistinguishable from chat at the stream level —
+// so the payload itself is checked here. Encrypted payloads that cannot be
+// decoded are indeterminate and keep their timestamp.
+function isHiddenActiveChatEntry(entry: {
   data?: string | null;
   decryptionStatus?: string;
   encoding?: 'BASE58' | 'BASE64';
@@ -383,7 +385,7 @@ function isReactionActiveChatEntry(entry: {
 
   // Group entries from the public stream carry no isText flag; group chat
   // payloads are text (same assertion the sidebar preview memo makes).
-  return isReactionChatMessage({
+  return isHiddenChatMessage({
     data: entry.data,
     decryptionStatus: entry.decryptionStatus,
     encoding: entry.encoding ?? 'BASE64',
@@ -398,7 +400,7 @@ function mergeActivityTimestamp<Key>(
   messages: ChatMessage[],
   options: { allowTombstone?: boolean } = {},
 ) {
-  const latestTimestamp = getLatestNonReactionMessageTimestamp(messages);
+  const latestTimestamp = getLatestActivityMessageTimestamp(messages);
   const currentTimestamp = current.get(key);
 
   if (latestTimestamp === null) {
@@ -1000,7 +1002,7 @@ export default function App() {
     const activity = new Map<number, number>();
 
     for (const activeGroup of activeChats.value.groups ?? []) {
-      if (typeof activeGroup.timestamp === 'number' && !isReactionActiveChatEntry(activeGroup)) {
+      if (typeof activeGroup.timestamp === 'number' && !isHiddenActiveChatEntry(activeGroup)) {
         activity.set(activeGroup.groupId, activeGroup.timestamp);
       }
     }
@@ -1023,7 +1025,7 @@ export default function App() {
     const activity = new Map<string, number>();
 
     for (const direct of activeChats.value.direct ?? []) {
-      if (typeof direct.timestamp === 'number' && !isReactionActiveChatEntry(direct)) {
+      if (typeof direct.timestamp === 'number' && !isHiddenActiveChatEntry(direct)) {
         activity.set(direct.address, direct.timestamp);
       }
     }
@@ -1183,7 +1185,7 @@ export default function App() {
     for (const activeGroup of activeChats.value.groups ?? []) {
       // A reaction entry has no preview-worthy body ("X: Empty message") and its
       // timestamp is already excluded from sidebar activity; show no preview.
-      if (!activeGroup.data || isReactionActiveChatEntry(activeGroup)) {
+      if (!activeGroup.data || isHiddenActiveChatEntry(activeGroup)) {
         continue;
       }
 
@@ -1224,7 +1226,7 @@ export default function App() {
       if (
         !direct.data ||
         (direct.isEncrypted && direct.decryptionStatus !== 'DECRYPTED') ||
-        isReactionActiveChatEntry(direct)
+        isHiddenActiveChatEntry(direct)
       ) {
         continue;
       }
@@ -3855,7 +3857,7 @@ export default function App() {
       (activeChats.value.groups ?? [])
         .filter(
           (activeGroup) =>
-            typeof activeGroup.timestamp === 'number' && !isReactionActiveChatEntry(activeGroup),
+            typeof activeGroup.timestamp === 'number' && !isHiddenActiveChatEntry(activeGroup),
         )
         .map((activeGroup) => activeGroup.groupId),
     );
@@ -4548,7 +4550,7 @@ export default function App() {
             let next: Map<number, number | null> | null = null;
 
             for (const group of groupActivity) {
-              if (typeof group.timestamp !== 'number' || isReactionActiveChatEntry(group)) {
+              if (typeof group.timestamp !== 'number' || isHiddenActiveChatEntry(group)) {
                 continue;
               }
 
@@ -4573,7 +4575,7 @@ export default function App() {
             let next: Map<string, number | null> | null = null;
 
             for (const direct of directActivity) {
-              if (typeof direct.timestamp !== 'number' || isReactionActiveChatEntry(direct)) {
+              if (typeof direct.timestamp !== 'number' || isHiddenActiveChatEntry(direct)) {
                 continue;
               }
 

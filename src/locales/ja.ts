@@ -86,6 +86,7 @@ export const STRINGS = {
   'message.error': 'エラー',
   'message.encrypted': '暗号化されたメッセージ',
   'message.privateGroupKeyMissing': 'プライベートグループキーがありません',
+  'message.appData': 'アプリデータ',
   'message.binary': 'バイナリメッセージ',
   'message.unsupportedEncoding': 'サポートされていないメッセージのエンコーディング',
   'message.decodeError': 'メッセージのデコードに失敗しました',
