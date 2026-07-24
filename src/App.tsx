@@ -155,9 +155,10 @@ import {
   shouldDecryptGroupMessages,
 } from './groupAccess';
 import {
-  fetchAvatarImage,
+  fetchAccountAvatar,
   loadAvatarProfile,
   normalizeRegisteredName,
+  revokeAvatarObjectUrl,
   resolveAvatarIdentities,
   type AvatarProfile,
 } from './avatarProfiles';
@@ -493,25 +494,95 @@ function useAvatarProfiles(
   knownNamesByAddress: ReadonlyMap<string, string>,
   actions: QdnAction[],
   actionsKey: string,
+  protectedObjectUrl: string | null,
 ) {
   const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
   // Requests already issued and still awaiting their final commit, so an
   // effect re-run (new sender in a busy chat) does not fire a duplicate
-  // resolve/status-poll/fetch chain for an address whose slow avatar load —
-  // up to ~20s on a cold cache — is still in flight.
+  // name-resolution/avatar-fetch chain for an address whose request is still
+  // in flight.
   const pendingRequestKeysRef = useRef(new Map<string, string>());
+  const retryTimersRef = useRef(new Map<string, { requestKey: string; timer: number }>());
+  // The hook owns profile URLs. A lightbox captures its source independently,
+  // so a departed profile's URL is deferred only while that exact URL remains
+  // open; all other departed/replaced URLs are released immediately.
+  const avatarObjectUrlsRef = useRef(new Set<string>());
+  const profileAvatarObjectUrlsRef = useRef(new Map<string, string>());
+  const deferredAvatarObjectUrlsRef = useRef(new Set<string>());
   // Tracks genuine unmount, distinct from an effect re-run. An in-flight avatar
   // fetch must still commit when the effect merely re-ran (e.g. a new sender
-  // changed the address list) as long as its request key is still current —
-  // otherwise the slow (status-polled) avatar fetch is discarded every time the
-  // message list changes and the avatar never appears.
+  // changed the address list) as long as its request key is still current.
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => () => {
+    mountedRef.current = false;
+
+    for (const { timer } of retryTimersRef.current.values()) {
+      window.clearTimeout(timer);
+    }
+
+    for (const objectUrl of avatarObjectUrlsRef.current) {
+      revokeAvatarObjectUrl(objectUrl);
+    }
+  }, []);
   const addressKey = JSON.stringify(addresses);
   const knownNamesKey = JSON.stringify(Array.from(knownNamesByAddress.entries()));
 
   useEffect(() => {
+    const releaseObjectUrl = (objectUrl: string) => {
+      if (objectUrl === protectedObjectUrl) {
+        deferredAvatarObjectUrlsRef.current.add(objectUrl);
+        return;
+      }
+
+      deferredAvatarObjectUrlsRef.current.delete(objectUrl);
+      avatarObjectUrlsRef.current.delete(objectUrl);
+      revokeAvatarObjectUrl(objectUrl);
+    };
+
+    for (const objectUrl of deferredAvatarObjectUrlsRef.current) {
+      if (objectUrl !== protectedObjectUrl) {
+        releaseObjectUrl(objectUrl);
+      }
+    }
+
+    const visibleAddresses = new Set(addresses);
+    const departedAddresses: string[] = [];
+
+    for (const address of latestRequestKeysRef.current.keys()) {
+      if (!visibleAddresses.has(address)) {
+        departedAddresses.push(address);
+        latestRequestKeysRef.current.delete(address);
+        pendingRequestKeysRef.current.delete(address);
+
+        const scheduledRetry = retryTimersRef.current.get(address);
+
+        if (scheduledRetry) {
+          window.clearTimeout(scheduledRetry.timer);
+          retryTimersRef.current.delete(address);
+        }
+
+        const objectUrl = profileAvatarObjectUrlsRef.current.get(address);
+
+        if (objectUrl) {
+          profileAvatarObjectUrlsRef.current.delete(address);
+          releaseObjectUrl(objectUrl);
+        }
+      }
+    }
+
+    if (departedAddresses.length > 0) {
+      setProfiles((current) => {
+        const next = new Map(current);
+
+        for (const address of departedAddresses) {
+          next.delete(address);
+        }
+
+        return next;
+      });
+    }
+
     const requestKeyByAddress = new Map<string, string>();
     const needed: string[] = [];
 
@@ -521,6 +592,13 @@ function useAvatarProfiles(
 
       latestRequestKeysRef.current.set(address, requestKey);
       requestKeyByAddress.set(address, requestKey);
+
+      const scheduledRetry = retryTimersRef.current.get(address);
+
+      if (scheduledRetry && scheduledRetry.requestKey !== requestKey) {
+        window.clearTimeout(scheduledRetry.timer);
+        retryTimersRef.current.delete(address);
+      }
 
       if (
         profiles.get(address)?.requestKey !== requestKey &&
@@ -554,7 +632,20 @@ function useAvatarProfiles(
       settlePending(profile.address);
 
       if (!isCurrent(profile.address)) {
+        revokeAvatarObjectUrl(profile.avatarSrc);
         return;
+      }
+
+      const previousObjectUrl = profileAvatarObjectUrlsRef.current.get(profile.address);
+
+      if (previousObjectUrl && previousObjectUrl !== profile.avatarSrc) {
+        profileAvatarObjectUrlsRef.current.delete(profile.address);
+        releaseObjectUrl(previousObjectUrl);
+      }
+
+      if (profile.avatarSrc) {
+        profileAvatarObjectUrlsRef.current.set(profile.address, profile.avatarSrc);
+        avatarObjectUrlsRef.current.add(profile.avatarSrc);
       }
 
       setProfiles((current) => {
@@ -578,21 +669,82 @@ function useAvatarProfiles(
           }
 
           next ??= new Map(current);
-          next.set(profile.address, { ...profile, requestKey: requestKeyByAddress.get(profile.address) as string });
+          // Keep a current address-scoped image during the small interval while
+          // its refreshed pointer request is pending. A final unavailable
+          // result clears it through commit(), and a ready result replaces it.
+          const existing = current.get(profile.address);
+          next.set(profile.address, {
+            ...profile,
+            avatarSrc: existing?.avatarSrc ?? profile.avatarSrc,
+            requestKey: requestKeyByAddress.get(profile.address) as string,
+          });
         }
 
         return next ?? current;
       });
     };
 
+    function scheduleAvatarRetry(profile: AvatarProfile, retryAfterSeconds: number) {
+      if (!isCurrent(profile.address)) {
+        settlePending(profile.address);
+        return;
+      }
+
+      const requestKey = requestKeyByAddress.get(profile.address) as string;
+      const existing = retryTimersRef.current.get(profile.address);
+
+      if (existing?.requestKey === requestKey) {
+        return;
+      }
+
+      const timer = window.setTimeout(() => {
+        retryTimersRef.current.delete(profile.address);
+
+        if (isCurrent(profile.address)) {
+          loadAccountAvatar(profile);
+        } else {
+          settlePending(profile.address);
+        }
+      }, retryAfterSeconds * 1000);
+
+      retryTimersRef.current.set(profile.address, { requestKey, timer });
+    }
+
+    function loadAccountAvatar(profile: AvatarProfile) {
+      if (!isCurrent(profile.address)) {
+        settlePending(profile.address);
+        return;
+      }
+
+      void fetchAccountAvatar(profile.address, actions)
+        .then((avatar) => {
+          if (avatar.kind === 'ready') {
+            commit({ ...profile, avatarSrc: avatar.src });
+          } else if (avatar.kind === 'pending') {
+            scheduleAvatarRetry(profile, avatar.retryAfterSeconds);
+          } else {
+            commit(profile);
+          }
+        })
+        .catch(() => {
+          // The bridge parser is intentionally fail-closed. An unexpected
+          // rejection has the same UI result as an unavailable avatar.
+          commit(profile);
+        });
+    }
+
     const loadIndividually = (targets: string[]) => {
       for (const address of targets) {
         const preferredName = knownNamesByAddress.get(address) ?? null;
         void loadAvatarProfile({ actions, address, preferredName })
-          .then(commit)
+          .then((profile) => {
+            commitMany([profile]);
+            loadAccountAvatar(profile);
+          })
           .catch(() => {
-            // loadAvatarProfile resolves with a fallback profile; an
-            // unexpected rejection just releases the address for retry.
+            // loadAvatarProfile normally degrades to a name-less profile. This
+            // guard only handles an unexpected failure without starting a
+            // duplicate request chain.
             settlePending(address);
           });
       }
@@ -600,30 +752,23 @@ function useAvatarProfiles(
 
     if (needed.length > 0) {
       if (hasAction(actions, 'RESOLVE_IDENTITIES')) {
-        // One batched name + avatar-presence resolution for the whole visible set
-        // (instead of a GET_ACCOUNT_NAMES per address), then fetch only the
-        // avatars that actually exist through the hardened blob path.
+        // Batch only display-name resolution. RESOLVE_IDENTITIES.avatarSrc is
+        // a legacy named-thumbnail hint, not evidence of a current pointer.
         void resolveAvatarIdentities({ actions, addresses: needed, knownNamesByAddress })
           .then((resolved) => {
             // Commit names first in a single update so labels are not gated on images.
-            commitMany(needed.map((address) => ({ address, avatarSrc: null, name: resolved.get(address)?.name ?? null })));
+            const profiles = needed.map((address) => ({
+              address,
+              avatarSrc: null,
+              name: resolved.get(address)?.name ?? null,
+            }));
 
-            for (const address of needed) {
-              const identity = resolved.get(address);
-              const name = identity?.name ?? null;
+            commitMany(profiles);
 
-              if (name && identity?.hasAvatar) {
-                void fetchAvatarImage(name, actions)
-                  .then((avatarSrc) => commit({ address, avatarSrc, name }))
-                  .catch(() => {
-                    // Keep the name-only profile if the avatar image fails to
-                    // load; release the address either way.
-                    settlePending(address);
-                  });
-              } else {
-                // The name-only commit above was this address's final state.
-                settlePending(address);
-              }
+            for (const profile of profiles) {
+              // Fetch every currently rendered address. Accounts without a
+              // registered name can still have an explicit avatar pointer.
+              loadAccountAvatar(profile);
             }
           })
           .catch(() => {
@@ -634,7 +779,7 @@ function useAvatarProfiles(
         loadIndividually(needed);
       }
     }
-  }, [actionsKey, addressKey, knownNamesKey]);
+  }, [actionsKey, addressKey, knownNamesKey, protectedObjectUrl]);
 
   return profiles;
 }
@@ -1365,29 +1510,35 @@ export default function App() {
       addresses.add(accountInfoTarget.sender);
     }
 
-    for (const message of messages.value) {
+    // MessageList mounts the selected conversation, so these are the message
+    // identities actually visible in the current chat pane.
+    for (const message of combinedMessages) {
       addresses.add(message.sender);
     }
 
     for (const direct of mergedDirects) {
-      addresses.add(direct.address);
-    }
-
-    for (const member of groupMembers.value) {
-      const address = getGroupMemberAddress(member);
-
-      if (address) {
-        addresses.add(address);
+      // A collapsed direct list renders only unread rows plus the selected
+      // chat. Do not download an image just because a direct is stored.
+      if (!isDirectCollapsed || unreadDirectAddresses.has(direct.address) || direct.address === selectedDirectAddress) {
+        addresses.add(direct.address);
       }
     }
 
-    if (selectedGroup?.owner) {
-      addresses.add(selectedGroup.owner);
+    if (showGroupMembers && membersOpen) {
+      for (const member of selectedGroupMembers) {
+        const address = getGroupMemberAddress(member);
+
+        if (address) {
+          addresses.add(address);
+        }
+      }
     }
 
-    for (const transaction of pendingApprovals.value) {
-      if (transaction.creatorAddress) {
-        addresses.add(transaction.creatorAddress);
+    if (approvalModalOpen) {
+      for (const transaction of pendingApprovals.value) {
+        if (transaction.creatorAddress) {
+          addresses.add(transaction.creatorAddress);
+        }
       }
     }
 
@@ -1395,13 +1546,24 @@ export default function App() {
   }, [
     account?.address,
     accountInfoTarget?.sender,
-    groupMembers.value,
+    approvalModalOpen,
+    combinedMessages,
+    isDirectCollapsed,
+    membersOpen,
     mergedDirects,
-    messages.value,
     pendingApprovals.value,
-    selectedGroup?.owner,
+    selectedDirectAddress,
+    selectedGroupMembers,
+    showGroupMembers,
+    unreadDirectAddresses,
   ]);
-  const avatarProfiles = useAvatarProfiles(avatarAddresses, knownAvatarNames, actions, actionsKey);
+  const avatarProfiles = useAvatarProfiles(
+    avatarAddresses,
+    knownAvatarNames,
+    actions,
+    actionsKey,
+    avatarLightboxImage?.src ?? null,
+  );
 
   useEffect(() => {
     if (isSelectedGeneralChat && hasSelectedMessages && messages.phase === 'ready') {
