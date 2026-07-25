@@ -24,19 +24,22 @@ export function getDirectTitle(direct: ActiveDirectChat) {
   return direct.name || getShortAddress(direct.address);
 }
 
-// Avatar URLs are produced by fetchAvatarImage as `blob:` URLs (via
-// URL.createObjectURL) or null. They are cached keyed by the untrusted
+// Avatar URLs are produced by the pointer-aware bridge client as `blob:` URLs
+// (via URL.createObjectURL) or null. They are cached keyed by the untrusted
 // message-sender address, which static analysis treats as tainting every field
-// read back from that cache. Confirm the value is one of the schemes we actually
-// emit before it reaches an `<img src>` — defense-in-depth, and it makes the
-// safety explicit at the one place every avatar source funnels through.
+// read back from that cache. Confirm the value is the only scheme we emit before
+// it reaches an `<img src>` — defense-in-depth at the single avatar render seam.
 function isSafeAvatarUrl(value: string) {
-  return value.startsWith('blob:') || value.startsWith('data:image/');
+  return value.startsWith('blob:');
 }
 
 export function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
   const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
-  const candidateSrc = profile?.name === name ? profile.avatarSrc : null;
+  // Pointer-aware avatar responses are validated against the account address
+  // before this address-keyed profile is committed. A historical sender name
+  // can differ from the account's current name, but must not hide that account's
+  // current avatar or pair it with another address.
+  const candidateSrc = profile?.avatarSrc ?? null;
   const avatarSrc = typeof candidateSrc === 'string' && isSafeAvatarUrl(candidateSrc) ? candidateSrc : null;
 
   return { avatarSrc, name };

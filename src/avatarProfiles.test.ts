@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  fetchAvatarImage,
+  AVATAR_MAX_BYTES,
+  fetchAccountAvatar,
   getAvatarFallbackCharacter,
   loadAvatarProfile,
   normalizeRegisteredName,
+  revokeAvatarObjectUrl,
 } from './avatarProfiles';
 import { qdnRequest } from './qdnRequest';
 
 vi.mock('./qdnRequest', () => ({
   buildNodeWebSocketUrl: (path: string) => `ws://127.0.0.1:24891${path}`,
-  // Real implementation: fetchAvatarImage's bridge-capability gate must
-  // behave authentically against the action lists the tests pass.
   hasAction: (actions: string[], ...candidates: string[]) =>
     candidates.some((candidate) => actions.some((action) => action.toUpperCase() === candidate.toUpperCase())),
   qdnRequest: vi.fn(),
@@ -18,203 +18,102 @@ vi.mock('./qdnRequest', () => ({
 
 describe('avatar profile helpers', () => {
   const qdnRequestMock = vi.mocked(qdnRequest);
-  // The runtime serves avatars as opaque blob: URLs; node has no
-  // URL.createObjectURL, so provide one that echoes the blob's type back.
   const createObjectURLMock = vi.fn((blob: Blob) => `blob:mock/${blob.type}`);
+  const revokeObjectURLMock = vi.fn();
 
   beforeEach(() => {
     qdnRequestMock.mockReset();
     createObjectURLMock.mockClear();
-    (URL as unknown as { createObjectURL: typeof createObjectURLMock }).createObjectURL =
-      createObjectURLMock;
+    revokeObjectURLMock.mockClear();
+    (URL as unknown as { createObjectURL: typeof createObjectURLMock }).createObjectURL = createObjectURLMock;
+    (URL as unknown as { revokeObjectURL: typeof revokeObjectURLMock }).revokeObjectURL = revokeObjectURLMock;
   });
 
-  it('normalizes registered names without changing their first character', () => {
-    expect(normalizeRegisteredName('alice')).toBe('alice');
+  it('normalizes registered names and fallback characters without altering them', () => {
     expect(normalizeRegisteredName('7even')).toBe('7even');
-    expect(normalizeRegisteredName('#hash')).toBe('#hash');
     expect(normalizeRegisteredName('')).toBeNull();
-    expect(normalizeRegisteredName(null)).toBeNull();
-  });
-
-  it('returns fallback characters without uppercasing or filtering symbols', () => {
-    expect(getAvatarFallbackCharacter('alice')).toBe('a');
-    expect(getAvatarFallbackCharacter('7even')).toBe('7');
     expect(getAvatarFallbackCharacter('#hash')).toBe('#');
     expect(getAvatarFallbackCharacter(null)).toBe('?');
   });
 
-  // The runtime polls QDN build status until READY before fetching the image.
-  const readyStatus = { data: { status: 'READY' } };
-
-  it('fetches avatar images from THUMBNAIL with identifier avatar', async () => {
-    qdnRequestMock
-      .mockResolvedValueOnce(readyStatus)
-      .mockResolvedValueOnce({ filename: 'avatar.png', mimeType: 'image/png', size: 128 })
-      .mockResolvedValueOnce('iVBORw0KGgo=');
-
-    await expect(fetchAvatarImage('alice')).resolves.toBe('blob:mock/image/png');
-    const blob = createObjectURLMock.mock.calls[0]?.[0];
-    expect(blob?.type).toBe('image/png');
-    expect(blob?.size).toBe(8);
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
-      action: 'FETCH_NODE_API',
-      path: '/arbitrary/resource/status/THUMBNAIL/alice/avatar?build=true',
-      maxBytes: 64 * 1024,
-    });
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
-      action: 'GET_QDN_RESOURCE_PROPERTIES',
-      service: 'THUMBNAIL',
-      name: 'alice',
-      identifier: 'avatar',
-      path: '',
-    });
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
-      action: 'FETCH_QDN_RESOURCE',
-      service: 'THUMBNAIL',
-      name: 'alice',
-      identifier: 'avatar',
-      path: '',
-      encoding: 'base64',
-      maxBytes: 500 * 1024,
-    });
-    // The cache-bypassing rebuild flag must no longer be sent.
-    expect(JSON.stringify(qdnRequestMock.mock.calls)).not.toContain('rebuild');
-    expect(JSON.stringify(qdnRequestMock.mock.calls)).not.toContain('qortium_avatar');
+  it('does not request an image when Home does not advertise the pointer action', async () => {
+    await expect(fetchAccountAvatar('Qabc', ['FETCH_NODE_API'])).resolves.toEqual({ kind: 'unavailable' });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
   });
 
-  it('downgrades non-raster image types so script-bearing avatars cannot reach an img src', async () => {
-    qdnRequestMock
-      .mockResolvedValueOnce(readyStatus)
-      .mockResolvedValueOnce({ mimeType: 'image/svg+xml', size: 128 })
-      .mockResolvedValueOnce('PHN2Zy8+');
+  it.each([
+    ['POINTER', { identifier: 'avatar', name: 'alice', service: 'THUMBNAIL' }],
+    ['LEGACY', null],
+  ] as const)('creates a safe Blob URL for a ready %s avatar', async (source, descriptor) => {
+    qdnRequestMock.mockResolvedValueOnce({
+      address: 'Qabc',
+      body: 'iVBORw0KGgo=',
+      contentLength: 8,
+      contentType: 'image/png',
+      descriptor,
+      encoding: 'base64',
+      source,
+    });
 
-    await expect(fetchAvatarImage('alice')).resolves.toBe('blob:mock/image/png');
+    await expect(fetchAccountAvatar('Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toEqual({
+      kind: 'ready', source, src: 'blob:mock/image/png',
+    });
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_ACCOUNT_AVATAR', address: 'Qabc', maxBytes: AVATAR_MAX_BYTES,
+    });
     expect(createObjectURLMock.mock.calls[0]?.[0]?.type).toBe('image/png');
   });
 
-  it('rejects payloads that fall outside the base64 alphabet', async () => {
-    qdnRequestMock
-      .mockResolvedValueOnce(readyStatus)
-      .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
-      .mockResolvedValueOnce('not base64!');
-
-    await expect(fetchAvatarImage('alice')).rejects.toThrow(/malformed image data/);
-  });
-
-  it('gives up without fetching when the avatar resource is terminally unavailable', async () => {
-    qdnRequestMock.mockResolvedValueOnce({ data: { status: 'NOT_PUBLISHED' } });
-
-    await expect(fetchAvatarImage('alice')).rejects.toThrow(/not available/);
-    // Only the status poll runs — no properties probe or fetch.
-    expect(qdnRequestMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to a placeholder profile when avatar data is malformed', async () => {
-    qdnRequestMock
-      .mockResolvedValueOnce(readyStatus)
-      .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
-      .mockResolvedValueOnce('<script>alert(1)</script>');
-
-    await expect(loadAvatarProfile({ address: 'Qabc', preferredName: 'alice' })).resolves.toEqual({
-      address: 'Qabc',
-      avatarSrc: null,
-      name: 'alice',
-    });
-  });
-
-  it('uses a preferred message or account name before looking up address names', async () => {
-    qdnRequestMock
-      .mockResolvedValueOnce(readyStatus)
-      .mockResolvedValueOnce({ mimeType: 'image/png', size: 128 })
-      .mockResolvedValueOnce('iVBORw0KGgo=');
-
-    await expect(
-      loadAvatarProfile({
-        address: 'Qabc',
-        preferredName: 'alice',
-        actions: ['GET_ACCOUNT_NAMES', 'GET_QDN_RESOURCE_PROPERTIES', 'FETCH_QDN_RESOURCE'],
-      }),
-    ).resolves.toEqual({
-      address: 'Qabc',
-      avatarSrc: 'blob:mock/image/png',
-      name: 'alice',
-    });
-    expect(qdnRequestMock).not.toHaveBeenCalledWith({
-      action: 'GET_ACCOUNT_NAMES',
-      address: 'Qabc',
-    });
-  });
-
-  it('falls back to the first returned account name', async () => {
-    qdnRequestMock
-      .mockResolvedValueOnce([{ name: null, owner: 'Qabc' }, { name: 'bob', owner: 'Qabc' }])
-      .mockResolvedValueOnce(readyStatus)
-      .mockResolvedValueOnce({ mimeType: 'image/jpeg', size: 128 })
-      .mockResolvedValueOnce('/9j/4AAQSkZJRg==');
-
-    await expect(
-      loadAvatarProfile({
-        address: 'Qabc',
-        actions: ['GET_ACCOUNT_NAMES', 'GET_QDN_RESOURCE_PROPERTIES', 'FETCH_QDN_RESOURCE'],
-      }),
-    ).resolves.toEqual({
-      address: 'Qabc',
-      avatarSrc: 'blob:mock/image/jpeg',
-      name: 'bob',
-    });
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
-      action: 'GET_ACCOUNT_NAMES',
-      address: 'Qabc',
-    });
-  });
-
-  it('uses node read fallback when the account names bridge action is unavailable', async () => {
-    // Fallback mode resolves the name over REST, but the avatar image itself
-    // needs the bridge-only GET_QDN_RESOURCE_PROPERTIES / FETCH_QDN_RESOURCE
-    // actions — with an empty action list the load fails fast to a name-only
-    // profile without running the readiness poll at all.
+  it('accepts BMP images returned by Home', async () => {
     qdnRequestMock.mockResolvedValueOnce({
-      body: '[]',
-      contentType: 'application/json',
-      data: [{ name: 'carol', owner: 'Qabc' }],
-      ok: true,
-      status: 200,
-      statusText: 'OK',
+      address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/bmp',
+      descriptor: { identifier: 'avatar', name: 'alice', service: 'THUMBNAIL' }, encoding: 'base64', source: 'POINTER',
     });
 
-    await expect(loadAvatarProfile({ address: 'Qabc', actions: [] })).resolves.toEqual({
-      address: 'Qabc',
-      avatarSrc: null,
-      name: 'carol',
-    });
-    expect(qdnRequestMock).toHaveBeenCalledTimes(1);
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
-      action: 'FETCH_NODE_API',
-      maxBytes: 2097152,
-      path: '/names/address/Qabc',
+    await expect(fetchAccountAvatar('Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toMatchObject({
+      kind: 'ready', src: 'blob:mock/image/bmp',
     });
   });
 
-  it('returns placeholder profile state when no registered name is known', async () => {
-    qdnRequestMock.mockResolvedValueOnce([]);
+  it.each([
+    { address: 'Qother', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'LEGACY' },
+    { address: 'Qabc', body: 'not base64!', contentLength: 8, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'LEGACY' },
+    { address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: 9, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'LEGACY' },
+    { address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/svg+xml', descriptor: null, encoding: 'base64', source: 'LEGACY' },
+    { address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: AVATAR_MAX_BYTES + 1, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'LEGACY' },
+    { address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'POINTER' },
+  ])('rejects malformed or unsafe avatar responses', async (response) => {
+    qdnRequestMock.mockResolvedValueOnce(response);
+
+    await expect(fetchAccountAvatar('Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toEqual({ kind: 'unavailable' });
+    expect(createObjectURLMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a bounded retry delay only for an explicit pending response', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      address: 'Qabc', descriptor: { identifier: 'avatar', name: 'alice', service: 'THUMBNAIL' },
+      retryAfterSeconds: 99, source: 'POINTER', status: 'PENDING',
+    });
+
+    await expect(fetchAccountAvatar('Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toEqual({
+      kind: 'pending', retryAfterSeconds: 30, source: 'POINTER',
+    });
+    expect(createObjectURLMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps display-name resolution separate from an address avatar', async () => {
+    qdnRequestMock.mockResolvedValueOnce([{ name: 'alice', owner: 'Qabc' }]);
 
     await expect(loadAvatarProfile({ address: 'Qabc', actions: ['GET_ACCOUNT_NAMES'] })).resolves.toEqual({
-      address: 'Qabc',
-      avatarSrc: null,
-      name: null,
+      address: 'Qabc', avatarSrc: null, name: 'alice',
     });
-    expect(qdnRequestMock).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the registered name when avatar loading fails', async () => {
-    // Terminal status -> waitForAvatarReady bails fast, fetch throws, name kept.
-    qdnRequestMock.mockResolvedValueOnce({ data: { status: 'NOT_PUBLISHED' } });
+  it('revokes only Blob URLs', () => {
+    revokeAvatarObjectUrl('https://node.example/avatar.png');
+    revokeAvatarObjectUrl('blob:mock/image/png');
 
-    await expect(loadAvatarProfile({ address: 'Qabc', preferredName: 'alice' })).resolves.toEqual({
-      address: 'Qabc',
-      avatarSrc: null,
-      name: 'alice',
-    });
+    expect(revokeObjectURLMock).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURLMock).toHaveBeenCalledWith('blob:mock/image/png');
   });
 });
