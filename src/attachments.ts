@@ -27,6 +27,45 @@ export type PreparedAttachment = {
   size: number;
 };
 
+type TransferFileItem = {
+  getAsFile(): File | null;
+  kind: string;
+};
+
+type TransferFileSource = {
+  files?: ArrayLike<File> | null;
+  items?: ArrayLike<TransferFileItem> | null;
+};
+
+/**
+ * Browser clipboard implementations do not agree on whether a copied
+ * screenshot appears in DataTransfer.files, DataTransfer.items, or both.
+ * Prefer the direct FileList, then fall back to file-kind items. This also
+ * deliberately ignores text/HTML clipboard entries so ordinary text paste
+ * remains the textarea's job.
+ */
+export function getFirstTransferFile(source: TransferFileSource | null | undefined): File | null {
+  const directFile = source?.files?.[0];
+
+  if (directFile) {
+    return directFile;
+  }
+
+  for (const item of Array.from(source?.items ?? [])) {
+    if (item.kind !== 'file') {
+      continue;
+    }
+
+    const file = item.getAsFile();
+
+    if (file) {
+      return file;
+    }
+  }
+
+  return null;
+}
+
 export function getAttachmentService(file: Pick<File, 'type'>): AttachmentService {
   // SVG deliberately ships as a plain file: the inline image-preview pipeline
   // is raster-only by design (script-bearing SVG), so publishing SVG as IMAGE

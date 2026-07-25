@@ -14,6 +14,7 @@ import {
   buildAttachmentIdentifier,
   buildAttachmentLink,
   formatAttachmentSize,
+  getFirstTransferFile,
   getAttachmentMaxBytes,
   getAttachmentService,
   prepareAttachment,
@@ -3036,10 +3037,10 @@ export default function App() {
   }
 
   function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const file = event.clipboardData.files[0];
+    const file = getFirstTransferFile(event.clipboardData);
 
-    // Only intercept when the clipboard carries a file (e.g. a screenshot);
-    // plain text pastes flow through untouched.
+    // Only intercept when the clipboard carries a file (e.g. a screenshot or
+    // file copied from the desktop); plain text pastes flow through untouched.
     if (file && canAttach) {
       event.preventDefault();
       stageAttachment(file);

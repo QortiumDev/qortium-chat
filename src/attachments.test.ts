@@ -7,10 +7,38 @@ import {
   buildAttachmentLink,
   formatAttachmentSize,
   getAttachmentMaxBytes,
+  getFirstTransferFile,
   getAttachmentService,
 } from './attachments';
 
 describe('attachment helpers', () => {
+  it('prefers a direct clipboard file and falls back to a file-kind clipboard item', () => {
+    const direct = { name: 'direct.png' } as File;
+    const fallback = { name: 'clipboard.png' } as File;
+
+    expect(
+      getFirstTransferFile({
+        files: { 0: direct, length: 1 },
+        items: { 0: { getAsFile: () => fallback, kind: 'file' }, length: 1 },
+      }),
+    ).toBe(direct);
+    expect(
+      getFirstTransferFile({
+        files: { length: 0 },
+        items: { 0: { getAsFile: () => fallback, kind: 'file' }, length: 1 },
+      }),
+    ).toBe(fallback);
+  });
+
+  it('does not intercept ordinary text clipboard data', () => {
+    expect(
+      getFirstTransferFile({
+        files: { length: 0 },
+        items: { 0: { getAsFile: () => null, kind: 'string' }, length: 1 },
+      }),
+    ).toBeNull();
+  });
+
   it('routes raster images to IMAGE and everything else to ATTACHMENT', () => {
     expect(getAttachmentService({ type: 'image/png' })).toBe('IMAGE');
     expect(getAttachmentService({ type: 'image/webp' })).toBe('IMAGE');
