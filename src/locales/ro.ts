@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'Închide',
   'button.playMedia': 'Redă',
   'label.message.edited': 'Editat',
-  'label.message.original': 'Original',
-  'label.editHistory': 'Istoricul editărilor',
   'label.reactions': 'Reacții',
   'label.reactionDetails': 'Detalii reacție',
   'label.composer.editing': 'Se editează mesajul',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'Adaugă reacție',
   'action.removeReaction': 'Elimină reacția',
   'action.viewReactionDetails': 'Vezi reacțiile {reaction}',
-  'action.toggleEditHistory': 'Afișează sau ascunde istoricul editărilor',
   'action.goToOriginal': 'Mergi la mesajul original',
 
   'aria.accountInfo': 'Informații cont',

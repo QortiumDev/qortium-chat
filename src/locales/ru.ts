@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'Закрыть',
   'button.playMedia': 'Воспроизвести',
   'label.message.edited': 'Изменено',
-  'label.message.original': 'Оригинал',
-  'label.editHistory': 'История изменений',
   'label.reactions': 'Реакции',
   'label.reactionDetails': 'Сведения о реакции',
   'label.composer.editing': 'Редактирование сообщения',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'Добавить реакцию',
   'action.removeReaction': 'Удалить реакцию',
   'action.viewReactionDetails': 'Показать реакции {reaction}',
-  'action.toggleEditHistory': 'Показать или скрыть историю изменений',
   'action.goToOriginal': 'Перейти к исходному сообщению',
 
   'aria.accountInfo': 'Информация об аккаунте',

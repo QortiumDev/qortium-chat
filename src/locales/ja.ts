@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': '閉じる',
   'button.playMedia': '再生',
   'label.message.edited': '編集済み',
-  'label.message.original': '元のメッセージ',
-  'label.editHistory': '編集履歴',
   'label.reactions': 'リアクション',
   'label.reactionDetails': 'リアクションの詳細',
   'label.composer.editing': 'メッセージを編集中',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'リアクションを追加',
   'action.removeReaction': 'リアクションを削除',
   'action.viewReactionDetails': '{reaction} のリアクションを表示',
-  'action.toggleEditHistory': '編集履歴の表示/非表示',
   'action.goToOriginal': '元のメッセージへ移動',
 
   'aria.accountInfo': 'アカウント情報',

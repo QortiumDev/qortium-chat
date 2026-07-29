@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'Fechar',
   'button.playMedia': 'Reproduzir',
   'label.message.edited': 'Editado',
-  'label.message.original': 'Original',
-  'label.editHistory': 'Histórico de edições',
   'label.reactions': 'Reações',
   'label.reactionDetails': 'Detalhes da reação',
   'label.composer.editing': 'Editando mensagem',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'Adicionar reação',
   'action.removeReaction': 'Remover reação',
   'action.viewReactionDetails': 'Ver reações {reaction}',
-  'action.toggleEditHistory': 'Mostrar ou ocultar o histórico de edições',
   'action.goToOriginal': 'Ir para a mensagem original',
 
   'aria.accountInfo': 'Informações da conta',

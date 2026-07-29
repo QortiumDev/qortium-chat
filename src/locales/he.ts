@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'סגור',
   'button.playMedia': 'נגן',
   'label.message.edited': 'נערך',
-  'label.message.original': 'מקור',
-  'label.editHistory': 'היסטוריית עריכות',
   'label.reactions': 'תגובות',
   'label.reactionDetails': 'פרטי התגובה',
   'label.composer.editing': 'עריכת הודעה',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'הוסף תגובה',
   'action.removeReaction': 'הסר תגובה',
   'action.viewReactionDetails': 'הצג תגובות {reaction}',
-  'action.toggleEditHistory': 'הצגה או הסתרה של היסטוריית העריכות',
   'action.goToOriginal': 'מעבר להודעה המקורית',
 
   'aria.accountInfo': 'פרטי חשבון',

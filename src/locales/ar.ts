@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'إغلاق',
   'button.playMedia': 'تشغيل',
   'label.message.edited': 'معدّل',
-  'label.message.original': 'الأصل',
-  'label.editHistory': 'سجل التعديلات',
   'label.reactions': 'التفاعلات',
   'label.reactionDetails': 'تفاصيل التفاعل',
   'label.composer.editing': 'تعديل الرسالة',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'إضافة تفاعل',
   'action.removeReaction': 'إزالة التفاعل',
   'action.viewReactionDetails': 'عرض تفاعلات {reaction}',
-  'action.toggleEditHistory': 'إظهار أو إخفاء سجل التعديلات',
   'action.goToOriginal': 'الانتقال إلى الرسالة الأصلية',
 
   'aria.accountInfo': 'معلومات الحساب',
