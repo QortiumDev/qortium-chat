@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchQdnImagePreview,
   fetchQdnImagePreviews,
@@ -23,6 +23,10 @@ describe('message link helpers', () => {
 
   beforeEach(() => {
     qdnRequestMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('splits message text around supported app links', () => {
@@ -417,6 +421,41 @@ describe('message link helpers', () => {
       encoding: 'base64',
       rebuild: true,
       maxBytes: 5 * 1024 * 1024,
+    });
+  });
+
+  it('decodes intrinsic image dimensions before returning a preview', async () => {
+    class LoadedImage {
+      naturalHeight = 360;
+      naturalWidth = 640;
+      onerror: (() => void) | null = null;
+      onload: (() => void) | null = null;
+
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+
+    vi.stubGlobal('Image', LoadedImage);
+    qdnRequestMock
+      .mockResolvedValueOnce({ filename: 'photo.png', mimeType: 'image/png', size: 128 })
+      .mockResolvedValueOnce('iVBORw0KGgo=');
+
+    await expect(
+      fetchQdnImagePreview({
+        identifier: 'photo',
+        name: 'Alice',
+        path: '',
+        qdnUrl: 'qdn://IMAGE/Alice/photo',
+        service: 'IMAGE',
+      }),
+    ).resolves.toEqual({
+      alt: 'photo.png',
+      height: 360,
+      mimeType: 'image/png',
+      qdnUrl: 'qdn://IMAGE/Alice/photo',
+      src: 'data:image/png;base64,iVBORw0KGgo=',
+      width: 640,
     });
   });
 
