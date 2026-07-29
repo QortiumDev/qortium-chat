@@ -495,6 +495,7 @@ export const MessageList = memo(function MessageList({
   canOpenDocumentViewer,
   canOpenMediaPlayer,
   canSaveQdnResource,
+  emptyHint,
   initialScrollPosition,
   messages,
   olderMessagesError,
@@ -525,6 +526,7 @@ export const MessageList = memo(function MessageList({
   canOpenDocumentViewer: boolean;
   canOpenMediaPlayer: boolean;
   canSaveQdnResource: boolean;
+  emptyHint?: string;
   initialScrollPosition: ChatScrollPosition | undefined;
   messages: ChatMessage[];
   olderMessagesError: string;
@@ -1475,7 +1477,7 @@ export const MessageList = memo(function MessageList({
   }
 
   if (messages.length === 0 && systemMessages.length === 0) {
-    return <p className="empty">{t('hint.noMessages')}</p>;
+    return <p className="empty">{emptyHint ?? t('hint.noMessages')}</p>;
   }
 
   const { detailsReaction, detailsThread, pickerReactions, pickerThread } = reactionPopoverContent;

@@ -966,6 +966,7 @@ export default function App() {
   // choice is persisted (app-wide) and restored on the next app start.
   const [isGroupsCollapsed, setGroupsCollapsed] = useState(() => readSidebarCollapse()?.groups ?? true);
   const [isDirectCollapsed, setDirectCollapsed] = useState(() => readSidebarCollapse()?.direct ?? true);
+  const [showGroupOnboarding, setShowGroupOnboarding] = useState(true);
   const [draft, setDraft] = useState('');
   const [composeContext, setComposeContext] = useState<
     | { kind: 'edit'; thread: MessageThread }
@@ -1811,7 +1812,32 @@ export default function App() {
       ? accountLockedLabel
       : bridge.value.isHomeBridge
         ? t('action.groupApprovalUnavailable')
-        : t('action.groupApprovalUnavailableBrowser');
+      : t('action.groupApprovalUnavailableBrowser');
+  const topActionUnavailableLabel =
+    selectedChat?.kind === 'group' &&
+    selectedGroupId !== null &&
+    selectedGroupId > 0 &&
+    isSelectedGroupMembershipConfirmed &&
+    !isConfirmedJoinedGroup &&
+    canJoinGroup &&
+    !canSubmitJoin
+      ? hasPendingJoinTransaction
+        ? t('button.join.transaction.pending')
+        : hasPendingJoinRequest
+          ? t('button.join.request.pending')
+          : groupJoinUnavailableLabel
+      : selectedChat?.kind === 'group' &&
+          selectedGroupId !== null &&
+          selectedGroupId > 0 &&
+          isConfirmedJoinedGroup &&
+          canLeaveGroup &&
+          !canSubmitLeave
+        ? hasPendingLeaveTransaction
+          ? t('button.leave.transaction.pending')
+          : groupLeaveUnavailableLabel
+        : showMintingControls && accountMintingStatus?.isMinting !== true && !canSubmitStartMinting
+          ? startMintingTitle
+          : '';
 
   async function loadGroups(nextSearch = search, actionList = actions) {
     setGroups({ phase: 'loading', value: groups.value });
@@ -5148,6 +5174,20 @@ export default function App() {
                 </button>
               </form>
             ) : null}
+            {!isGroupsCollapsed && showGroupOnboarding ? (
+              <div className="panel__intro">
+                <p>{t('hint.groupOnboarding')}</p>
+                <button
+                  aria-label={t('button.close')}
+                  className="icon-button panel__intro-close"
+                  onClick={() => setShowGroupOnboarding(false)}
+                  title={t('button.close')}
+                  type="button"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            ) : null}
             {!isGroupsCollapsed && groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
             {groups.phase === 'loading' && !isGroupsCollapsed ? (
               <LoadingRows count={5} label={t('label.loading')} />
@@ -5299,6 +5339,7 @@ export default function App() {
                 </button>
               ) : null}
             </div>
+            {topActionUnavailableLabel ? <p className="chat-pane__action-hint">{topActionUnavailableLabel}</p> : null}
           </div>
 
           {messages.phase === 'error' ? (
@@ -5329,7 +5370,26 @@ export default function App() {
           <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
             {liveAnnouncement}
           </div>
-          {messages.phase === 'loading' || (messages.phase === 'ready' && selectedChat !== null && !hasSelectedMessages) ? (
+          {!selectedChat ? (
+            <div className="chat-empty-state">
+              <p>{t('hint.noChatSelected')}</p>
+              {groups.value.find((group) => isGeneralChatGroup(group)) ? (
+                <button
+                  className="button"
+                  onClick={() => {
+                    const generalChat = groups.value.find((group) => isGeneralChatGroup(group));
+
+                    if (generalChat) {
+                      selectGroup(generalChat);
+                    }
+                  }}
+                  type="button"
+                >
+                  {t('button.startGeneralChat')}
+                </button>
+              ) : null}
+            </div>
+          ) : messages.phase === 'loading' || (messages.phase === 'ready' && !hasSelectedMessages) ? (
             // The second arm covers the transient frame right after a chat
             // switch, before the load effect runs: `messages` still holds the
             // previous chat then, and must not flash under the new header.
@@ -5341,6 +5401,7 @@ export default function App() {
               canOpenDocumentViewer={canOpenDocumentViewer}
               canOpenMediaPlayer={canOpenMediaPlayer}
               canSaveQdnResource={canSaveQdnResource}
+              emptyHint={isSelectedGeneralChat ? t('hint.noMessages.general') : undefined}
               initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
               messages={combinedMessages}
               olderMessagesError={olderMessagesState.error}
@@ -5368,14 +5429,25 @@ export default function App() {
             />
           )}
 
-          {publicNodeSendNotice ? (
+          {!selectedChat ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{t('hint.noChatSelected')}</p>
+            </div>
+          ) : publicNodeSendNotice ? (
             <div aria-live="polite" className="composer composer--notice">
               <p>{publicNodeSendNotice}</p>
             </div>
           ) : showGroupComposerNotice ? (
             <div aria-live="polite" className="composer composer--notice">
-              <p>{groupComposerNotice}</p>
+              <div>
+                <p>{groupComposerNotice}</p>
+                <p>{t('hint.groupApprovalDelay')}</p>
+              </div>
               {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}
+            </div>
+          ) : !canComposeMessage ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{selectedChat.kind === 'direct' ? directSendUnavailableLabel : groupSendUnavailableLabel}</p>
             </div>
           ) : (
             <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
