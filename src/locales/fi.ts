@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'Sulje',
   'button.playMedia': 'Toista',
   'label.message.edited': 'Muokattu',
-  'label.message.original': 'Alkuperäinen',
-  'label.editHistory': 'Muokkaushistoria',
   'label.reactions': 'Reaktiot',
   'label.reactionDetails': 'Reaktion tiedot',
   'label.composer.editing': 'Muokataan viestiä',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'Lisää reaktio',
   'action.removeReaction': 'Poista reaktio',
   'action.viewReactionDetails': 'Näytä {reaction}-reaktiot',
-  'action.toggleEditHistory': 'Näytä tai piilota muokkaushistoria',
   'action.goToOriginal': 'Siirry alkuperäiseen viestiin',
 
   'aria.accountInfo': 'Tilin tiedot',

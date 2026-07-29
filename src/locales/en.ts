@@ -227,8 +227,6 @@ export const EN_STRINGS = {
   'action.removeDirectChat': 'Remove the chat with {name} from your list',
   'button.playMedia': 'Play',
   'label.message.edited': 'Edited',
-  'label.message.original': 'Original',
-  'label.editHistory': 'Edit history',
   'label.reactions': 'Reactions',
   'label.reactionDetails': 'Reaction details',
   'label.composer.editing': 'Editing message',
@@ -237,7 +235,6 @@ export const EN_STRINGS = {
   'action.addReaction': 'Add reaction',
   'action.removeReaction': 'Remove reaction',
   'action.viewReactionDetails': 'View {reaction} reactions',
-  'action.toggleEditHistory': 'Show or hide edit history',
   'action.goToOriginal': 'Go to original message',
 
   'aria.accountInfo': 'Account info',

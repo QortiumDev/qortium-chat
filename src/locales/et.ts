@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'Sulge',
   'button.playMedia': 'Esita',
   'label.message.edited': 'Muudetud',
-  'label.message.original': 'Originaal',
-  'label.editHistory': 'Muudatuste ajalugu',
   'label.reactions': 'Reaktsioonid',
   'label.reactionDetails': 'Reaktsiooni üksikasjad',
   'label.composer.editing': 'Sõnumi muutmine',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'Lisa reaktsioon',
   'action.removeReaction': 'Eemalda reaktsioon',
   'action.viewReactionDetails': 'Vaata {reaction} reaktsioone',
-  'action.toggleEditHistory': 'Kuva või peida muudatuste ajalugu',
   'action.goToOriginal': 'Mine algse sõnumi juurde',
 
   'aria.accountInfo': 'Konto teave',

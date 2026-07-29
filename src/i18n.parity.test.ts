@@ -52,21 +52,21 @@ describe('i18n locale parity', () => {
   // translating it — add a real translation, or extend this list only after
   // confirming the English form is the correct native term.
   const IDENTICAL_TO_ENGLISH_ALLOWLIST: Record<string, string[]> = {
-    de: ['aria.navigation', 'label.approval.block', 'label.approval.windowEta', 'label.common.navigation', 'label.composer.emoji', 'label.group.admin', 'label.group.global', 'label.member.online', 'label.message.original'],
+    de: ['aria.navigation', 'label.approval.block', 'label.approval.windowEta', 'label.common.navigation', 'label.composer.emoji', 'label.group.admin', 'label.group.global', 'label.member.online'],
     el: ['app.title', 'label.composer.emoji'],
-    es: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.error', 'label.group.global', 'label.message.original', 'message.error'],
+    es: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.error', 'label.group.global', 'message.error'],
     et: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji'],
     fi: ['label.approval.eta.minutes', 'label.composer.emoji'],
-    fr: ['aria.navigation', 'button.mention', 'label.approval.eta.hours', 'label.approval.eta.minutes', 'label.approval.signature', 'label.approval.type.unknown', 'label.common.direct', 'label.common.message', 'label.common.navigation', 'label.group.admin', 'label.group.global', 'label.invites', 'label.message', 'label.message.original', 'placeholder.message', 'title.directPanel'],
+    fr: ['aria.navigation', 'button.mention', 'label.approval.eta.hours', 'label.approval.eta.minutes', 'label.approval.signature', 'label.approval.type.unknown', 'label.common.direct', 'label.common.message', 'label.common.navigation', 'label.group.admin', 'label.group.global', 'label.invites', 'label.message', 'placeholder.message', 'title.directPanel'],
     hi: ['app.title'],
     hu: ['label.composer.emoji', 'label.group.admin'],
     it: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.admin', 'label.member.online'],
-    nb: ['app.title', 'button.send', 'button.startMinting', 'group.status.minting.minting', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.admin', 'label.group.global', 'label.message.original'],
+    nb: ['app.title', 'button.send', 'button.startMinting', 'group.status.minting.minting', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.admin', 'label.group.global'],
     nl: ['label.approval.eta.minutes', 'label.common.direct', 'label.composer.emoji', 'label.group.open', 'label.member.online', 'title.directPanel'],
     pl: ['label.approval.eta.minutes', 'label.composer.emoji', 'label.member.online'],
-    pt: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.global', 'label.member.online', 'label.message.original'],
-    ro: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.common.direct', 'label.composer.emoji', 'label.group.global', 'label.member.online', 'label.message.original', 'title.directPanel'],
-    sv: ['label.approval.block', 'label.approval.eta.hours', 'label.approval.eta.minutes', 'label.approval.windowEta', 'label.composer.emoji', 'label.group.global', 'label.member.online', 'label.message.original'],
+    pt: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.composer.emoji', 'label.group.global', 'label.member.online'],
+    ro: ['label.approval.eta.hours', 'label.approval.eta.minutes', 'label.common.direct', 'label.composer.emoji', 'label.group.global', 'label.member.online', 'title.directPanel'],
+    sv: ['label.approval.block', 'label.approval.eta.hours', 'label.approval.eta.minutes', 'label.approval.windowEta', 'label.composer.emoji', 'label.group.global', 'label.member.online'],
   };
 
   it.each(NON_EN)('locale "%s" has no unexpected untranslated values', (language) => {

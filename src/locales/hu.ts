@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'Bezárás',
   'button.playMedia': 'Lejátszás',
   'label.message.edited': 'Szerkesztve',
-  'label.message.original': 'Eredeti',
-  'label.editHistory': 'Szerkesztési előzmények',
   'label.reactions': 'Reakciók',
   'label.reactionDetails': 'Reakció részletei',
   'label.composer.editing': 'Üzenet szerkesztése',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'Reakció hozzáadása',
   'action.removeReaction': 'Reakció eltávolítása',
   'action.viewReactionDetails': '{reaction} reakciók megtekintése',
-  'action.toggleEditHistory': 'Szerkesztési előzmények megjelenítése vagy elrejtése',
   'action.goToOriginal': 'Ugrás az eredeti üzenethez',
 
   'aria.accountInfo': 'Fiók adatai',

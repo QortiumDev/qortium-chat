@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': 'Stäng',
   'button.playMedia': 'Spela',
   'label.message.edited': 'Redigerad',
-  'label.message.original': 'Original',
-  'label.editHistory': 'Redigeringshistorik',
   'label.reactions': 'Reaktioner',
   'label.reactionDetails': 'Reaktionsdetaljer',
   'label.composer.editing': 'Redigerar meddelande',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': 'Lägg till reaktion',
   'action.removeReaction': 'Ta bort reaktion',
   'action.viewReactionDetails': 'Visa {reaction}-reaktioner',
-  'action.toggleEditHistory': 'Visa eller dölj redigeringshistorik',
   'action.goToOriginal': 'Gå till det ursprungliga meddelandet',
 
   'aria.accountInfo': 'Kontoinformation',

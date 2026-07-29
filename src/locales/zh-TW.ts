@@ -219,8 +219,6 @@ export const STRINGS = {
   'button.close': '關閉',
   'button.playMedia': '播放',
   'label.message.edited': '已編輯',
-  'label.message.original': '原始訊息',
-  'label.editHistory': '編輯歷史',
   'label.reactions': '表情回應',
   'label.reactionDetails': '回應詳情',
   'label.composer.editing': '正在編輯訊息',
@@ -229,7 +227,6 @@ export const STRINGS = {
   'action.addReaction': '新增回應',
   'action.removeReaction': '移除回應',
   'action.viewReactionDetails': '查看 {reaction} 回應',
-  'action.toggleEditHistory': '顯示或隱藏編輯歷史',
   'action.goToOriginal': '跳至原始訊息',
 
   'aria.accountInfo': '帳戶資訊',
