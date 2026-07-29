@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Авторизация минтинга подтверждена',
   'status.bridge.accountAccessDenied': 'Доступ к аккаунту не был предоставлен.',
   'status.bridge.writeDenied': 'Запрос не был подтвержден в Qortium Home.',
+  'status.gateway.readOnly': 'Общедоступный режим только для чтения. Откройте в Qortium Home, чтобы использовать учетную запись или отправлять сообщения.',
   'status.privateGroupKey.requesting': 'Запрашивается ключ приватной группы...',
   'status.privateGroupKey.requested': 'Ключ приватной группы запрошен. Сообщения обновятся после ретрансляции ключа.',
   'status.privateGroupKey.recoveryChecked': 'Запросы ключа приватной группы проверены.',

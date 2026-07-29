@@ -25,6 +25,30 @@ export type StoredReadWatermarks = {
 };
 
 const PREFIX = 'qortium-chat';
+export type ChatStorageMode = 'memory' | 'persistent';
+
+class MemoryStorage {
+  private readonly values = new Map<string, string>();
+
+  getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+
+  removeItem(key: string) {
+    this.values.delete(key);
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
+
+  clear() {
+    this.values.clear();
+  }
+}
+
+const memoryStorage = new MemoryStorage();
+let storageMode: ChatStorageMode = 'persistent';
 
 // The probe verdict is cached per storage object: getStorage runs on the
 // scroll-bookmark hot path, and re-probing with a setItem/removeItem per call
@@ -33,7 +57,25 @@ const PREFIX = 'qortium-chat';
 let probedStorage: Storage | null = null;
 let probeResult: Storage | null = null;
 
-function getStorage(): Storage | null {
+export function setChatStorageMode(mode: ChatStorageMode) {
+  if (mode === storageMode) {
+    return;
+  }
+
+  storageMode = mode;
+  probedStorage = null;
+  probeResult = null;
+
+  if (mode === 'memory') {
+    memoryStorage.clear();
+  }
+}
+
+function getStorage(): Pick<Storage, 'getItem' | 'removeItem' | 'setItem'> | null {
+  if (storageMode === 'memory') {
+    return memoryStorage;
+  }
+
   let storage: Storage;
 
   try {

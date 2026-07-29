@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Autorización de acuñación confirmada',
   'status.bridge.accountAccessDenied': 'El acceso a la cuenta no fue compartido.',
   'status.bridge.writeDenied': 'La solicitud no fue aprobada en Qortium Home.',
+  'status.gateway.readOnly': 'Vista pública de solo lectura. Abra Qortium Home para usar una cuenta o enviar mensajes.',
   'status.privateGroupKey.requesting': 'Solicitando clave de grupo privado...',
   'status.privateGroupKey.requested': 'Clave de grupo privado solicitada. Los mensajes se actualizarán después de que se retransmita la clave.',
   'status.privateGroupKey.recoveryChecked': 'Solicitudes de clave de grupo privado revisadas.',

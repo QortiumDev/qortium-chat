@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Autorizzazione al mint confermata',
   'status.bridge.accountAccessDenied': 'L\'accesso all\'account non è stato condiviso.',
   'status.bridge.writeDenied': 'La richiesta non è stata approvata in Qortium Home.',
+  'status.gateway.readOnly': 'Vista pubblica in sola lettura. Apri in Qortium Home per usare un account o inviare messaggi.',
   'status.privateGroupKey.requesting': 'Richiesta della chiave del gruppo privato...',
   'status.privateGroupKey.requested': 'Chiave del gruppo privato richiesta. I messaggi si aggiorneranno dopo che la chiave sarà inoltrata.',
   'status.privateGroupKey.recoveryChecked': 'Richieste di chiave del gruppo privato controllate.',

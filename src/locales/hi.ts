@@ -26,6 +26,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'मिंटिंग अनुमोदन पुष्ट',
   'status.bridge.accountAccessDenied': 'खाते की पहुंच साझा नहीं की गई।',
   'status.bridge.writeDenied': 'Qortium Home में अनुरोध स्वीकृत नहीं हुआ।',
+  'status.gateway.readOnly': 'सार्वजनिक केवल-पढ़ने योग्य दृश्य। खाता इस्तेमाल करने या संदेश भेजने के लिए Qortium Home में खोलें।',
   'status.privateGroupKey.requesting': 'निजी समूह कुंजी का अनुरोध किया जा रहा है...',
   'status.privateGroupKey.requested': 'निजी समूह कुंजी का अनुरोध किया गया। कुंजी भेजे जाने के बाद संदेश ताज़ा होंगे।',
   'status.privateGroupKey.recoveryChecked': 'निजी समूह कुंजी अनुरोध जाँचे गए।',

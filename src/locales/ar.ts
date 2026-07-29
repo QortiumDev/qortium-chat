@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'تم تأكيد تفويض السك',
   'status.bridge.accountAccessDenied': 'لم تتم مشاركة الوصول إلى الحساب.',
   'status.bridge.writeDenied': 'لم تتم الموافقة على الطلب في Qortium Home.',
+  'status.gateway.readOnly': 'عرض عام للقراءة فقط. افتح في Qortium Home لاستخدام حساب أو إرسال الرسائل.',
   'status.privateGroupKey.requesting': 'جارٍ طلب مفتاح المجموعة الخاصة...',
   'status.privateGroupKey.requested': 'تم طلب مفتاح المجموعة الخاصة. ستُحدّث الرسائل بعد ترحيل المفتاح.',
   'status.privateGroupKey.recoveryChecked': 'تم التحقق من طلبات مفتاح المجموعة الخاصة.',

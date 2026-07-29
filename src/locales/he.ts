@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'אישור הטבעה אושר',
   'status.bridge.accountAccessDenied': 'שיתוף גישה לחשבון לא בוצע.',
   'status.bridge.writeDenied': 'הבקשה לא אושרה ב-Qortium Home.',
+  'status.gateway.readOnly': 'תצוגה ציבורית לקריאה בלבד. פתחו ב-Qortium Home כדי להשתמש בחשבון או לשלוח הודעות.',
   'status.privateGroupKey.requesting': 'מבקש מפתח קבוצה פרטית...',
   'status.privateGroupKey.requested': 'מפתח קבוצה פרטית התבקש. ההודעות יתרעננו לאחר שהמפתח יועבר.',
   'status.privateGroupKey.recoveryChecked': 'בקשות למפתח קבוצה פרטית נבדקו.',

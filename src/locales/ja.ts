@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'ミント権限申請が確認されました',
   'status.bridge.accountAccessDenied': 'アカウントのアクセス権が共有されていません。',
   'status.bridge.writeDenied': 'Qortium Homeで申請が承認されませんでした。',
+  'status.gateway.readOnly': '公開読み取り専用ビューです。アカウントの使用やメッセージの送信は Qortium Home で開いてください。',
   'status.privateGroupKey.requesting': 'プライベートグループキーを要求中...',
   'status.privateGroupKey.requested': 'プライベートグループキーを要求しました。キーが中継されるとメッセージが更新されます。',
   'status.privateGroupKey.recoveryChecked': 'プライベートグループキー要求を確認しました。',

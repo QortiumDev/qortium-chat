@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': '铸币授权已确认',
   'status.bridge.accountAccessDenied': '账户权限未共享。',
   'status.bridge.writeDenied': 'Qortium Home 未批准该请求。',
+  'status.gateway.readOnly': '公共只读视图。请在 Qortium Home 中打开，以使用账户或发送消息。',
   'status.privateGroupKey.requesting': '正在请求私有群组密钥...',
   'status.privateGroupKey.requested': '已请求私有群组密钥。密钥转发后，消息将刷新。',
   'status.privateGroupKey.recoveryChecked': '已检查私有群组密钥请求。',

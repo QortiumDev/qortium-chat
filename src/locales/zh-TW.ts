@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': '鑄幣授權已確認',
   'status.bridge.accountAccessDenied': '帳戶存取權限未共享。',
   'status.bridge.writeDenied': 'Qortium Home 未批准此請求。',
+  'status.gateway.readOnly': '公開唯讀檢視。請在 Qortium Home 中開啟，以使用帳戶或傳送訊息。',
   'status.privateGroupKey.requesting': '正在請求私人群組金鑰...',
   'status.privateGroupKey.requested': '已請求私人群組金鑰。金鑰轉送後，訊息將重新整理。',
   'status.privateGroupKey.recoveryChecked': '已檢查私人群組金鑰請求。',
