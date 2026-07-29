@@ -8,6 +8,7 @@ export const AVATAR_PENDING_MAX_ELAPSED_MS = 5 * 60 * 1000;
 
 const SAFE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/bmp', 'image/webp']);
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64_ASCII_WHITESPACE_PATTERN = /[\t\n\f\r ]/g;
 const LEGACY_AVATAR_IDENTIFIERS = ['avatar', 'qortal_avatar'] as const;
 
 export type AvatarProfile = {
@@ -71,12 +72,17 @@ function parseDescriptor(value: unknown): AvatarDescriptor | null {
 }
 
 function decodeBase64(value: string) {
-  if (!value || !BASE64_PATTERN.test(value)) {
+  // Android's Capacitor HTTP bridge can return RFC 2045-style wrapped base64.
+  // Ignore ASCII whitespace while keeping the alphabet and padding validation
+  // strict so the same avatar response works in Home on desktop and Android.
+  const normalized = value.replace(BASE64_ASCII_WHITESPACE_PATTERN, '');
+
+  if (!normalized || !BASE64_PATTERN.test(normalized)) {
     return null;
   }
 
   try {
-    const binary = atob(value);
+    const binary = atob(normalized);
     return Uint8Array.from(binary, (character) => character.charCodeAt(0));
   } catch {
     return null;

@@ -124,6 +124,24 @@ describe('avatar profile helpers', () => {
     expect(createObjectURLMock.mock.calls[0]?.[0]?.type).toBe('image/png');
   });
 
+  it('accepts Android MIME-wrapped base64 avatar bytes', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      address: 'Qabc',
+      body: 'iVBO\r\nRw0K Ggo=\t',
+      contentLength: 8,
+      contentType: 'image/png',
+      descriptor: null,
+      encoding: 'base64',
+      source: 'LEGACY',
+    });
+
+    await expect(fetchAccountAvatar('Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toMatchObject({
+      kind: 'ready',
+      source: 'LEGACY',
+    });
+    expect(createObjectURLMock.mock.calls[0]?.[0]?.size).toBe(8);
+  });
+
   it('accepts BMP images returned by Home', async () => {
     qdnRequestMock.mockResolvedValueOnce({
       address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/bmp',
