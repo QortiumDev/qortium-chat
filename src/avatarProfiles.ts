@@ -3,9 +3,12 @@ import { hasAction, qdnRequest } from './qdnRequest';
 import type { NameSummary, QdnAction } from './types';
 
 export const AVATAR_MAX_BYTES = 500 * 1024;
+export const AVATAR_PENDING_MAX_ATTEMPTS = 10;
+export const AVATAR_PENDING_MAX_ELAPSED_MS = 5 * 60 * 1000;
 
 const SAFE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/bmp', 'image/webp']);
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const LEGACY_AVATAR_IDENTIFIERS = ['avatar', 'qortal_avatar'] as const;
 
 export type AvatarProfile = {
   address: string;
@@ -20,6 +23,11 @@ export type AccountAvatarFetch =
   | { kind: 'pending'; retryAfterSeconds: number; source: AvatarSource }
   | { kind: 'ready'; source: AvatarSource; src: string }
   | { kind: 'unavailable' };
+
+export type AvatarPendingRetryState = {
+  attempts: number;
+  startedAt: number;
+};
 
 export function normalizeRegisteredName(name: string | null | undefined) {
   return typeof name === 'string' && name.length > 0 ? name : null;
@@ -75,6 +83,36 @@ function decodeBase64(value: string) {
   }
 }
 
+function getLegacyImageContentType(value: unknown, base64: string) {
+  const declared = typeof value === 'string' ? value.toLowerCase().split(';', 1)[0] : '';
+
+  if (SAFE_IMAGE_MIME_TYPES.has(declared)) {
+    return declared;
+  }
+
+  if (base64.startsWith('iVBORw0KGgo')) {
+    return 'image/png';
+  }
+
+  if (base64.startsWith('/9j/')) {
+    return 'image/jpeg';
+  }
+
+  if (base64.startsWith('R0lGOD')) {
+    return 'image/gif';
+  }
+
+  if (base64.startsWith('UklGR')) {
+    return 'image/webp';
+  }
+
+  if (base64.startsWith('Qk')) {
+    return 'image/bmp';
+  }
+
+  return '';
+}
+
 function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAvatarFetch {
   if (!isRecord(value) || value.address !== expectedAddress || (value.source !== 'POINTER' && value.source !== 'LEGACY')) {
     return { kind: 'unavailable' };
@@ -100,17 +138,13 @@ function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAva
   }
 
   const contentType = value.contentType.toLowerCase().split(';', 1)[0];
-  const contentLength = value.contentLength;
   const bytes = decodeBase64(value.body);
 
   if (
     !SAFE_IMAGE_MIME_TYPES.has(contentType) ||
-    typeof contentLength !== 'number' ||
-    !Number.isSafeInteger(contentLength) ||
-    contentLength < 1 ||
-    contentLength > AVATAR_MAX_BYTES ||
     !bytes ||
-    bytes.byteLength !== contentLength
+    bytes.byteLength < 1 ||
+    bytes.byteLength > AVATAR_MAX_BYTES
   ) {
     return { kind: 'unavailable' };
   }
@@ -122,13 +156,78 @@ function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAva
   };
 }
 
+async function fetchLegacyNamedThumbnail(
+  address: string,
+  name: string,
+): Promise<AccountAvatarFetch> {
+  for (const identifier of LEGACY_AVATAR_IDENTIFIERS) {
+    try {
+      const properties = await qdnRequest<unknown>({
+        action: 'GET_QDN_RESOURCE_PROPERTIES',
+        identifier,
+        name,
+        service: 'THUMBNAIL',
+      });
+      const propertyRecord = isRecord(properties) ? properties : {};
+      const body = await qdnRequest<unknown>({
+        action: 'FETCH_QDN_RESOURCE',
+        encoding: 'base64',
+        identifier,
+        maxBytes: AVATAR_MAX_BYTES,
+        name,
+        rebuild: true,
+        service: 'THUMBNAIL',
+      });
+      const parsed = parseAccountAvatar(
+        {
+          address,
+          body,
+          contentLength: propertyRecord.size,
+          contentType:
+            typeof body === 'string'
+              ? getLegacyImageContentType(propertyRecord.mimeType, body)
+              : '',
+          descriptor: null,
+          encoding: 'base64',
+          source: 'LEGACY',
+        },
+        address,
+      );
+
+      if (parsed.kind === 'ready') {
+        return parsed;
+      }
+    } catch {
+      // Try the next established legacy identifier.
+    }
+  }
+
+  return { kind: 'unavailable' };
+}
+
 /**
  * Read one current account avatar through the pointer-aware Home bridge. Home
- * owns legacy compatibility; callers never reconstruct named-thumbnail URLs.
+ * owns legacy compatibility when its dedicated action exists. Older Home
+ * builds can still return the established named-thumbnail bytes through the
+ * generic QDN read actions; the app never constructs a raw node URL.
  */
-export async function fetchAccountAvatar(address: string, actions?: QdnAction[]): Promise<AccountAvatarFetch> {
-  if (!hasAction(actions ?? [], 'FETCH_ACCOUNT_AVATAR')) {
-    return { kind: 'unavailable' };
+export async function fetchAccountAvatar(
+  address: string,
+  actions?: QdnAction[],
+  preferredName?: string | null,
+): Promise<AccountAvatarFetch> {
+  const actionList = actions ?? [];
+
+  if (!hasAction(actionList, 'FETCH_ACCOUNT_AVATAR')) {
+    const name = normalizeRegisteredName(preferredName);
+    const canFetchLegacy =
+      !!name &&
+      hasAction(actionList, 'GET_QDN_RESOURCE_PROPERTIES') &&
+      hasAction(actionList, 'FETCH_QDN_RESOURCE');
+
+    return canFetchLegacy
+      ? fetchLegacyNamedThumbnail(address, name)
+      : { kind: 'unavailable' };
   }
 
   try {
@@ -139,6 +238,28 @@ export async function fetchAccountAvatar(address: string, actions?: QdnAction[])
   } catch {
     return { kind: 'unavailable' };
   }
+}
+
+export function getNextAvatarPendingRetry(
+  current: AvatarPendingRetryState | undefined,
+  retryAfterSeconds: number,
+  now = Date.now(),
+): { delayMs: number; state: AvatarPendingRetryState } | null {
+  const startedAt = current?.startedAt ?? now;
+  const attempts = (current?.attempts ?? 0) + 1;
+  const delayMs = retryAfterSeconds * 1000;
+
+  if (
+    attempts >= AVATAR_PENDING_MAX_ATTEMPTS ||
+    now - startedAt + delayMs > AVATAR_PENDING_MAX_ELAPSED_MS
+  ) {
+    return null;
+  }
+
+  return {
+    delayMs,
+    state: { attempts, startedAt },
+  };
 }
 
 export function revokeAvatarObjectUrl(src: string | null | undefined) {
