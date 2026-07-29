@@ -145,7 +145,12 @@ function MessageImagePreview({
             title={preview.qdnUrl}
             type="button"
           >
-            <img alt={preview.alt} src={preview.src} />
+            <img
+              alt={preview.alt}
+              height={preview.height}
+              src={preview.src}
+              width={preview.width}
+            />
           </button>
           <figcaption>{preview.alt}</figcaption>
         </figure>
@@ -572,10 +577,13 @@ export const MessageList = memo(function MessageList({
   const didRestoreScrollRef = useRef(false);
   // Captured before older history is prepended so we can restore the viewport to
   // the same message instead of jumping when scrollHeight grows.
-  const olderScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const olderScrollAnchorRef = useRef<
+    { anchorKey: string; anchorOffset: number } | null
+  >(null);
   // Pending rAF id for the scroll settle loop, so a new pin cancels an in-flight
   // one and unmount can cancel it.
   const scrollSettleRafRef = useRef(0);
+  const scrollSettleTimeoutRef = useRef(0);
   // True while a settle loop is programmatically driving scrollTop, so the
   // onScroll handler does not persist those transient positions over the user's.
   const programmaticScrollRef = useRef(false);
@@ -740,13 +748,20 @@ export const MessageList = memo(function MessageList({
   }, [openReactionDetailsKey, openReactionPickerKey, reactionPopoverContent]);
   const lastThread = threads[threads.length - 1] ?? null;
   const lastMessageKey = lastThread !== null ? getMessageKey(lastThread.latest, threads.length - 1) : '';
-  const firstMessageKey = messages.length > 0 ? getMessageKey(messages[0], 0) : '';
+  const firstMessageKey = renderedThreads[0]?.key ?? '';
 
   function captureScrollAnchor() {
     const list = listRef.current;
 
     if (list) {
-      olderScrollAnchorRef.current = { scrollHeight: list.scrollHeight, scrollTop: list.scrollTop };
+      const position = computeScrollPosition(list);
+
+      olderScrollAnchorRef.current = position.atBottom
+        ? null
+        : {
+            anchorKey: position.anchorKey,
+            anchorOffset: position.anchorOffset,
+          };
     }
   }
 
@@ -803,9 +818,14 @@ export const MessageList = memo(function MessageList({
 
     const listRect = list.getBoundingClientRect();
     const dividerRect = dividerEl.getBoundingClientRect();
+    const targetScrollTop = list.scrollTop + dividerRect.top - listRect.top - 12;
 
-    list.scrollTop += dividerRect.top - listRect.top - 12;
-    updateBottomState(list);
+    cancelProgrammaticScroll(true);
+    noteUserScroll();
+    list.scrollTo({
+      behavior: getUserScrollBehavior(),
+      top: targetScrollTop,
+    });
   }
 
   // Re-apply a scroll target across frames until it stops moving. `applyStep`
@@ -818,7 +838,13 @@ export const MessageList = memo(function MessageList({
   function runScrollSettle(applyStep: (list: HTMLOListElement) => boolean) {
     const list = listRef.current;
 
-    if (!list || !applyStep(list)) {
+    if (!list) {
+      return;
+    }
+
+    cancelProgrammaticScroll();
+
+    if (!applyStep(list)) {
       return;
     }
 
@@ -826,10 +852,6 @@ export const MessageList = memo(function MessageList({
 
     if (typeof requestAnimationFrame !== 'function') {
       return;
-    }
-
-    if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
-      cancelAnimationFrame(scrollSettleRafRef.current);
     }
 
     programmaticScrollRef.current = true;
@@ -872,6 +894,37 @@ export const MessageList = memo(function MessageList({
     scrollSettleRafRef.current = requestAnimationFrame(settle);
   }
 
+  function cancelProgrammaticScroll(clearStickIntent = false) {
+    if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(scrollSettleRafRef.current);
+    }
+
+    window.clearTimeout(scrollSettleTimeoutRef.current);
+
+    if (programmaticScrollRef.current) {
+      const list = listRef.current;
+
+      // Assigning the current offset with instant behavior also cancels a
+      // browser-owned smooth scroll that has not reached its target yet.
+      list?.scrollTo({ behavior: 'auto', top: list.scrollTop });
+    }
+
+    scrollSettleRafRef.current = 0;
+    scrollSettleTimeoutRef.current = 0;
+    programmaticScrollRef.current = false;
+
+    if (clearStickIntent) {
+      stickToBottomRef.current = false;
+    }
+  }
+
+  function getUserScrollBehavior(): ScrollBehavior {
+    return typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth';
+  }
+
   // Mark that the imminent scroll event(s) are user-driven, so updateBottomState
   // may update the stick intent from the resulting position. Kept set briefly to
   // cover inertial/momentum scrolling after the input gesture ends.
@@ -905,27 +958,42 @@ export const MessageList = memo(function MessageList({
   function handleScrollToBottomClick() {
     pendingBookmarkRef.current = null;
     restoringRef.current = false;
-    scrollToBottom();
+    const list = listRef.current;
+    const prefersReducedMotion = getUserScrollBehavior() === 'auto';
+
+    if (!list || prefersReducedMotion || typeof list.scrollTo !== 'function') {
+      scrollToBottom();
+      return;
+    }
+
+    cancelProgrammaticScroll();
+    stickToBottomRef.current = true;
+    programmaticScrollRef.current = true;
+    list.scrollTo({ behavior: 'smooth', top: list.scrollHeight });
+
+    // Let the browser animate the user-requested jump, then engage the bounded
+    // settle loop so late image/font growth cannot leave the feed short.
+    scrollSettleTimeoutRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      scrollSettleTimeoutRef.current = 0;
+      scrollToBottom();
+    }, 350);
   }
 
   function scrollToBottom() {
-    stickToBottomRef.current = true;
-
     const list = listRef.current;
 
     if (!list) {
       return;
     }
 
+    cancelProgrammaticScroll();
+    stickToBottomRef.current = true;
     list.scrollTop = list.scrollHeight;
     updateBottomState(list);
 
     if (typeof requestAnimationFrame !== 'function') {
       return;
-    }
-
-    if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
-      cancelAnimationFrame(scrollSettleRafRef.current);
     }
 
     // Re-pin to the bottom EVERY frame until we've genuinely held the bottom for
@@ -1317,6 +1385,31 @@ export const MessageList = memo(function MessageList({
     }
   }, [sentMessageNonce]);
 
+  // The loading/error control is inserted above the messages while a page is
+  // in flight. Counteract that row's height in the same pre-paint phase so the
+  // captured message does not jump down while the request is pending; the
+  // prepend effect below performs the bounded final settle once rows arrive.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const anchor = olderScrollAnchorRef.current;
+
+    if (!olderMessagesLoading || !list || !anchor || stickToBottomRef.current) {
+      return;
+    }
+
+    const element = itemsRef.current.get(anchor.anchorKey);
+
+    if (!element) {
+      return;
+    }
+
+    const listTop = list.getBoundingClientRect().top;
+    const elementTop = element.getBoundingClientRect().top;
+
+    list.scrollTop += elementTop - listTop - anchor.anchorOffset;
+    updateBottomState(list);
+  }, [olderMessagesLoading]);
+
   // After older history is prepended the list grows upward; restore the viewport
   // so the message the user was reading stays put instead of jumping.
   useLayoutEffect(() => {
@@ -1338,8 +1431,19 @@ export const MessageList = memo(function MessageList({
       return;
     }
 
-    list.scrollTop = list.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
-    updateBottomState(list);
+    runScrollSettle((nextList) => {
+      const element = itemsRef.current.get(anchor.anchorKey);
+
+      if (!element) {
+        return false;
+      }
+
+      const listTop = nextList.getBoundingClientRect().top;
+      const elementTop = element.getBoundingClientRect().top;
+
+      nextList.scrollTop += elementTop - listTop - anchor.anchorOffset;
+      return true;
+    });
   }, [firstMessageKey]);
 
   useEffect(() => {
@@ -1347,6 +1451,7 @@ export const MessageList = memo(function MessageList({
       window.clearTimeout(highlightTimeoutRef.current);
       window.clearTimeout(expandedTimeTimeoutRef.current);
       window.clearTimeout(userScrollClearRef.current);
+      window.clearTimeout(scrollSettleTimeoutRef.current);
 
       if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(scrollSettleRafRef.current);
@@ -1366,23 +1471,6 @@ export const MessageList = memo(function MessageList({
     expandedTimeTimeoutRef.current = window.setTimeout(() => setExpandedTimeKey(''), 5000);
   }
 
-  function syncReplyJumpScrollState() {
-    const list = listRef.current;
-
-    if (!list || list.clientHeight === 0) {
-      return;
-    }
-
-    const isAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
-
-    if (isAtBottom) {
-      return;
-    }
-
-    updateBottomState(list);
-    savePosition(list);
-  }
-
   function scrollToThread(threadKey: string) {
     const item = itemsRef.current.get(threadKey);
     const list = listRef.current;
@@ -1391,29 +1479,21 @@ export const MessageList = memo(function MessageList({
       return;
     }
 
-    if (scrollSettleRafRef.current && typeof cancelAnimationFrame === 'function') {
-      cancelAnimationFrame(scrollSettleRafRef.current);
-      scrollSettleRafRef.current = 0;
-    }
-
     // A reply-preview click is an explicit reader jump away from the newest
     // messages, so it must drop bottom-stick intent just like a manual scroll.
     pendingBookmarkRef.current = null;
     restoringRef.current = false;
-    stickToBottomRef.current = false;
-    programmaticScrollRef.current = true;
-
+    cancelProgrammaticScroll(true);
     const listRect = list.getBoundingClientRect();
     const itemRect = item.getBoundingClientRect();
     const centerOffset = Math.max(12, (list.clientHeight - item.clientHeight) / 2);
     const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
     const targetScrollTop = list.scrollTop + itemRect.top - listRect.top - centerOffset;
 
-    list.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
-
-    window.requestAnimationFrame(() => {
-      programmaticScrollRef.current = false;
-      syncReplyJumpScrollState();
+    noteUserScroll();
+    list.scrollTo({
+      behavior: getUserScrollBehavior(),
+      top: Math.min(Math.max(0, targetScrollTop), maxScrollTop),
     });
     setHighlightedKey(threadKey);
     window.clearTimeout(highlightTimeoutRef.current);
@@ -1485,6 +1565,15 @@ export const MessageList = memo(function MessageList({
       <div className="message-feed">
         <ol
           className="message-list"
+          onPointerDown={(event) => {
+            // Native scrollbar drags begin on the scroll container itself, not
+            // a child message. Yield immediately so a down-arrow/anchor settle
+            // loop cannot pull against the user's pointer.
+            if (event.target === event.currentTarget) {
+              cancelProgrammaticScroll(true);
+              noteUserScroll();
+            }
+          }}
           onWheel={noteUserScroll}
           onTouchMove={noteUserScroll}
           onKeyDown={(event) => {
@@ -1532,6 +1621,13 @@ export const MessageList = memo(function MessageList({
             // computeScrollPosition.
             if (!programmaticScrollRef.current) {
               savePosition(list);
+
+              // If the reader keeps moving while an older-page request is in
+              // flight, preserve their latest viewport rather than restoring
+              // the anchor captured when the request began.
+              if (olderMessagesLoading) {
+                captureScrollAnchor();
+              }
             }
 
             if (!programmaticScrollRef.current) {

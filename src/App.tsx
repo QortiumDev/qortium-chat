@@ -69,6 +69,7 @@ import {
   sortMessagesByTimestamp,
   type MessageThread,
 } from './messageThreads';
+import { retainChatMessagesWhenEqual } from './messageUpdates';
 import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupPreviews';
 import {
   getReactionPendingKey,
@@ -2106,7 +2107,15 @@ export default function App() {
       }
 
       setMessagesChatKey(chatKey);
-      setMessages({ phase: 'ready', value: nextMessages });
+      setMessages((current) => {
+        const value = options.quiet
+          ? retainChatMessagesWhenEqual(current.value, nextMessages)
+          : nextMessages;
+
+        return options.quiet && current.phase === 'ready' && value === current.value
+          ? current
+          : { phase: 'ready', value };
+      });
 
       // Only the initial (non-quiet) load establishes whether older history may
       // exist; quiet 15s polls must not disturb paging once the user has paged.
@@ -5301,72 +5310,79 @@ export default function App() {
             </div>
           </div>
 
-          {messages.phase === 'error' ? (
-            <div className="chat-pane__load-error">
-              <p className="error">{messages.error}</p>
-              <button
-                className="button button--secondary"
-                onClick={() => void loadMessages(selectedChat)}
-                type="button"
-              >
-                {t('button.retry')}
-              </button>
+          {/* Owns the `1fr` row of the `.chat-pane` grid so the message feed
+              always gets the remaining space regardless of how many notices
+              above it are currently rendered. */}
+          <div className="chat-pane__content">
+            <div className="chat-pane__notices">
+              {messages.phase === 'error' ? (
+                <div className="chat-pane__load-error">
+                  <p className="error">{messages.error}</p>
+                  <button
+                    className="button button--secondary"
+                    onClick={() => void loadMessages(selectedChat)}
+                    type="button"
+                  >
+                    {t('button.retry')}
+                  </button>
+                </div>
+              ) : null}
+              {writeError ? <p className="error">{writeError}</p> : null}
+              {privateGroupKeyError ? <p className="error">{privateGroupKeyError}</p> : null}
+              {privateGroupKeyStatus ? <p className="muted">{privateGroupKeyStatus}</p> : null}
+              {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
+              {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
+              {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
+              {showApprovalControls && pendingApprovals.phase === 'error' ? (
+                <p className="error">{pendingApprovals.error}</p>
+              ) : null}
+              {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
+              {selectedClosedGroupHistoryUnavailable ? (
+                <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
+              ) : null}
             </div>
-          ) : null}
-          {writeError ? <p className="error">{writeError}</p> : null}
-          {privateGroupKeyError ? <p className="error">{privateGroupKeyError}</p> : null}
-          {privateGroupKeyStatus ? <p className="muted">{privateGroupKeyStatus}</p> : null}
-          {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
-          {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
-          {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
-          {showApprovalControls && pendingApprovals.phase === 'error' ? (
-            <p className="error">{pendingApprovals.error}</p>
-          ) : null}
-          {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
-          {selectedClosedGroupHistoryUnavailable ? (
-            <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
-          ) : null}
-          <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
-            {liveAnnouncement}
+            <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
+              {liveAnnouncement}
+            </div>
+            {messages.phase === 'loading' || (messages.phase === 'ready' && selectedChat !== null && !hasSelectedMessages) ? (
+              // The second arm covers the transient frame right after a chat
+              // switch, before the load effect runs: `messages` still holds the
+              // previous chat then, and must not flash under the new header.
+              <LoadingRows count={4} label={t('label.loading')} />
+            ) : (
+              <MessageList
+                avatarProfiles={avatarProfiles}
+                canCompose={canComposeMessage}
+                canOpenDocumentViewer={canOpenDocumentViewer}
+                canOpenMediaPlayer={canOpenMediaPlayer}
+                canSaveQdnResource={canSaveQdnResource}
+                initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
+                messages={combinedMessages}
+                olderMessagesError={olderMessagesState.error}
+                olderMessagesReachedStart={olderMessagesState.reachedStart}
+                olderMessagesLoading={olderMessagesState.loading}
+                onDelete={setDeleteTarget}
+                onEdit={handleStartEdit}
+                onLoadOlder={handleLoadOlderMessages}
+                onOpenAccount={setAccountInfoTarget}
+                onOpenAvatar={setAvatarLightboxImage}
+                onOpenImage={setAvatarLightboxImage}
+                onReact={handleReactToMessage}
+                onReply={handleStartReply}
+                onScrollPositionChange={handleScrollPositionChange}
+                now={now}
+                pendingReactionKey={reactionPendingKey}
+                scrollChatKey={selectedChatKey}
+                selfAddress={account?.address ?? null}
+                selfName={normalizeRegisteredName(account?.name) ?? null}
+                sentMessageNonce={sentMessageNonce}
+                systemMessages={selectedTransactions}
+                t={t}
+                unreadDividerCeiling={unreadDividerCeiling}
+                unreadDividerTimestamp={unreadDividerTimestamp}
+              />
+            )}
           </div>
-          {messages.phase === 'loading' || (messages.phase === 'ready' && selectedChat !== null && !hasSelectedMessages) ? (
-            // The second arm covers the transient frame right after a chat
-            // switch, before the load effect runs: `messages` still holds the
-            // previous chat then, and must not flash under the new header.
-            <LoadingRows count={4} label={t('label.loading')} />
-          ) : (
-            <MessageList
-              avatarProfiles={avatarProfiles}
-              canCompose={canComposeMessage}
-              canOpenDocumentViewer={canOpenDocumentViewer}
-              canOpenMediaPlayer={canOpenMediaPlayer}
-              canSaveQdnResource={canSaveQdnResource}
-              initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
-              messages={combinedMessages}
-              olderMessagesError={olderMessagesState.error}
-              olderMessagesReachedStart={olderMessagesState.reachedStart}
-              olderMessagesLoading={olderMessagesState.loading}
-              onDelete={setDeleteTarget}
-              onEdit={handleStartEdit}
-              onLoadOlder={handleLoadOlderMessages}
-              onOpenAccount={setAccountInfoTarget}
-              onOpenAvatar={setAvatarLightboxImage}
-              onOpenImage={setAvatarLightboxImage}
-              onReact={handleReactToMessage}
-              onReply={handleStartReply}
-              onScrollPositionChange={handleScrollPositionChange}
-              now={now}
-              pendingReactionKey={reactionPendingKey}
-              scrollChatKey={selectedChatKey}
-              selfAddress={account?.address ?? null}
-              selfName={normalizeRegisteredName(account?.name) ?? null}
-              sentMessageNonce={sentMessageNonce}
-              systemMessages={selectedTransactions}
-              t={t}
-              unreadDividerCeiling={unreadDividerCeiling}
-              unreadDividerTimestamp={unreadDividerTimestamp}
-            />
-          )}
 
           {publicNodeSendNotice ? (
             <div aria-live="polite" className="composer composer--notice">
