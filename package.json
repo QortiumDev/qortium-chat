@@ -10,6 +10,7 @@
     "dev": "vite",
     "preview": "vite preview",
     "qdn:publish": "node scripts/publish-qdn.mjs",
+    "smoke:mobile-density": "node scripts/smoke-mobile-density.mjs",
     "test": "vitest run"
   },
   "dependencies": {
