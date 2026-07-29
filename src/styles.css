@@ -1143,6 +1143,28 @@ samp,
   transform: rotate(-90deg);
 }
 
+.panel__intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0 8px;
+  padding: 10px;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-small);
+  background: var(--qc-color-accent-soft);
+  border-radius: var(--qc-radius-md);
+}
+
+.panel__intro p {
+  flex: 1 1 auto;
+}
+
+.panel__intro-close {
+  width: 28px;
+  height: 28px;
+}
+
 .icon-button:hover,
 .icon-button:focus-visible,
 .icon-button[aria-expanded='true'] {
@@ -1468,6 +1490,29 @@ samp,
     var(--qc-color-surface);
 }
 
+/* Owns the remainder of the `.chat-pane` grid (row 2) so the message feed
+   below always gets the `1fr` track, no matter how many conditional
+   status/error notices render above it. Without this wrapper, whichever
+   notice happened to render first would claim `1fr` and the feed would
+   collapse to its content size. */
+.chat-pane__content {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* Groups the status/error notices into the content wrapper's `auto` row so
+   zero, one, or several of them can stack without disturbing the feed row. */
+.chat-pane__notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-pane__notices:empty {
+  display: none;
+}
+
 .chat-pane__header {
   align-items: flex-start;
   padding-bottom: 14px;
@@ -1476,6 +1521,20 @@ samp,
 
 .chat-pane__header > div {
   min-width: 0;
+}
+
+.chat-pane__action-hint {
+  display: none;
+}
+
+.chat-empty-state {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  min-height: 0;
+  color: var(--qc-color-text-secondary);
+  text-align: center;
 }
 
 .chat-pane__title {
@@ -1947,12 +2006,10 @@ button.member-chip__name-button:focus-visible {
   border-radius: var(--qc-radius-md);
   box-shadow: var(--qc-shadow-card);
   animation: qortium-message-in 170ms var(--qc-ease-pop);
-  /* Skip layout/paint for rows scrolled out of view in long histories. The
-     `auto` keyword remembers each row's real size once rendered, so the scroll
-     height stays accurate (the 56px fallback only applies to never-yet-seen
-     offscreen rows, which correct themselves as they scroll in). */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 56px;
+  /* Offscreen row size estimation made `scrollHeight` a moving target while
+     scrolling through history and produced visible jumps whenever prepend
+     restoration or scroll-to-bottom logic read it mid-churn. Keep every row's
+     layout geometry exact. */
 }
 
 /* Rows whose body @mentions the account's registered name get an accent rail
@@ -3099,6 +3156,16 @@ button.message__reply-preview:focus-visible,
   min-width: 220px;
 }
 
+.composer--notice > div {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.composer--notice > div p {
+  min-width: 220px;
+}
+
 .composer--notice .button {
   flex: 0 0 auto;
 }
@@ -3389,6 +3456,15 @@ button.message__reply-preview:focus-visible,
 
   .message {
     padding: 9px 11px;
+  }
+
+  .chat-pane__action-hint {
+    display: block;
+    grid-column: 1 / -1;
+    margin-top: 8px;
+    color: var(--qc-color-text-secondary);
+    font-size: var(--qc-text-small);
+    line-height: var(--qc-line-small);
   }
 
   .composer {

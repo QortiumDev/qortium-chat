@@ -11,6 +11,9 @@
     "preview": "vite preview",
     "qdn:publish": "node scripts/publish-qdn.mjs",
     "smoke:mobile-density": "node scripts/smoke-mobile-density.mjs",
+    "smoke:new-user": "node scripts/smoke-new-user.mjs",
+    "smoke:gateway": "node scripts/smoke-gateway-readonly.mjs",
+    "smoke:scroll": "node scripts/smoke-scroll-behavior.mjs",
     "test": "vitest run"
   },
   "dependencies": {

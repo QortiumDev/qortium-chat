@@ -77,7 +77,7 @@ export const GroupList = memo(function GroupList({
             </span>
             {preview ? <span className="group-row__preview">{preview}</span> : null}
             <span className="group-row__footer">
-              <span className="group-row__id">{`id:${group.groupId}`}</span>
+              {!isGeneralChatGroup(group) ? <span className="group-row__id">{`id:${group.groupId}`}</span> : null}
               {!isGeneralChatGroup(group) && group.isOpen === false ? (
                 <span
                   aria-label={t('label.group.closed')}

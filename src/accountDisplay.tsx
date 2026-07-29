@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { type AvatarLightboxImage } from './AvatarLightbox';
 import { getAvatarFallbackCharacter, normalizeRegisteredName, type AvatarProfile } from './avatarProfiles';
 import { getSenderLabel } from './chatText';
@@ -31,6 +32,10 @@ export function getDirectTitle(direct: ActiveDirectChat) {
 // it reaches an `<img src>` — defense-in-depth at the single avatar render seam.
 function isSafeAvatarUrl(value: string) {
   return value.startsWith('blob:');
+}
+
+export function getVisibleAvatarSrc(src: string | null, failedSrc: string | null) {
+  return src && src !== failedSrc ? src : null;
 }
 
 export function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
@@ -70,23 +75,37 @@ export function UserAvatar({
   src: string | null;
 }) {
   const avatarClassName = `${className} user-avatar`;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const visibleSrc = getVisibleAvatarSrc(src, failedSrc);
 
-  if (src) {
+  if (visibleSrc) {
     if (onOpen) {
       return (
         <button
           aria-label={openLabel}
           className={`${avatarClassName} user-avatar--button`}
-          onClick={() => onOpen({ name, src })}
+          onClick={() => onOpen({ name, src: visibleSrc })}
           title={openLabel}
           type="button"
         >
-          <img alt="" className="user-avatar__image" src={src} />
+          <img
+            alt=""
+            className="user-avatar__image"
+            onError={() => setFailedSrc(visibleSrc)}
+            src={visibleSrc}
+          />
         </button>
       );
     }
 
-    return <img alt="" className={avatarClassName} src={src} />;
+    return (
+      <img
+        alt=""
+        className={avatarClassName}
+        onError={() => setFailedSrc(visibleSrc)}
+        src={visibleSrc}
+      />
+    );
   }
 
   return (

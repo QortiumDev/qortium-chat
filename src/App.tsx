@@ -69,6 +69,7 @@ import {
   sortMessagesByTimestamp,
   type MessageThread,
 } from './messageThreads';
+import { retainChatMessagesWhenEqual } from './messageUpdates';
 import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupPreviews';
 import {
   getReactionPendingKey,
@@ -119,6 +120,7 @@ import {
 import {
   canManageChatNotifications,
   canShowChatNotifications,
+  DISABLED_CHAT_NOTIFICATION_PREFERENCES,
   disableDirectMessageNotifications,
   enableDirectMessageNotifications,
   getEnabledChatAttentionKind,
@@ -137,6 +139,7 @@ import {
   readReadWatermarks,
   readScrollBookmarks,
   readSidebarCollapse,
+  setChatStorageMode,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
@@ -157,12 +160,15 @@ import {
 } from './groupAccess';
 import {
   fetchAccountAvatar,
+  getNextAvatarPendingRetry,
   loadAvatarProfile,
   normalizeRegisteredName,
   revokeAvatarObjectUrl,
   resolveAvatarIdentities,
   type AvatarProfile,
+  type AvatarPendingRetryState,
 } from './avatarProfiles';
+import { AvatarTaskQueue } from './avatarQueue';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -490,6 +496,8 @@ function getAvatarRequestKey(address: string, preferredName: string | null | und
   return JSON.stringify([address, normalizeRegisteredName(preferredName) ?? '', actionsKey]);
 }
 
+const AVATAR_REQUEST_CONCURRENCY = 6;
+
 function useAvatarProfiles(
   addresses: string[],
   knownNamesByAddress: ReadonlyMap<string, string>,
@@ -499,12 +507,18 @@ function useAvatarProfiles(
 ) {
   const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
+  const avatarTaskQueueRef = useRef<AvatarTaskQueue | null>(null);
+
+  avatarTaskQueueRef.current ??= new AvatarTaskQueue(AVATAR_REQUEST_CONCURRENCY);
   // Requests already issued and still awaiting their final commit, so an
   // effect re-run (new sender in a busy chat) does not fire a duplicate
   // name-resolution/avatar-fetch chain for an address whose request is still
   // in flight.
   const pendingRequestKeysRef = useRef(new Map<string, string>());
   const retryTimersRef = useRef(new Map<string, { requestKey: string; timer: number }>());
+  const retryStatesRef = useRef(
+    new Map<string, { requestKey: string; state: AvatarPendingRetryState }>(),
+  );
   // The hook owns profile URLs. A lightbox captures its source independently,
   // so a departed profile's URL is deferred only while that exact URL remains
   // open; all other departed/replaced URLs are released immediately.
@@ -521,6 +535,8 @@ function useAvatarProfiles(
     for (const { timer } of retryTimersRef.current.values()) {
       window.clearTimeout(timer);
     }
+    retryTimersRef.current.clear();
+    retryStatesRef.current.clear();
 
     for (const objectUrl of avatarObjectUrlsRef.current) {
       revokeAvatarObjectUrl(objectUrl);
@@ -562,6 +578,7 @@ function useAvatarProfiles(
           window.clearTimeout(scheduledRetry.timer);
           retryTimersRef.current.delete(address);
         }
+        retryStatesRef.current.delete(address);
 
         const objectUrl = profileAvatarObjectUrlsRef.current.get(address);
 
@@ -601,6 +618,12 @@ function useAvatarProfiles(
         retryTimersRef.current.delete(address);
       }
 
+      const retryState = retryStatesRef.current.get(address);
+
+      if (retryState && retryState.requestKey !== requestKey) {
+        retryStatesRef.current.delete(address);
+      }
+
       if (
         profiles.get(address)?.requestKey !== requestKey &&
         pendingRequestKeysRef.current.get(address) !== requestKey
@@ -629,8 +652,20 @@ function useAvatarProfiles(
     const isCurrent = (address: string) =>
       mountedRef.current && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
 
+    const clearRetry = (address: string) => {
+      const scheduledRetry = retryTimersRef.current.get(address);
+
+      if (scheduledRetry) {
+        window.clearTimeout(scheduledRetry.timer);
+        retryTimersRef.current.delete(address);
+      }
+
+      retryStatesRef.current.delete(address);
+    };
+
     const commit = (profile: AvatarProfile) => {
       settlePending(profile.address);
+      clearRetry(profile.address);
 
       if (!isCurrent(profile.address)) {
         revokeAvatarObjectUrl(profile.avatarSrc);
@@ -698,56 +733,99 @@ function useAvatarProfiles(
         return;
       }
 
+      const previousRetry = retryStatesRef.current.get(profile.address);
+      const retry = getNextAvatarPendingRetry(
+        previousRetry?.requestKey === requestKey ? previousRetry.state : undefined,
+        retryAfterSeconds,
+      );
+
+      if (!retry) {
+        commit(profile);
+        return;
+      }
+
+      retryStatesRef.current.set(profile.address, {
+        requestKey,
+        state: retry.state,
+      });
       const timer = window.setTimeout(() => {
         retryTimersRef.current.delete(profile.address);
 
         if (isCurrent(profile.address)) {
-          loadAccountAvatar(profile);
+          enqueueAccountAvatar(profile);
         } else {
           settlePending(profile.address);
         }
-      }, retryAfterSeconds * 1000);
+      }, retry.delayMs);
 
       retryTimersRef.current.set(profile.address, { requestKey, timer });
     }
 
-    function loadAccountAvatar(profile: AvatarProfile) {
+    async function loadAccountAvatar(profile: AvatarProfile) {
       if (!isCurrent(profile.address)) {
         settlePending(profile.address);
         return;
       }
 
-      void fetchAccountAvatar(profile.address, actions)
-        .then((avatar) => {
-          if (avatar.kind === 'ready') {
-            commit({ ...profile, avatarSrc: avatar.src });
-          } else if (avatar.kind === 'pending') {
-            scheduleAvatarRetry(profile, avatar.retryAfterSeconds);
-          } else {
-            commit(profile);
-          }
-        })
-        .catch(() => {
-          // The bridge parser is intentionally fail-closed. An unexpected
-          // rejection has the same UI result as an unavailable avatar.
+      try {
+        const avatar = await fetchAccountAvatar(
+          profile.address,
+          actions,
+          profile.name,
+        );
+
+        if (avatar.kind === 'ready') {
+          commit({ ...profile, avatarSrc: avatar.src });
+        } else if (avatar.kind === 'pending') {
+          scheduleAvatarRetry(profile, avatar.retryAfterSeconds);
+        } else {
           commit(profile);
+        }
+      } catch {
+        // The bridge parser is intentionally fail-closed. An unexpected
+        // rejection has the same UI result as an unavailable avatar.
+        commit(profile);
+      }
+    }
+
+    function enqueueAvatarTask(address: string, task: () => Promise<void>) {
+      const priority = addresses.indexOf(address);
+
+      void avatarTaskQueueRef.current
+        ?.enqueue(async () => {
+          if (!isCurrent(address)) {
+            settlePending(address);
+            return;
+          }
+
+          await task();
+        }, priority < 0 ? addresses.length : priority)
+        .catch(() => {
+          settlePending(address);
         });
+    }
+
+    function enqueueAccountAvatar(profile: AvatarProfile) {
+      enqueueAvatarTask(profile.address, () => loadAccountAvatar(profile));
     }
 
     const loadIndividually = (targets: string[]) => {
       for (const address of targets) {
         const preferredName = knownNamesByAddress.get(address) ?? null;
-        void loadAvatarProfile({ actions, address, preferredName })
-          .then((profile) => {
+
+        enqueueAvatarTask(address, async () => {
+          try {
+            const profile = await loadAvatarProfile({ actions, address, preferredName });
+
             commitMany([profile]);
-            loadAccountAvatar(profile);
-          })
-          .catch(() => {
+            await loadAccountAvatar(profile);
+          } catch {
             // loadAvatarProfile normally degrades to a name-less profile. This
             // guard only handles an unexpected failure without starting a
             // duplicate request chain.
             settlePending(address);
-          });
+          }
+        });
       }
     };
 
@@ -769,7 +847,7 @@ function useAvatarProfiles(
             for (const profile of profiles) {
               // Fetch every currently rendered address. Accounts without a
               // registered name can still have an explicit avatar pointer.
-              loadAccountAvatar(profile);
+              enqueueAccountAvatar(profile);
             }
           })
           .catch(() => {
@@ -789,6 +867,7 @@ function AccountSummary({
   account,
   error,
   isHomeBridge,
+  isGateway,
   onConnect,
   onOpenAvatar,
   profile,
@@ -797,6 +876,7 @@ function AccountSummary({
   account: QdnSelectedAccount | null;
   error: string;
   isHomeBridge: boolean;
+  isGateway: boolean;
   onConnect: () => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   profile?: AvatarProfile;
@@ -826,6 +906,14 @@ function AccountSummary({
           </div>
           <span className="account-summary__address">{account.address}</span>
         </div>
+      </div>
+    );
+  }
+
+  if (isGateway) {
+    return (
+      <div className="account-connect account-connect--gateway">
+        <p className="muted">{t('status.gateway.readOnly')}</p>
       </div>
     );
   }
@@ -881,7 +969,14 @@ function useStableCallback<Args extends unknown[], Result>(callback: (...args: A
 }
 
 export default function App() {
-  const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({ actions: [], isHomeBridge: false, isUsingPublicNode: false, ui: 'BROWSER_DEV' }));
+  const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({
+    actions: [],
+    isHomeBridge: false,
+    isUsingPublicNode: false,
+    transport: 'browser-dev',
+    ui: 'BROWSER_DEV',
+  }));
+  const [chatStorageReady, setChatStorageReady] = useState(false);
   const [account, setAccount] = useState<QdnSelectedAccount | null>(null);
   const [accountError, setAccountError] = useState('');
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
@@ -906,7 +1001,9 @@ export default function App() {
   // incoming messages. See the announce effect below.
   const [liveAnnouncement, setLiveAnnouncement] = useState('');
   const lastAnnouncedRef = useRef<{ chatKey: string; signature: string }>({ chatKey: '', signature: '' });
-  const [chatNotificationPreferences, setChatNotificationPreferences] = useState(readChatNotificationPreferences);
+  const [chatNotificationPreferences, setChatNotificationPreferences] = useState<ChatNotificationPreferences>(
+    () => ({ ...DISABLED_CHAT_NOTIFICATION_PREFERENCES }),
+  );
   const [chatNotificationsBusy, setChatNotificationsBusy] = useState(false);
   const [chatNotificationsError, setChatNotificationsError] = useState('');
   const [isChatNotificationMenuOpen, setChatNotificationMenuOpen] = useState(false);
@@ -964,8 +1061,9 @@ export default function App() {
   // collapsed section (see GroupList/DirectList `collapsed`), so a collapsed
   // section only ever shows the chats that need attention. The expanded/collapsed
   // choice is persisted (app-wide) and restored on the next app start.
-  const [isGroupsCollapsed, setGroupsCollapsed] = useState(() => readSidebarCollapse()?.groups ?? true);
-  const [isDirectCollapsed, setDirectCollapsed] = useState(() => readSidebarCollapse()?.direct ?? true);
+  const [isGroupsCollapsed, setGroupsCollapsed] = useState(true);
+  const [isDirectCollapsed, setDirectCollapsed] = useState(true);
+  const [showGroupOnboarding, setShowGroupOnboarding] = useState(true);
   const [draft, setDraft] = useState('');
   const [composeContext, setComposeContext] = useState<
     | { kind: 'edit'; thread: MessageThread }
@@ -1811,7 +1909,32 @@ export default function App() {
       ? accountLockedLabel
       : bridge.value.isHomeBridge
         ? t('action.groupApprovalUnavailable')
-        : t('action.groupApprovalUnavailableBrowser');
+      : t('action.groupApprovalUnavailableBrowser');
+  const topActionUnavailableLabel =
+    selectedChat?.kind === 'group' &&
+    selectedGroupId !== null &&
+    selectedGroupId > 0 &&
+    isSelectedGroupMembershipConfirmed &&
+    !isConfirmedJoinedGroup &&
+    canJoinGroup &&
+    !canSubmitJoin
+      ? hasPendingJoinTransaction
+        ? t('button.join.transaction.pending')
+        : hasPendingJoinRequest
+          ? t('button.join.request.pending')
+          : groupJoinUnavailableLabel
+      : selectedChat?.kind === 'group' &&
+          selectedGroupId !== null &&
+          selectedGroupId > 0 &&
+          isConfirmedJoinedGroup &&
+          canLeaveGroup &&
+          !canSubmitLeave
+        ? hasPendingLeaveTransaction
+          ? t('button.leave.transaction.pending')
+          : groupLeaveUnavailableLabel
+        : showMintingControls && accountMintingStatus?.isMinting !== true && !canSubmitStartMinting
+          ? startMintingTitle
+          : '';
 
   async function loadGroups(nextSearch = search, actionList = actions) {
     setGroups({ phase: 'loading', value: groups.value });
@@ -2106,7 +2229,15 @@ export default function App() {
       }
 
       setMessagesChatKey(chatKey);
-      setMessages({ phase: 'ready', value: nextMessages });
+      setMessages((current) => {
+        const value = options.quiet
+          ? retainChatMessagesWhenEqual(current.value, nextMessages)
+          : nextMessages;
+
+        return options.quiet && current.phase === 'ready' && value === current.value
+          ? current
+          : { phase: 'ready', value };
+      });
 
       // Only the initial (non-quiet) load establishes whether older history may
       // exist; quiet 15s polls must not disturb paging once the user has paged.
@@ -3407,8 +3538,25 @@ export default function App() {
     try {
       const nextBridge = await getBridgeState();
       nextActions = nextBridge.actions;
+      setChatStorageMode(nextBridge.transport === 'gateway' ? 'memory' : 'persistent');
+      const storedNotificationPreferences = nextBridge.transport === 'gateway'
+        ? { ...DISABLED_CHAT_NOTIFICATION_PREFERENCES }
+        : readChatNotificationPreferences();
+      const storedSidebar = readSidebarCollapse();
+
+      chatNotificationsDesiredRef.current = storedNotificationPreferences;
+      setChatNotificationPreferences(storedNotificationPreferences);
+
+      if (storedSidebar) {
+        setDirectCollapsed(storedSidebar.direct);
+        setGroupsCollapsed(storedSidebar.groups);
+      }
+
+      setChatStorageReady(true);
       setBridge({ phase: 'ready', value: nextBridge });
     } catch (error) {
+      setChatStorageMode('persistent');
+      setChatStorageReady(true);
       setBridge({
         error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
         phase: 'error',
@@ -4344,8 +4492,12 @@ export default function App() {
 
   // Persist the sidebar section expand/collapse choice so it survives a restart.
   useEffect(() => {
+    if (!chatStorageReady) {
+      return;
+    }
+
     writeSidebarCollapse({ direct: isDirectCollapsed, groups: isGroupsCollapsed });
-  }, [isDirectCollapsed, isGroupsCollapsed]);
+  }, [chatStorageReady, isDirectCollapsed, isGroupsCollapsed]);
 
   useEffect(() => {
     const language = normalizeLanguage(displaySettings.language);
@@ -4530,9 +4682,14 @@ export default function App() {
       return undefined;
     }
 
-    if (selectedChat.kind !== 'group' || selectedChat.group.isOpen === false) {
-      // Direct and closed-group chats have no public websocket; poll quietly
-      // so newly received messages show up without a manual refresh.
+    if (
+      bridge.value.transport === 'gateway' ||
+      selectedChat.kind !== 'group' ||
+      selectedChat.group.isOpen === false
+    ) {
+      // GatewayService exposes REST only; direct and closed-group chats also
+      // have no public websocket. Poll quietly so newly received messages show
+      // up without burning a doomed reconnect loop.
       const chat = selectedChat;
 
       void loadMessages(chat);
@@ -4658,7 +4815,13 @@ export default function App() {
 
       socket?.close();
     };
-  }, [selectedChatKey, actionsKey, isAccountUnlocked, selectedClosedGroupReadKey]);
+  }, [
+    selectedChatKey,
+    actionsKey,
+    isAccountUnlocked,
+    selectedClosedGroupReadKey,
+    bridge.value.transport,
+  ]);
 
   useEffect(() => {
     if (!account) {
@@ -4962,6 +5125,7 @@ export default function App() {
             account={account}
             error={accountError}
             isHomeBridge={bridge.value.isHomeBridge}
+            isGateway={bridge.value.transport === 'gateway'}
             onConnect={() => void connectSelectedAccount()}
             onOpenAvatar={setAvatarLightboxImage}
             profile={account ? avatarProfiles.get(account.address) : undefined}
@@ -5148,6 +5312,20 @@ export default function App() {
                 </button>
               </form>
             ) : null}
+            {!isGroupsCollapsed && showGroupOnboarding ? (
+              <div className="panel__intro">
+                <p>{t('hint.groupOnboarding')}</p>
+                <button
+                  aria-label={t('button.close')}
+                  className="icon-button panel__intro-close"
+                  onClick={() => setShowGroupOnboarding(false)}
+                  title={t('button.close')}
+                  type="button"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            ) : null}
             {!isGroupsCollapsed && groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
             {groups.phase === 'loading' && !isGroupsCollapsed ? (
               <LoadingRows count={5} label={t('label.loading')} />
@@ -5299,83 +5477,125 @@ export default function App() {
                 </button>
               ) : null}
             </div>
+            {topActionUnavailableLabel ? <p className="chat-pane__action-hint">{topActionUnavailableLabel}</p> : null}
           </div>
 
-          {messages.phase === 'error' ? (
-            <div className="chat-pane__load-error">
-              <p className="error">{messages.error}</p>
-              <button
-                className="button button--secondary"
-                onClick={() => void loadMessages(selectedChat)}
-                type="button"
-              >
-                {t('button.retry')}
-              </button>
+          {/* Owns the `1fr` row of the `.chat-pane` grid so the message feed
+              always gets the remaining space regardless of how many notices
+              above it are currently rendered. */}
+          <div className="chat-pane__content">
+            <div className="chat-pane__notices">
+              {messages.phase === 'error' ? (
+                <div className="chat-pane__load-error">
+                  <p className="error">{messages.error}</p>
+                  <button
+                    className="button button--secondary"
+                    onClick={() => void loadMessages(selectedChat)}
+                    type="button"
+                  >
+                    {t('button.retry')}
+                  </button>
+                </div>
+              ) : null}
+              {writeError ? <p className="error">{writeError}</p> : null}
+              {privateGroupKeyError ? <p className="error">{privateGroupKeyError}</p> : null}
+              {privateGroupKeyStatus ? <p className="muted">{privateGroupKeyStatus}</p> : null}
+              {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
+              {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
+              {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
+              {showApprovalControls && pendingApprovals.phase === 'error' ? (
+                <p className="error">{pendingApprovals.error}</p>
+              ) : null}
+              {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
+              {selectedClosedGroupHistoryUnavailable ? (
+                <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
+              ) : null}
             </div>
-          ) : null}
-          {writeError ? <p className="error">{writeError}</p> : null}
-          {privateGroupKeyError ? <p className="error">{privateGroupKeyError}</p> : null}
-          {privateGroupKeyStatus ? <p className="muted">{privateGroupKeyStatus}</p> : null}
-          {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
-          {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
-          {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
-          {showApprovalControls && pendingApprovals.phase === 'error' ? (
-            <p className="error">{pendingApprovals.error}</p>
-          ) : null}
-          {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
-          {selectedClosedGroupHistoryUnavailable ? (
-            <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
-          ) : null}
-          <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
-            {liveAnnouncement}
-          </div>
-          {messages.phase === 'loading' || (messages.phase === 'ready' && selectedChat !== null && !hasSelectedMessages) ? (
-            // The second arm covers the transient frame right after a chat
-            // switch, before the load effect runs: `messages` still holds the
-            // previous chat then, and must not flash under the new header.
-            <LoadingRows count={4} label={t('label.loading')} />
-          ) : (
-            <MessageList
-              avatarProfiles={avatarProfiles}
-              canCompose={canComposeMessage}
-              canOpenDocumentViewer={canOpenDocumentViewer}
-              canOpenMediaPlayer={canOpenMediaPlayer}
-              canSaveQdnResource={canSaveQdnResource}
-              initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
-              messages={combinedMessages}
-              olderMessagesError={olderMessagesState.error}
-              olderMessagesReachedStart={olderMessagesState.reachedStart}
-              olderMessagesLoading={olderMessagesState.loading}
-              onDelete={setDeleteTarget}
-              onEdit={handleStartEdit}
-              onLoadOlder={handleLoadOlderMessages}
-              onOpenAccount={setAccountInfoTarget}
-              onOpenAvatar={setAvatarLightboxImage}
-              onOpenImage={setAvatarLightboxImage}
-              onReact={handleReactToMessage}
-              onReply={handleStartReply}
-              onScrollPositionChange={handleScrollPositionChange}
-              now={now}
-              pendingReactionKey={reactionPendingKey}
-              scrollChatKey={selectedChatKey}
-              selfAddress={account?.address ?? null}
-              selfName={normalizeRegisteredName(account?.name) ?? null}
-              sentMessageNonce={sentMessageNonce}
-              systemMessages={selectedTransactions}
-              t={t}
-              unreadDividerCeiling={unreadDividerCeiling}
-              unreadDividerTimestamp={unreadDividerTimestamp}
-            />
-          )}
+            <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
+              {liveAnnouncement}
+            </div>
+            {!selectedChat ? (
+              <div className="chat-empty-state">
+                <p>{t('hint.noChatSelected')}</p>
+                {groups.value.find((group) => isGeneralChatGroup(group)) ? (
+                  <button
+                    className="button"
+                    onClick={() => {
+                      const generalChat = groups.value.find((group) => isGeneralChatGroup(group));
 
-          {publicNodeSendNotice ? (
+                      if (generalChat) {
+                        selectGroup(generalChat);
+                      }
+                    }}
+                    type="button"
+                  >
+                    {t('button.startGeneralChat')}
+                  </button>
+                ) : null}
+              </div>
+            ) : messages.phase === 'loading' || (messages.phase === 'ready' && !hasSelectedMessages) ? (
+              // The second arm covers the transient frame right after a chat
+              // switch, before the load effect runs: `messages` still holds the
+              // previous chat then, and must not flash under the new header.
+              <LoadingRows count={4} label={t('label.loading')} />
+            ) : (
+              <MessageList
+                avatarProfiles={avatarProfiles}
+                canCompose={canComposeMessage}
+                canOpenDocumentViewer={canOpenDocumentViewer}
+                canOpenMediaPlayer={canOpenMediaPlayer}
+                canSaveQdnResource={canSaveQdnResource}
+                emptyHint={isSelectedGeneralChat ? t('hint.noMessages.general') : undefined}
+                initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
+                messages={combinedMessages}
+                olderMessagesError={olderMessagesState.error}
+                olderMessagesReachedStart={olderMessagesState.reachedStart}
+                olderMessagesLoading={olderMessagesState.loading}
+                onDelete={setDeleteTarget}
+                onEdit={handleStartEdit}
+                onLoadOlder={handleLoadOlderMessages}
+                onOpenAccount={setAccountInfoTarget}
+                onOpenAvatar={setAvatarLightboxImage}
+                onOpenImage={setAvatarLightboxImage}
+                onReact={handleReactToMessage}
+                onReply={handleStartReply}
+                onScrollPositionChange={handleScrollPositionChange}
+                now={now}
+                pendingReactionKey={reactionPendingKey}
+                scrollChatKey={selectedChatKey}
+                selfAddress={account?.address ?? null}
+                selfName={normalizeRegisteredName(account?.name) ?? null}
+                sentMessageNonce={sentMessageNonce}
+                systemMessages={selectedTransactions}
+                t={t}
+                unreadDividerCeiling={unreadDividerCeiling}
+                unreadDividerTimestamp={unreadDividerTimestamp}
+              />
+            )}
+          </div>
+          {bridge.value.transport === 'gateway' ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{t('status.gateway.readOnly')}</p>
+            </div>
+          ) : !selectedChat ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{t('hint.noChatSelected')}</p>
+            </div>
+          ) : publicNodeSendNotice ? (
             <div aria-live="polite" className="composer composer--notice">
               <p>{publicNodeSendNotice}</p>
             </div>
           ) : showGroupComposerNotice ? (
             <div aria-live="polite" className="composer composer--notice">
-              <p>{groupComposerNotice}</p>
+              <div>
+                <p>{groupComposerNotice}</p>
+                <p>{t('hint.groupApprovalDelay')}</p>
+              </div>
               {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}
+            </div>
+          ) : !canComposeMessage ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{selectedChat.kind === 'direct' ? directSendUnavailableLabel : groupSendUnavailableLabel}</p>
             </div>
           ) : (
             <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>

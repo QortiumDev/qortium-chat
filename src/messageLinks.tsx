@@ -64,9 +64,11 @@ type QdnResourceMetadata = {
 
 export type QdnImagePreview = {
   alt: string;
+  height?: number;
   mimeType: string;
   qdnUrl: string;
   src: string;
+  width?: number;
 };
 
 function countCharacter(value: string, character: string) {
@@ -583,6 +585,26 @@ function getBase64Payload(value: unknown) {
   return base64;
 }
 
+function decodeImageDimensions(src: string): Promise<{ height: number; width: number } | null> {
+  if (typeof Image === 'undefined') {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const image = new Image();
+
+    image.onload = () => {
+      resolve(
+        image.naturalWidth > 0 && image.naturalHeight > 0
+          ? { height: image.naturalHeight, width: image.naturalWidth }
+          : null,
+      );
+    };
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+}
+
 export async function fetchQdnImagePreview(resource: QdnImageResource): Promise<QdnImagePreview> {
   const properties = normalizeProperties(
     await qdnRequest<unknown>({
@@ -605,12 +627,15 @@ export async function fetchQdnImagePreview(resource: QdnImageResource): Promise<
     }),
   );
   const mimeType = getImageMimeType(properties, base64);
+  const src = `data:${mimeType};base64,${base64}`;
+  const dimensions = await decodeImageDimensions(src);
 
   return {
     alt: properties.filename || resource.qdnUrl,
+    ...dimensions,
     mimeType,
     qdnUrl: resource.qdnUrl,
-    src: `data:${mimeType};base64,${base64}`,
+    src,
   };
 }
 
