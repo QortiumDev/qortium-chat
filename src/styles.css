@@ -2848,6 +2848,7 @@ button.message__reply-preview:focus-visible,
   display: block;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 96px);
+  max-height: calc(100dvh - 96px);
   object-fit: contain;
   background: rgb(0 0 0 / 28%);
   border-radius: var(--qc-radius-md);
@@ -3136,6 +3137,7 @@ button.message__reply-preview:focus-visible,
   width: 100%;
   max-width: 100%;
   max-height: 30vh;
+  max-height: 30dvh;
   field-sizing: content;
   overflow-wrap: anywhere;
   resize: none;
@@ -3434,12 +3436,26 @@ button.message__reply-preview:focus-visible,
   .panel,
   .chat-pane,
   .members-drawer {
-    padding: 14px;
+    padding: 12px;
   }
 
   .chat-pane,
   .members-drawer {
-    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .chat-pane__header {
+    gap: 8px;
+    padding-bottom: 10px;
+  }
+
+  .message-list {
+    gap: 7px;
+    padding: 10px 0;
+  }
+
+  .message {
+    padding: 9px 11px;
   }
 
   .chat-pane__action-hint {
@@ -3452,7 +3468,9 @@ button.message__reply-preview:focus-visible,
   }
 
   .composer {
+    gap: 8px;
     flex-wrap: wrap;
+    padding-top: 10px;
   }
 
   .composer textarea {
