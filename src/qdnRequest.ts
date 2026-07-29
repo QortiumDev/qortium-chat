@@ -1,4 +1,4 @@
-import type { BridgeState, NodeApiFetchResult, QdnAction } from './types';
+import type { BridgeState, BridgeTransport, NodeApiFetchResult, QdnAction } from './types';
 
 const DEFAULT_NODE_API_URL = 'http://127.0.0.1:24891';
 
@@ -139,6 +139,16 @@ export function hasHomeBridge() {
   return typeof window !== 'undefined' && typeof window.qdnRequest === 'function';
 }
 
+export function classifyBridgeTransport(ui: string, hasInjectedBridge: boolean): BridgeTransport {
+  const normalizedUi = ui.trim().toUpperCase();
+
+  if (normalizedUi === 'QORTIUM_GATEWAY' || normalizedUi.endsWith('_GATEWAY')) {
+    return 'gateway';
+  }
+
+  return hasInjectedBridge ? 'home' : 'browser-dev';
+}
+
 export async function qdnRequest<T = unknown>(request: QdnRequest): Promise<T> {
   if (!isRecord(request) || typeof request.action !== 'string') {
     throw new Error('QDN requests must include an action.');
@@ -154,8 +164,9 @@ export async function qdnRequest<T = unknown>(request: QdnRequest): Promise<T> {
 }
 
 export async function getBridgeState(): Promise<BridgeState> {
+  const hasInjectedBridge = hasHomeBridge();
   let actions: QdnAction[] = [];
-  let ui = hasHomeBridge() ? 'QORTIUM_HOME_ELECTRON' : 'BROWSER_DEV';
+  let ui = hasInjectedBridge ? 'QORTIUM_HOME_ELECTRON' : 'BROWSER_DEV';
   let isUsingPublicNode = false;
 
   try {
@@ -187,10 +198,13 @@ export async function getBridgeState(): Promise<BridgeState> {
     isUsingPublicNode = false;
   }
 
+  const transport = classifyBridgeTransport(ui, hasInjectedBridge);
+
   return {
     actions,
-    isHomeBridge: hasHomeBridge(),
+    isHomeBridge: transport === 'home',
     isUsingPublicNode,
+    transport,
     ui,
   };
 }

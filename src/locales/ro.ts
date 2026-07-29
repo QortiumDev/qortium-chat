@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Autorizație minting confirmată',
   'status.bridge.accountAccessDenied': 'Accesul la cont nu a fost partajat.',
   'status.bridge.writeDenied': 'Cererea nu a fost aprobată în Qortium Home.',
+  'status.gateway.readOnly': 'Vizualizare publică doar pentru citire. Deschide în Qortium Home pentru a folosi un cont sau a trimite mesaje.',
   'status.privateGroupKey.requesting': 'Se solicită cheia grupului privat...',
   'status.privateGroupKey.requested': 'Cheia grupului privat a fost solicitată. Mesajele se vor reîmprospăta după ce cheia este retransmisă.',
   'status.privateGroupKey.recoveryChecked': 'Solicitările pentru cheia grupului privat au fost verificate.',

@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': '민팅 승인됨',
   'status.bridge.accountAccessDenied': '계정 접근이 공유되지 않았습니다.',
   'status.bridge.writeDenied': 'Qortium Home에서 요청이 승인되지 않았습니다.',
+  'status.gateway.readOnly': '공개 읽기 전용 보기입니다. 계정을 사용하거나 메시지를 보내려면 Qortium Home에서 여세요.',
   'status.privateGroupKey.requesting': '비공개 그룹 키 요청 중...',
   'status.privateGroupKey.requested': '비공개 그룹 키가 요청되었습니다. 키가 전달되면 메시지가 새로고침됩니다.',
   'status.privateGroupKey.recoveryChecked': '비공개 그룹 키 요청이 확인되었습니다.',

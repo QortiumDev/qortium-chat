@@ -10,6 +10,7 @@
     "dev": "vite",
     "preview": "vite preview",
     "qdn:publish": "node scripts/publish-qdn.mjs",
+    "smoke:gateway": "node scripts/smoke-gateway-readonly.mjs",
     "test": "vitest run"
   },
   "dependencies": {
