@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Minting-auktorisering bekräftad',
   'status.bridge.accountAccessDenied': 'Kontotillgång delades inte.',
   'status.bridge.writeDenied': 'Begäran godkändes inte i Qortium Home.',
+  'status.gateway.readOnly': 'Offentlig skrivskyddad vy. Öppna i Qortium Home för att använda ett konto eller skicka meddelanden.',
   'status.privateGroupKey.requesting': 'Begär privat gruppnyckel...',
   'status.privateGroupKey.requested': 'Privat gruppnyckel begärd. Meddelanden uppdateras när nyckeln har vidarebefordrats.',
   'status.privateGroupKey.recoveryChecked': 'Begäranden om privat gruppnyckel kontrollerade.',

@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildNodeWebSocketUrl, getBridgeState, hasAction, LOCAL_READ_ACTIONS, qdnRequest } from './qdnRequest';
+import {
+  buildNodeWebSocketUrl,
+  classifyBridgeTransport,
+  getBridgeState,
+  hasAction,
+  LOCAL_READ_ACTIONS,
+  qdnRequest,
+} from './qdnRequest';
 
 describe('qdnRequest bridge adapter', () => {
   afterEach(() => {
@@ -19,6 +26,7 @@ describe('qdnRequest bridge adapter', () => {
       actions: ['FETCH_NODE_API', 'GET_SELECTED_ACCOUNT'],
       isHomeBridge: true,
       isUsingPublicNode: true,
+      transport: 'home',
       ui: 'QORTIUM_HOME_ELECTRON',
     });
   });
@@ -36,8 +44,33 @@ describe('qdnRequest bridge adapter', () => {
       actions: ['FETCH_NODE_API'],
       isHomeBridge: true,
       isUsingPublicNode: false,
+      transport: 'home',
       ui: 'QORTIUM_HOME',
     });
+  });
+
+  it('classifies Core gateway injection separately from Home', async () => {
+    const qdnRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce(['FETCH_NODE_API', 'SEARCH_CHAT_MESSAGES'])
+      .mockResolvedValueOnce('QORTIUM_GATEWAY')
+      .mockResolvedValueOnce(true);
+
+    vi.stubGlobal('window', { qdnRequest: qdnRequestMock });
+
+    await expect(getBridgeState()).resolves.toEqual({
+      actions: ['FETCH_NODE_API', 'SEARCH_CHAT_MESSAGES'],
+      isHomeBridge: false,
+      isUsingPublicNode: true,
+      transport: 'gateway',
+      ui: 'QORTIUM_GATEWAY',
+    });
+  });
+
+  it('classifies unknown injected bridges as Home-compatible', () => {
+    expect(classifyBridgeTransport('QORTIUM_GATEWAY', true)).toBe('gateway');
+    expect(classifyBridgeTransport('future-home-shell', true)).toBe('home');
+    expect(classifyBridgeTransport('BROWSER_DEV', false)).toBe('browser-dev');
   });
 
   it('uses local fallback actions outside Home', async () => {

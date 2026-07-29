@@ -26,6 +26,7 @@ export const EN_STRINGS = {
   'status.minting.authorization.confirmed': 'Minting authorization confirmed',
   'status.bridge.accountAccessDenied': 'Account access was not shared.',
   'status.bridge.writeDenied': 'Request was not approved in Qortium Home.',
+  'status.gateway.readOnly': 'Public read-only view. Open in Qortium Home to use an account or send messages.',
   'status.privateGroupKey.requesting': 'Requesting private group key...',
   'status.privateGroupKey.requested': 'Private group key requested. Messages will refresh after the key is relayed.',
   'status.privateGroupKey.recoveryChecked': 'Private group key requests checked.',

@@ -7,6 +7,7 @@ import {
   readPersistedDirects,
   readReadWatermarks,
   readWatermarksStorageKey,
+  setChatStorageMode,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
@@ -125,7 +126,10 @@ describe('toStoredSelectedChat', () => {
 });
 
 describe('storage round-trips', () => {
-  beforeEach(installStorage);
+  beforeEach(() => {
+    setChatStorageMode('persistent');
+    installStorage();
+  });
   afterEach(removeStorage);
 
   it('persists and reads back the last chat', () => {
@@ -187,7 +191,10 @@ describe('storage round-trips', () => {
 });
 
 describe('without storage', () => {
-  beforeEach(removeStorage);
+  beforeEach(() => {
+    setChatStorageMode('persistent');
+    removeStorage();
+  });
 
   it('degrades to empty reads and silent writes', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
@@ -203,6 +210,7 @@ describe('without storage', () => {
 
 describe('with storage that throws on use', () => {
   beforeEach(() => {
+    setChatStorageMode('persistent');
     (globalThis as { window?: unknown }).window = { localStorage: new ThrowingStorage() };
   });
   afterEach(removeStorage);
@@ -212,5 +220,32 @@ describe('with storage that throws on use', () => {
     expect(readPersistedDirects(ADDRESS)).toEqual([]);
     expect(() => writeLastChat(ADDRESS, { kind: 'group', group })).not.toThrow();
     expect(() => writePersistedDirects(ADDRESS, [{ address: 'Qalice' }])).not.toThrow();
+  });
+});
+
+describe('memory-only mode', () => {
+  beforeEach(() => {
+    installStorage();
+    window.localStorage.setItem(lastChatStorageKey(ADDRESS), JSON.stringify({ kind: 'group', group }));
+    setChatStorageMode('memory');
+  });
+  afterEach(() => {
+    setChatStorageMode('persistent');
+    removeStorage();
+  });
+
+  it('does not read or write the shared origin localStorage', () => {
+    expect(readLastChat(ADDRESS)).toBeNull();
+
+    writeLastChat(ADDRESS, { kind: 'direct', direct: { address: 'Qalice' } });
+
+    expect(readLastChat(ADDRESS)).toEqual({
+      kind: 'direct',
+      direct: { address: 'Qalice' },
+    });
+    expect(JSON.parse(window.localStorage.getItem(lastChatStorageKey(ADDRESS)) ?? '{}')).toEqual({
+      kind: 'group',
+      group,
+    });
   });
 });

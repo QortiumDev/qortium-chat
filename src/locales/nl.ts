@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Mint-autorisatie bevestigd',
   'status.bridge.accountAccessDenied': 'Toegang tot account is niet gedeeld.',
   'status.bridge.writeDenied': 'Verzoek niet goedgekeurd in Qortium Home.',
+  'status.gateway.readOnly': 'Openbare alleen-lezenweergave. Open in Qortium Home om een account te gebruiken of berichten te verzenden.',
   'status.privateGroupKey.requesting': 'Privégroepssleutel aanvragen...',
   'status.privateGroupKey.requested': 'Privégroepssleutel aangevraagd. Berichten worden vernieuwd nadat de sleutel is doorgestuurd.',
   'status.privateGroupKey.recoveryChecked': 'Privégroepssleutelverzoeken gecontroleerd.',

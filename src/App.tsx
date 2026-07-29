@@ -120,6 +120,7 @@ import {
 import {
   canManageChatNotifications,
   canShowChatNotifications,
+  DISABLED_CHAT_NOTIFICATION_PREFERENCES,
   disableDirectMessageNotifications,
   enableDirectMessageNotifications,
   getEnabledChatAttentionKind,
@@ -138,6 +139,7 @@ import {
   readReadWatermarks,
   readScrollBookmarks,
   readSidebarCollapse,
+  setChatStorageMode,
   toStoredSelectedChat,
   writeLastChat,
   writePersistedDirects,
@@ -865,6 +867,7 @@ function AccountSummary({
   account,
   error,
   isHomeBridge,
+  isGateway,
   onConnect,
   onOpenAvatar,
   profile,
@@ -873,6 +876,7 @@ function AccountSummary({
   account: QdnSelectedAccount | null;
   error: string;
   isHomeBridge: boolean;
+  isGateway: boolean;
   onConnect: () => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   profile?: AvatarProfile;
@@ -902,6 +906,14 @@ function AccountSummary({
           </div>
           <span className="account-summary__address">{account.address}</span>
         </div>
+      </div>
+    );
+  }
+
+  if (isGateway) {
+    return (
+      <div className="account-connect account-connect--gateway">
+        <p className="muted">{t('status.gateway.readOnly')}</p>
       </div>
     );
   }
@@ -957,7 +969,14 @@ function useStableCallback<Args extends unknown[], Result>(callback: (...args: A
 }
 
 export default function App() {
-  const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({ actions: [], isHomeBridge: false, isUsingPublicNode: false, ui: 'BROWSER_DEV' }));
+  const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({
+    actions: [],
+    isHomeBridge: false,
+    isUsingPublicNode: false,
+    transport: 'browser-dev',
+    ui: 'BROWSER_DEV',
+  }));
+  const [chatStorageReady, setChatStorageReady] = useState(false);
   const [account, setAccount] = useState<QdnSelectedAccount | null>(null);
   const [accountError, setAccountError] = useState('');
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
@@ -982,7 +1001,9 @@ export default function App() {
   // incoming messages. See the announce effect below.
   const [liveAnnouncement, setLiveAnnouncement] = useState('');
   const lastAnnouncedRef = useRef<{ chatKey: string; signature: string }>({ chatKey: '', signature: '' });
-  const [chatNotificationPreferences, setChatNotificationPreferences] = useState(readChatNotificationPreferences);
+  const [chatNotificationPreferences, setChatNotificationPreferences] = useState<ChatNotificationPreferences>(
+    () => ({ ...DISABLED_CHAT_NOTIFICATION_PREFERENCES }),
+  );
   const [chatNotificationsBusy, setChatNotificationsBusy] = useState(false);
   const [chatNotificationsError, setChatNotificationsError] = useState('');
   const [isChatNotificationMenuOpen, setChatNotificationMenuOpen] = useState(false);
@@ -1040,8 +1061,8 @@ export default function App() {
   // collapsed section (see GroupList/DirectList `collapsed`), so a collapsed
   // section only ever shows the chats that need attention. The expanded/collapsed
   // choice is persisted (app-wide) and restored on the next app start.
-  const [isGroupsCollapsed, setGroupsCollapsed] = useState(() => readSidebarCollapse()?.groups ?? true);
-  const [isDirectCollapsed, setDirectCollapsed] = useState(() => readSidebarCollapse()?.direct ?? true);
+  const [isGroupsCollapsed, setGroupsCollapsed] = useState(true);
+  const [isDirectCollapsed, setDirectCollapsed] = useState(true);
   const [draft, setDraft] = useState('');
   const [composeContext, setComposeContext] = useState<
     | { kind: 'edit'; thread: MessageThread }
@@ -3491,8 +3512,25 @@ export default function App() {
     try {
       const nextBridge = await getBridgeState();
       nextActions = nextBridge.actions;
+      setChatStorageMode(nextBridge.transport === 'gateway' ? 'memory' : 'persistent');
+      const storedNotificationPreferences = nextBridge.transport === 'gateway'
+        ? { ...DISABLED_CHAT_NOTIFICATION_PREFERENCES }
+        : readChatNotificationPreferences();
+      const storedSidebar = readSidebarCollapse();
+
+      chatNotificationsDesiredRef.current = storedNotificationPreferences;
+      setChatNotificationPreferences(storedNotificationPreferences);
+
+      if (storedSidebar) {
+        setDirectCollapsed(storedSidebar.direct);
+        setGroupsCollapsed(storedSidebar.groups);
+      }
+
+      setChatStorageReady(true);
       setBridge({ phase: 'ready', value: nextBridge });
     } catch (error) {
+      setChatStorageMode('persistent');
+      setChatStorageReady(true);
       setBridge({
         error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
         phase: 'error',
@@ -4428,8 +4466,12 @@ export default function App() {
 
   // Persist the sidebar section expand/collapse choice so it survives a restart.
   useEffect(() => {
+    if (!chatStorageReady) {
+      return;
+    }
+
     writeSidebarCollapse({ direct: isDirectCollapsed, groups: isGroupsCollapsed });
-  }, [isDirectCollapsed, isGroupsCollapsed]);
+  }, [chatStorageReady, isDirectCollapsed, isGroupsCollapsed]);
 
   useEffect(() => {
     const language = normalizeLanguage(displaySettings.language);
@@ -4614,9 +4656,14 @@ export default function App() {
       return undefined;
     }
 
-    if (selectedChat.kind !== 'group' || selectedChat.group.isOpen === false) {
-      // Direct and closed-group chats have no public websocket; poll quietly
-      // so newly received messages show up without a manual refresh.
+    if (
+      bridge.value.transport === 'gateway' ||
+      selectedChat.kind !== 'group' ||
+      selectedChat.group.isOpen === false
+    ) {
+      // GatewayService exposes REST only; direct and closed-group chats also
+      // have no public websocket. Poll quietly so newly received messages show
+      // up without burning a doomed reconnect loop.
       const chat = selectedChat;
 
       void loadMessages(chat);
@@ -4742,7 +4789,13 @@ export default function App() {
 
       socket?.close();
     };
-  }, [selectedChatKey, actionsKey, isAccountUnlocked, selectedClosedGroupReadKey]);
+  }, [
+    selectedChatKey,
+    actionsKey,
+    isAccountUnlocked,
+    selectedClosedGroupReadKey,
+    bridge.value.transport,
+  ]);
 
   useEffect(() => {
     if (!account) {
@@ -5046,6 +5099,7 @@ export default function App() {
             account={account}
             error={accountError}
             isHomeBridge={bridge.value.isHomeBridge}
+            isGateway={bridge.value.transport === 'gateway'}
             onConnect={() => void connectSelectedAccount()}
             onOpenAvatar={setAvatarLightboxImage}
             profile={account ? avatarProfiles.get(account.address) : undefined}
@@ -5459,7 +5513,11 @@ export default function App() {
             )}
           </div>
 
-          {publicNodeSendNotice ? (
+          {bridge.value.transport === 'gateway' ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <p>{t('status.gateway.readOnly')}</p>
+            </div>
+          ) : publicNodeSendNotice ? (
             <div aria-live="polite" className="composer composer--notice">
               <p>{publicNodeSendNotice}</p>
             </div>

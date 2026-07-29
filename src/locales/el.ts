@@ -26,6 +26,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Η εξουσιοδότηση κοπής επιβεβαιώθηκε',
   'status.bridge.accountAccessDenied': 'Δεν κοινοποιήθηκε η πρόσβαση λογαριασμού.',
   'status.bridge.writeDenied': 'Η αίτηση δεν εγκρίθηκε στο Qortium Home.',
+  'status.gateway.readOnly': 'Δημόσια προβολή μόνο για ανάγνωση. Ανοίξτε στο Qortium Home για να χρησιμοποιήσετε λογαριασμό ή να στείλετε μηνύματα.',
   'status.privateGroupKey.requesting': 'Αίτηση ιδιωτικού κλειδιού ομάδας...',
   'status.privateGroupKey.requested': 'Ζητήθηκε ιδιωτικό κλειδί ομάδας. Τα μηνύματα θα ανανεωθούν μετά τη διαβίβαση του κλειδιού.',
   'status.privateGroupKey.recoveryChecked': 'Ελέγχθηκαν οι αιτήσεις ιδιωτικού κλειδιού ομάδας.',

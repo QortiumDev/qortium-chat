@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Mündistamise autoriseerimine kinnitatud',
   'status.bridge.accountAccessDenied': 'Konto juurdepääs ei olnud jagatud.',
   'status.bridge.writeDenied': 'Päringut ei kinnitanud Qortium Home.',
+  'status.gateway.readOnly': 'Avalik kirjutuskaitstud vaade. Konto kasutamiseks või sõnumite saatmiseks ava Qortium Home.',
   'status.privateGroupKey.requesting': 'Taotlen privaatgrupi võtit...',
   'status.privateGroupKey.requested': 'Privaatgrupi võti taotletud. Sõnumeid värskendatakse pärast võtme edastamist.',
   'status.privateGroupKey.recoveryChecked': 'Privaatgrupi võtme taotlused kontrollitud.',

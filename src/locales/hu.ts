@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Az érmeverési engedély megerősítve',
   'status.bridge.accountAccessDenied': 'A fiókhozzáférést nem osztották meg.',
   'status.bridge.writeDenied': 'A kérelmet a Qortium Home nem hagyta jóvá.',
+  'status.gateway.readOnly': 'Nyilvános, csak olvasható nézet. Fiók használatához vagy üzenetküldéshez nyissa meg a Qortium Home-ban.',
   'status.privateGroupKey.requesting': 'Privát csoportkulcs kérése...',
   'status.privateGroupKey.requested': 'Privát csoportkulcs kérve. Az üzenetek frissülnek, miután a kulcs továbbításra kerül.',
   'status.privateGroupKey.recoveryChecked': 'Privát csoportkulcs-kérelmek ellenőrizve.',

@@ -24,6 +24,7 @@ export const STRINGS = {
   'status.minting.authorization.confirmed': 'Minttausvaltuutus vahvistettu',
   'status.bridge.accountAccessDenied': 'Tilin käyttöoikeutta ei ole jaettu.',
   'status.bridge.writeDenied': 'Pyyntöä ei hyväksytty Qortium Homessa.',
+  'status.gateway.readOnly': 'Julkinen vain luku -näkymä. Avaa Qortium Home käyttääksesi tiliä tai lähettääksesi viestejä.',
   'status.privateGroupKey.requesting': 'Pyydetään yksityisen ryhmän avainta...',
   'status.privateGroupKey.requested': 'Yksityisen ryhmän avain pyydetty. Viestit päivittyvät, kun avain välitetään.',
   'status.privateGroupKey.recoveryChecked': 'Yksityisen ryhmän avainpyynnöt tarkistettu.',
