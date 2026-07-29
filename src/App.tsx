@@ -157,12 +157,15 @@ import {
 } from './groupAccess';
 import {
   fetchAccountAvatar,
+  getNextAvatarPendingRetry,
   loadAvatarProfile,
   normalizeRegisteredName,
   revokeAvatarObjectUrl,
   resolveAvatarIdentities,
   type AvatarProfile,
+  type AvatarPendingRetryState,
 } from './avatarProfiles';
+import { AvatarTaskQueue } from './avatarQueue';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -490,6 +493,8 @@ function getAvatarRequestKey(address: string, preferredName: string | null | und
   return JSON.stringify([address, normalizeRegisteredName(preferredName) ?? '', actionsKey]);
 }
 
+const AVATAR_REQUEST_CONCURRENCY = 6;
+
 function useAvatarProfiles(
   addresses: string[],
   knownNamesByAddress: ReadonlyMap<string, string>,
@@ -499,12 +504,18 @@ function useAvatarProfiles(
 ) {
   const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
+  const avatarTaskQueueRef = useRef<AvatarTaskQueue | null>(null);
+
+  avatarTaskQueueRef.current ??= new AvatarTaskQueue(AVATAR_REQUEST_CONCURRENCY);
   // Requests already issued and still awaiting their final commit, so an
   // effect re-run (new sender in a busy chat) does not fire a duplicate
   // name-resolution/avatar-fetch chain for an address whose request is still
   // in flight.
   const pendingRequestKeysRef = useRef(new Map<string, string>());
   const retryTimersRef = useRef(new Map<string, { requestKey: string; timer: number }>());
+  const retryStatesRef = useRef(
+    new Map<string, { requestKey: string; state: AvatarPendingRetryState }>(),
+  );
   // The hook owns profile URLs. A lightbox captures its source independently,
   // so a departed profile's URL is deferred only while that exact URL remains
   // open; all other departed/replaced URLs are released immediately.
@@ -521,6 +532,8 @@ function useAvatarProfiles(
     for (const { timer } of retryTimersRef.current.values()) {
       window.clearTimeout(timer);
     }
+    retryTimersRef.current.clear();
+    retryStatesRef.current.clear();
 
     for (const objectUrl of avatarObjectUrlsRef.current) {
       revokeAvatarObjectUrl(objectUrl);
@@ -562,6 +575,7 @@ function useAvatarProfiles(
           window.clearTimeout(scheduledRetry.timer);
           retryTimersRef.current.delete(address);
         }
+        retryStatesRef.current.delete(address);
 
         const objectUrl = profileAvatarObjectUrlsRef.current.get(address);
 
@@ -601,6 +615,12 @@ function useAvatarProfiles(
         retryTimersRef.current.delete(address);
       }
 
+      const retryState = retryStatesRef.current.get(address);
+
+      if (retryState && retryState.requestKey !== requestKey) {
+        retryStatesRef.current.delete(address);
+      }
+
       if (
         profiles.get(address)?.requestKey !== requestKey &&
         pendingRequestKeysRef.current.get(address) !== requestKey
@@ -629,8 +649,20 @@ function useAvatarProfiles(
     const isCurrent = (address: string) =>
       mountedRef.current && latestRequestKeysRef.current.get(address) === requestKeyByAddress.get(address);
 
+    const clearRetry = (address: string) => {
+      const scheduledRetry = retryTimersRef.current.get(address);
+
+      if (scheduledRetry) {
+        window.clearTimeout(scheduledRetry.timer);
+        retryTimersRef.current.delete(address);
+      }
+
+      retryStatesRef.current.delete(address);
+    };
+
     const commit = (profile: AvatarProfile) => {
       settlePending(profile.address);
+      clearRetry(profile.address);
 
       if (!isCurrent(profile.address)) {
         revokeAvatarObjectUrl(profile.avatarSrc);
@@ -698,56 +730,99 @@ function useAvatarProfiles(
         return;
       }
 
+      const previousRetry = retryStatesRef.current.get(profile.address);
+      const retry = getNextAvatarPendingRetry(
+        previousRetry?.requestKey === requestKey ? previousRetry.state : undefined,
+        retryAfterSeconds,
+      );
+
+      if (!retry) {
+        commit(profile);
+        return;
+      }
+
+      retryStatesRef.current.set(profile.address, {
+        requestKey,
+        state: retry.state,
+      });
       const timer = window.setTimeout(() => {
         retryTimersRef.current.delete(profile.address);
 
         if (isCurrent(profile.address)) {
-          loadAccountAvatar(profile);
+          enqueueAccountAvatar(profile);
         } else {
           settlePending(profile.address);
         }
-      }, retryAfterSeconds * 1000);
+      }, retry.delayMs);
 
       retryTimersRef.current.set(profile.address, { requestKey, timer });
     }
 
-    function loadAccountAvatar(profile: AvatarProfile) {
+    async function loadAccountAvatar(profile: AvatarProfile) {
       if (!isCurrent(profile.address)) {
         settlePending(profile.address);
         return;
       }
 
-      void fetchAccountAvatar(profile.address, actions)
-        .then((avatar) => {
-          if (avatar.kind === 'ready') {
-            commit({ ...profile, avatarSrc: avatar.src });
-          } else if (avatar.kind === 'pending') {
-            scheduleAvatarRetry(profile, avatar.retryAfterSeconds);
-          } else {
-            commit(profile);
-          }
-        })
-        .catch(() => {
-          // The bridge parser is intentionally fail-closed. An unexpected
-          // rejection has the same UI result as an unavailable avatar.
+      try {
+        const avatar = await fetchAccountAvatar(
+          profile.address,
+          actions,
+          profile.name,
+        );
+
+        if (avatar.kind === 'ready') {
+          commit({ ...profile, avatarSrc: avatar.src });
+        } else if (avatar.kind === 'pending') {
+          scheduleAvatarRetry(profile, avatar.retryAfterSeconds);
+        } else {
           commit(profile);
+        }
+      } catch {
+        // The bridge parser is intentionally fail-closed. An unexpected
+        // rejection has the same UI result as an unavailable avatar.
+        commit(profile);
+      }
+    }
+
+    function enqueueAvatarTask(address: string, task: () => Promise<void>) {
+      const priority = addresses.indexOf(address);
+
+      void avatarTaskQueueRef.current
+        ?.enqueue(async () => {
+          if (!isCurrent(address)) {
+            settlePending(address);
+            return;
+          }
+
+          await task();
+        }, priority < 0 ? addresses.length : priority)
+        .catch(() => {
+          settlePending(address);
         });
+    }
+
+    function enqueueAccountAvatar(profile: AvatarProfile) {
+      enqueueAvatarTask(profile.address, () => loadAccountAvatar(profile));
     }
 
     const loadIndividually = (targets: string[]) => {
       for (const address of targets) {
         const preferredName = knownNamesByAddress.get(address) ?? null;
-        void loadAvatarProfile({ actions, address, preferredName })
-          .then((profile) => {
+
+        enqueueAvatarTask(address, async () => {
+          try {
+            const profile = await loadAvatarProfile({ actions, address, preferredName });
+
             commitMany([profile]);
-            loadAccountAvatar(profile);
-          })
-          .catch(() => {
+            await loadAccountAvatar(profile);
+          } catch {
             // loadAvatarProfile normally degrades to a name-less profile. This
             // guard only handles an unexpected failure without starting a
             // duplicate request chain.
             settlePending(address);
-          });
+          }
+        });
       }
     };
 
@@ -769,7 +844,7 @@ function useAvatarProfiles(
             for (const profile of profiles) {
               // Fetch every currently rendered address. Accounts without a
               // registered name can still have an explicit avatar pointer.
-              loadAccountAvatar(profile);
+              enqueueAccountAvatar(profile);
             }
           })
           .catch(() => {
