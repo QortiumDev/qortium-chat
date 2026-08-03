@@ -25,6 +25,27 @@ export function getDirectTitle(direct: ActiveDirectChat) {
   return direct.name || getShortAddress(direct.address);
 }
 
+// `senderName`/`recipientName` on an active direct chat describe the LATEST
+// message in that chat, whichever direction it travelled — so when the local
+// account sent the last message, `senderName` is the LOCAL user's name, not the
+// counterpart's. Only return a name whose owning address is `direct.address`
+// itself; anything else would poison every name lookup keyed by that address.
+export function getDirectCounterpartName(direct: ActiveDirectChat) {
+  if (direct.name) {
+    return direct.name;
+  }
+
+  if (direct.sender === direct.address) {
+    return direct.senderName ?? null;
+  }
+
+  if (direct.recipient === direct.address) {
+    return direct.recipientName ?? null;
+  }
+
+  return null;
+}
+
 // Avatar URLs are produced by the pointer-aware bridge client as `blob:` URLs
 // (via URL.createObjectURL) or null. They are cached keyed by the untrusted
 // message-sender address, which static analysis treats as tainting every field
