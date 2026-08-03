@@ -99,6 +99,7 @@ import { GroupMemberList } from './GroupMemberList';
 import { MessageList } from './MessageList';
 import {
   getAvatarView,
+  getDirectCounterpartName,
   getDirectTitle,
   getMessageSenderLabel,
   getShortAddress,
@@ -1558,7 +1559,10 @@ export default function App() {
     }
 
     for (const direct of mergedDirects) {
-      const directName = normalizeRegisteredName(direct.name ?? direct.recipientName ?? direct.senderName);
+      // Direction-aware: senderName/recipientName describe the latest message,
+      // which the local account may have sent — mapping that name onto the
+      // counterpart's address would poison name display everywhere.
+      const directName = normalizeRegisteredName(getDirectCounterpartName(direct));
 
       if (directName && !namesByAddress.has(direct.address)) {
         namesByAddress.set(direct.address, directName);

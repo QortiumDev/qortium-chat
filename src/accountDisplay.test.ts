@@ -1,5 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { getAvatarView, getVisibleAvatarSrc } from './accountDisplay';
+import { getAvatarView, getDirectCounterpartName, getVisibleAvatarSrc } from './accountDisplay';
+
+describe('getDirectCounterpartName', () => {
+  it('prefers the registered name of the counterpart address', () => {
+    expect(getDirectCounterpartName({ address: 'Qthem', name: 'them', sender: 'Qme', senderName: 'me' })).toBe('them');
+  });
+
+  it('does not map the local sender name onto an unregistered counterpart', () => {
+    // Counterpart is unregistered (no `name`) and the LOCAL account sent the
+    // latest message: senderName is the local user's name and must not leak.
+    expect(
+      getDirectCounterpartName({ address: 'Qthem', recipient: 'Qme', recipientName: null, sender: 'Qme', senderName: 'me' }),
+    ).toBeNull();
+  });
+
+  it('uses senderName only when the counterpart sent the latest message', () => {
+    expect(
+      getDirectCounterpartName({ address: 'Qthem', recipient: 'Qme', recipientName: 'me', sender: 'Qthem', senderName: 'them' }),
+    ).toBe('them');
+  });
+
+  it('uses recipientName only when the counterpart received the latest message', () => {
+    expect(
+      getDirectCounterpartName({ address: 'Qthem', recipient: 'Qthem', recipientName: 'them', sender: 'Qme', senderName: 'me' }),
+    ).toBe('them');
+  });
+
+  it('returns null when neither message side matches the counterpart address', () => {
+    expect(getDirectCounterpartName({ address: 'Qthem' })).toBeNull();
+  });
+});
 
 describe('getAvatarView', () => {
   it('keeps an address-keyed Blob avatar when a historical sender name differs', () => {
