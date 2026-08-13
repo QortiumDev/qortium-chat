@@ -8,8 +8,10 @@ import {
   canManageChatNotifications,
   enableDirectMessageNotifications,
   getEnabledChatAttentionKind,
+  getChatSelfIdentity,
   getChatAttentionKinds,
   hasAnyChatNotificationsEnabled,
+  isIncomingChatMessage,
   readChatNotificationPreferences,
   reconcileChatNotifications,
   writeChatNotificationPreferences,
@@ -214,5 +216,37 @@ describe('live group attention detection', () => {
       selfAddress: 'Qme',
       selfName: 'Alice',
     })).toEqual([]);
+  });
+});
+
+describe('selected-chat self identity', () => {
+  const qortiumAccount = { address: 'QortiumAddress', name: 'QortiumName' };
+  const qortalAccount = { address: 'QortalAddress', name: 'QortalName' };
+
+  it('uses the Qortium identity for a Qortium chat', () => {
+    expect(getChatSelfIdentity('qortium', qortiumAccount, qortalAccount)).toEqual({
+      address: 'QortiumAddress',
+      name: 'QortiumName',
+    });
+  });
+
+  it('uses the Qortal identity for a Qortal chat', () => {
+    expect(getChatSelfIdentity('qortal', qortiumAccount, qortalAccount)).toEqual({
+      address: 'QortalAddress',
+      name: 'QortalName',
+    });
+  });
+
+  it('does not fall back across chains when the selected chain identity is unavailable', () => {
+    expect(getChatSelfIdentity('qortal', qortiumAccount, null)).toEqual({
+      address: null,
+      name: null,
+    });
+  });
+
+  it('does not classify messages while the selected chain identity is refreshing', () => {
+    expect(isIncomingChatMessage('QortalOldOrOther', null)).toBe(false);
+    expect(isIncomingChatMessage('QortalMe', 'QortalMe')).toBe(false);
+    expect(isIncomingChatMessage('QortalOther', 'QortalMe')).toBe(true);
   });
 });
