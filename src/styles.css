@@ -852,6 +852,29 @@ samp,
   border-bottom: 1px solid var(--qc-color-border-subtle);
 }
 
+/* Chat 2.0 slice 2: the two always-visible Qortium/Qortal sidebar sections
+   (owner UX decision, 2026-08-13 — not a network switcher). --solo applies
+   when the Qortal section is not shown at all (older host, no
+   window.qortalRequest), so a Qortium-only sidebar renders exactly as before
+   slice 2 — no title, no extra spacing. */
+.network-section {
+  display: grid;
+  border-bottom: 1px solid var(--qc-color-border);
+}
+
+.network-section--solo {
+  border-bottom: none;
+}
+
+.network-section__title {
+  padding: 12px 16px 0;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-small);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .panel__header,
 .chat-pane__header,
 .members-drawer__header {
