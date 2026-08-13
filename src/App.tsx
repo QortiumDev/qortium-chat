@@ -70,6 +70,24 @@ import {
   type MessageThread,
 } from './messageThreads';
 import { retainChatMessagesWhenEqual } from './messageUpdates';
+import {
+  createLocalSendId,
+  createPendingRevision,
+  createPendingSend,
+  failPendingRevision,
+  failPendingSend,
+  indexPendingRevisionsByTarget,
+  mergeOptimisticMessages,
+  prunePendingRevisions,
+  prunePendingSends,
+  resolvePendingRevision,
+  resolvePendingSend,
+  retryPendingRevision,
+  retryPendingSend,
+  type PendingRevision,
+  type PendingSend,
+  type PendingSendTarget,
+} from './pendingSends';
 import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupPreviews';
 import {
   getReactionPendingKey,
@@ -203,6 +221,7 @@ const emptyPendingApprovals: PendingApprovalTransaction[] = [];
 const emptyApprovalVotes: GroupApprovalVote[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
 const emptyInvites: GroupInvite[] = [];
+const emptyPendingSends: PendingSend[] = [];
 
 // The 30s sidebar activity sweeps only need the latest real (non-reaction)
 // message timestamp per chat, not a full transcript page — a small window cuts
@@ -1145,6 +1164,18 @@ export default function App() {
   const attachmentDragDepthRef = useRef(0);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [reactionPendingKey, setReactionPendingKey] = useState('');
+  // Optimistic pending -> confirmed -> failed send state (Chat 2.0 slice 1).
+  // New messages and reactions live in `pendingSends` and are merged straight
+  // into the rendered feed (see displayMessages below); edits/deletes target
+  // an already-confirmed message and are tracked separately in
+  // `pendingRevisions`, driving a lightweight inline status instead of an
+  // injected bubble (see pendingSends.ts's module doc for why). Both are
+  // mirrored into refs so the detached async send/retry runners below always
+  // see the current value, not one captured at dispatch time.
+  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  const pendingSendsRef = useRef<PendingSend[]>(pendingSends);
+  const [pendingRevisions, setPendingRevisions] = useState<PendingRevision[]>([]);
+  const pendingRevisionsRef = useRef<PendingRevision[]>(pendingRevisions);
   const [writeError, setWriteError] = useState('');
   const [privateGroupKeyStatus, setPrivateGroupKeyStatus] = useState('');
   const [privateGroupKeyError, setPrivateGroupKeyError] = useState('');
@@ -1501,6 +1532,44 @@ export default function App() {
 
     return olderMessages.length === 0 ? liveTail : mergeMessages(olderMessages, liveTail, Infinity);
   }, [olderMessages, messages.value, hasSelectedMessages]);
+  // Optimistic overlay for the open chat only: a still-sending/failed message
+  // or reaction from another chat must not bleed into this one. Reconciliation
+  // itself (dropping an entry once its signature is confirmed) is the pure
+  // mergeOptimisticMessages / prunePendingSends pair in pendingSends.ts.
+  const pendingSendsForSelectedChat = useMemo(
+    () => (selectedChatKey ? pendingSends.filter((entry) => entry.chatKey === selectedChatKey) : emptyPendingSends),
+    [pendingSends, selectedChatKey],
+  );
+  const displayMessages = useMemo(
+    () => mergeOptimisticMessages(combinedMessages, pendingSendsForSelectedChat),
+    [combinedMessages, pendingSendsForSelectedChat],
+  );
+  const pendingRevisionBySignature = useMemo(
+    () => indexPendingRevisionsByTarget(pendingRevisions, selectedChatKey),
+    [pendingRevisions, selectedChatKey],
+  );
+  // Drop a pending send/revision once its resolved signature actually shows up
+  // in a fetched/live message — regardless of which path delivered it (the
+  // quiet reload runPendingSend/runPendingRevision already fire, the group
+  // websocket's next frame, or the 15s poll). This is the state-side half of
+  // "confirmed replace on signature match"; mergeOptimisticMessages is the
+  // render-side half.
+  useEffect(() => {
+    const confirmedSignatures = new Set<string>();
+
+    for (const entry of messages.value) {
+      if (entry.signature) {
+        confirmedSignatures.add(entry.signature);
+      }
+    }
+
+    if (confirmedSignatures.size === 0) {
+      return;
+    }
+
+    updatePendingSends((current) => prunePendingSends(current, confirmedSignatures));
+    updatePendingRevisions((current) => prunePendingRevisions(current, confirmedSignatures));
+  }, [messages.value]);
   // Stable identities for every handler passed to the memoized GroupList /
   // DirectList / MessageList (the handlers themselves are re-declared each
   // render). With these, the shared 30s clock is the only prop that should
@@ -1516,6 +1585,10 @@ export default function App() {
     (message: ChatMessage, reaction: string, contentState: boolean) =>
       void handleMessageReaction(message, reaction, contentState),
   );
+  const handleRetryMessage = useStableCallback((localId: string) => handleRetryPendingSend(localId));
+  const handleDiscardMessage = useStableCallback((localId: string) => handleDiscardPendingSend(localId));
+  const handleRetryRevision = useStableCallback((localId: string) => handleRetryPendingRevision(localId));
+  const handleDiscardRevision = useStableCallback((localId: string) => handleDiscardPendingRevision(localId));
   const flushScrollBookmarks = useStableCallback(() => {
     window.clearTimeout(scrollPersistTimerRef.current);
     scrollPersistTimerRef.current = 0;
@@ -2563,6 +2636,179 @@ export default function App() {
     }
   }
 
+  // --- Optimistic send/reconcile plumbing (Chat 2.0 slice 1) ---------------
+  // setPendingSends/setPendingRevisions alone would leave the detached async
+  // send runners below reading a stale closure once a later render commits;
+  // updating the ref in lockstep with every state write is what lets
+  // runPendingSend/runPendingRevision (fired with `void`, not awaited by the
+  // caller) always look up the current entry by localId.
+  function updatePendingSends(updater: (current: PendingSend[]) => PendingSend[]) {
+    setPendingSends((current) => {
+      const next = updater(current);
+
+      pendingSendsRef.current = next;
+
+      return next;
+    });
+  }
+
+  function updatePendingRevisions(updater: (current: PendingRevision[]) => PendingRevision[]) {
+    setPendingRevisions((current) => {
+      const next = updater(current);
+
+      pendingRevisionsRef.current = next;
+
+      return next;
+    });
+  }
+
+  function pendingSendTargetFor(chat: SelectedChat): PendingSendTarget {
+    return chat.kind === 'group' ? { groupId: chat.group.groupId, kind: 'group' } : { address: chat.direct.address, kind: 'direct' };
+  }
+
+  function dispatchChatSend(target: PendingSendTarget, text: string, chatReference: string | undefined) {
+    return target.kind === 'group'
+      ? sendChatMessage(target.groupId, text, chatReference)
+      : sendDirectChatMessage(target.address, text, chatReference);
+  }
+
+  // The actual network round trip (local MemoryPoW + broadcast — several
+  // seconds) for a new message or reaction, run detached from the submit
+  // handler so composing the next message is never blocked on it. Shared by
+  // the first send and by a retry click.
+  async function runPendingSend(
+    localId: string,
+    chat: SelectedChat,
+    selectedAccount: QdnSelectedAccount,
+    options: { onSettled?: () => void } = {},
+  ) {
+    const entry = pendingSendsRef.current.find((candidate) => candidate.localId === localId);
+
+    if (!entry) {
+      options.onSettled?.();
+      return;
+    }
+
+    try {
+      const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
+
+      updatePendingSends((current) =>
+        current.map((candidate) => (candidate.localId === localId ? resolvePendingSend(candidate, result) : candidate)),
+      );
+
+      if (chat.kind === 'direct') {
+        void loadActiveChats(selectedAccount, actions, { quiet: true });
+      }
+
+      // Only refresh the chat the send actually targets, and only while the
+      // user is still on it — a stale-chat quiet refresh is a no-op at best
+      // (loadMessages already guards on isStale()) and unnecessary work at
+      // worst. If the user has moved on, the normal poll/websocket for that
+      // chat picks up the confirmed message whenever they return to it.
+      if (selectedChatKeyRef.current === entry.chatKey) {
+        void loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
+      }
+    } catch (error) {
+      const fallback = entry.kind === 'reaction' ? t('status.loadingError.sendReaction') : t('status.loadingError.sendMessage');
+      const message = getBridgeErrorMessage(error, fallback, t);
+
+      updatePendingSends((current) =>
+        current.map((candidate) => (candidate.localId === localId ? failPendingSend(candidate, message) : candidate)),
+      );
+
+      // A failed reaction reverts its chip (mergeOptimisticMessages drops a
+      // failed 'reaction' entry) — the existing write-error banner is enough
+      // feedback for that lightweight action. A failed message/reply gets its
+      // own bubble with a retry affordance instead (no banner needed there).
+      if (entry.kind === 'reaction') {
+        setWriteError(message);
+      }
+    } finally {
+      options.onSettled?.();
+    }
+  }
+
+  async function runPendingRevision(localId: string, chat: SelectedChat, selectedAccount: QdnSelectedAccount) {
+    const entry = pendingRevisionsRef.current.find((candidate) => candidate.localId === localId);
+
+    if (!entry) {
+      return;
+    }
+
+    try {
+      const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
+
+      updatePendingRevisions((current) =>
+        current.map((candidate) => (candidate.localId === localId ? resolvePendingRevision(candidate, result) : candidate)),
+      );
+
+      if (chat.kind === 'direct') {
+        void loadActiveChats(selectedAccount, actions, { quiet: true });
+      }
+
+      if (selectedChatKeyRef.current === entry.chatKey) {
+        void loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
+      }
+    } catch (error) {
+      const message = getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t);
+
+      updatePendingRevisions((current) =>
+        current.map((candidate) => (candidate.localId === localId ? failPendingRevision(candidate, message) : candidate)),
+      );
+    }
+  }
+
+  function handleRetryPendingSend(localId: string) {
+    const chat = selectedChat;
+
+    if (!chat) {
+      return;
+    }
+
+    void (async () => {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
+      updatePendingSends((current) =>
+        current.map((candidate) => (candidate.localId === localId ? retryPendingSend(candidate) : candidate)),
+      );
+      void runPendingSend(localId, chat, selectedAccount);
+    })();
+  }
+
+  function handleDiscardPendingSend(localId: string) {
+    updatePendingSends((current) => current.filter((candidate) => candidate.localId !== localId));
+  }
+
+  function handleRetryPendingRevision(localId: string) {
+    const chat = selectedChat;
+
+    if (!chat) {
+      return;
+    }
+
+    void (async () => {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount) {
+        return;
+      }
+
+      updatePendingRevisions((current) =>
+        current.map((candidate) => (candidate.localId === localId ? retryPendingRevision(candidate) : candidate)),
+      );
+      void runPendingRevision(localId, chat, selectedAccount);
+    })();
+  }
+
+  function handleDiscardPendingRevision(localId: string) {
+    updatePendingRevisions((current) => current.filter((candidate) => candidate.localId !== localId));
+  }
+  // ---------------------------------------------------------------------
+
   async function handleDeleteMessage(thread: MessageThread) {
     const chat = selectedChat;
     const chatReference = thread.original.signature ?? undefined;
@@ -2585,15 +2831,23 @@ export default function App() {
       // just with an empty body (the reply target is preserved so the
       // tombstone stays threaded).
       const message = buildDeletedMessageText(decodeChatMessage(thread.original).repliedTo);
+      const chatKey = getSelectedChatKey(chat);
+      const localId = createLocalSendId();
 
-      if (chat.kind === 'group') {
-        await sendChatMessage(chat.group.groupId, message, chatReference);
-      } else {
-        await sendDirectChatMessage(chat.direct.address, message, chatReference);
-      }
+      updatePendingRevisions((current) => [
+        ...current.filter((candidate) => !(candidate.chatKey === chatKey && candidate.chatReference === chatReference)),
+        createPendingRevision({
+          chatKey,
+          chatReference,
+          kind: 'delete',
+          localId,
+          target: pendingSendTargetFor(chat),
+          text: message,
+        }),
+      ]);
 
       setDeleteTarget(null);
-      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
+      void runPendingRevision(localId, chat, selectedAccount);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
     } finally {
@@ -2927,19 +3181,50 @@ export default function App() {
         message = buildChatMessageText(bodyText, context.message.signature);
       }
 
-      if (chat.kind === 'group') {
-        await sendChatMessage(chat.group.groupId, message, chatReference);
+      // The actual send (local MemoryPoW + broadcast, several seconds) runs
+      // detached below so the composer is free for the next message right
+      // away — an edit tracks its own lifecycle in pendingRevisions (see that
+      // module's doc for why edits/deletes stay off the rendered echo path);
+      // everything else (new message or reply) gets an optimistic bubble via
+      // pendingSends.
+      const chatKey = getSelectedChatKey(chat);
+      const target = pendingSendTargetFor(chat);
+      const localId = createLocalSendId();
+
+      if (context?.kind === 'edit' && chatReference) {
+        updatePendingRevisions((current) => [
+          ...current.filter((candidate) => !(candidate.chatKey === chatKey && candidate.chatReference === chatReference)),
+          createPendingRevision({ chatKey, chatReference, kind: 'edit', localId, target, text: message }),
+        ]);
+        void runPendingRevision(localId, chat, selectedAccount);
       } else {
-        await sendDirectChatMessage(chat.direct.address, message, chatReference);
+        updatePendingSends((current) => [
+          ...current,
+          createPendingSend({
+            chatKey,
+            chatReference,
+            kind: 'message',
+            localId,
+            recipient: chat.kind === 'direct' ? chat.direct.address : null,
+            recipientName: chat.kind === 'direct' ? (chat.direct.name ?? null) : null,
+            sender: selectedAccount.address,
+            senderName: selectedAccount.name,
+            target,
+            text: message,
+            timestamp: Date.now(),
+            txGroupId: chat.kind === 'group' ? chat.group.groupId : 0,
+          }),
+        ]);
+        void runPendingSend(localId, chat, selectedAccount);
       }
 
       // The sent text is consumed: drop any stashed draft for that chat, and
       // clear the live composer only if the user is still on it (they may have
       // switched chats while the send was pending — the swap stashed their
       // text, and the new chat's draft must not be wiped).
-      draftsByChatKeyRef.current.delete(getSelectedChatKey(chat));
+      draftsByChatKeyRef.current.delete(chatKey);
 
-      if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+      if (selectedChatKeyRef.current === chatKey) {
         // The textarea stays enabled during the send, so only clear what was
         // actually submitted — anything typed since must survive.
         setDraft((current) => (current === submittedDraft ? '' : current));
@@ -2949,20 +3234,16 @@ export default function App() {
         // Return the feed to the bottom so the just-sent message is in view.
         setSentMessageNonce((nonce) => nonce + 1);
       }
-      if (chat.kind === 'direct') {
-        // A direct send only touches the conversation list, not membership/
-        // minting; refresh just that (quietly) instead of the whole account.
-        await loadActiveChats(selectedAccount, actions, { quiet: true });
-      }
-
-      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
 
-      // The attachment published but the message send failed: the resource
-      // exists on QDN either way, so fold its link into the draft and drop
-      // the staged file — a retry then re-sends the link without publishing
-      // (and paying for) a duplicate resource.
+      // The attachment published but something before the send was dispatched
+      // failed (unlock, or an unexpected throw building the pending entry):
+      // the resource exists on QDN either way, so fold its link into the
+      // draft and drop the staged file — resubmitting then re-sends the link
+      // without publishing (and paying for) a duplicate resource. Once
+      // dispatched, a send failure surfaces on its own pending bubble instead
+      // of here (see runPendingSend).
       if (publishedLink && selectedChatKeyRef.current === getSelectedChatKey(chat)) {
         setDraft((current) =>
           current === submittedDraft ? `${submittedDraft ? `${submittedDraft}\n` : ''}${publishedLink}` : current,
@@ -2981,8 +3262,13 @@ export default function App() {
     }
 
     const chat = selectedChat;
-    const pendingKey = getReactionPendingKey(message.signature, reaction);
+    const targetSignature = message.signature;
+    const pendingKey = getReactionPendingKey(targetSignature, reaction);
 
+    // Kept disabled for the whole round trip (not just the dispatch below) —
+    // same debounce this already did, now driven by the background runner's
+    // onSettled instead of an outer await, so a rapid double-click on the
+    // same chip cannot race two toggles of the same reaction.
     setReactionPendingKey(pendingKey);
     setWriteError('');
 
@@ -2990,25 +3276,37 @@ export default function App() {
       const selectedAccount = await ensureSelectedAccountUnlocked();
 
       if (!selectedAccount) {
+        setReactionPendingKey('');
         return;
       }
 
       const reactionMessage = buildReactionMessageText(reaction, contentState);
+      const localId = createLocalSendId();
 
-      if (chat.kind === 'group') {
-        await sendChatMessage(chat.group.groupId, reactionMessage, message.signature);
-      } else {
-        await sendDirectChatMessage(chat.direct.address, reactionMessage, message.signature);
-      }
+      // Merged straight into the feed (see mergeOptimisticMessages): the
+      // reaction chip flips the instant this is dispatched, well before the
+      // broadcast round trip completes.
+      updatePendingSends((current) => [
+        ...current,
+        createPendingSend({
+          chatKey: getSelectedChatKey(chat),
+          chatReference: targetSignature,
+          kind: 'reaction',
+          localId,
+          recipient: chat.kind === 'direct' ? chat.direct.address : null,
+          recipientName: chat.kind === 'direct' ? (chat.direct.name ?? null) : null,
+          sender: selectedAccount.address,
+          senderName: selectedAccount.name,
+          target: pendingSendTargetFor(chat),
+          text: reactionMessage,
+          timestamp: Date.now(),
+          txGroupId: chat.kind === 'group' ? chat.group.groupId : 0,
+        }),
+      ]);
 
-      if (chat.kind === 'direct') {
-        await loadActiveChats(selectedAccount, actions, { quiet: true });
-      }
-
-      await loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
+      void runPendingSend(localId, chat, selectedAccount, { onSettled: () => setReactionPendingKey('') });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendReaction'), t));
-    } finally {
       setReactionPendingKey('');
     }
   }
@@ -5551,11 +5849,13 @@ export default function App() {
                 canSaveQdnResource={canSaveQdnResource}
                 emptyHint={isSelectedGeneralChat ? t('hint.noMessages.general') : undefined}
                 initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
-                messages={combinedMessages}
+                messages={displayMessages}
                 olderMessagesError={olderMessagesState.error}
                 olderMessagesReachedStart={olderMessagesState.reachedStart}
                 olderMessagesLoading={olderMessagesState.loading}
                 onDelete={setDeleteTarget}
+                onDiscardMessage={handleDiscardMessage}
+                onDiscardRevision={handleDiscardRevision}
                 onEdit={handleStartEdit}
                 onLoadOlder={handleLoadOlderMessages}
                 onOpenAccount={setAccountInfoTarget}
@@ -5563,9 +5863,12 @@ export default function App() {
                 onOpenImage={setAvatarLightboxImage}
                 onReact={handleReactToMessage}
                 onReply={handleStartReply}
+                onRetryMessage={handleRetryMessage}
+                onRetryRevision={handleRetryRevision}
                 onScrollPositionChange={handleScrollPositionChange}
                 now={now}
                 pendingReactionKey={reactionPendingKey}
+                pendingRevisionBySignature={pendingRevisionBySignature}
                 scrollChatKey={selectedChatKey}
                 selfAddress={account?.address ?? null}
                 selfName={normalizeRegisteredName(account?.name) ?? null}

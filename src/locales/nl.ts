@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Ga naar nieuwe berichten',
   'label.newMessagesCount': '{count} nieuw',
   'hint.olderMessagesExpired': 'Oudere berichten zijn mogelijk verlopen en kunnen per node verschillen.',
+  'message.sendStatus.sending': 'Verzenden…',
+  'message.sendStatus.failed': 'Verzenden mislukt',
+  'message.editStatus.sending': 'Bewerking opslaan…',
+  'message.editStatus.failed': 'Bewerking kon niet worden opgeslagen',
+  'message.deleteStatus.sending': 'Verwijderen…',
+  'message.deleteStatus.failed': 'Verwijderen mislukt',
 } as const;

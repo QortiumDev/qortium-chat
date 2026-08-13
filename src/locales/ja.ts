@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': '新着メッセージへ移動',
   'label.newMessagesCount': '新着 {count} 件',
   'hint.olderMessagesExpired': '古いメッセージは期限切れになっている場合があり、ノードによって異なります。',
+  'message.sendStatus.sending': '送信中…',
+  'message.sendStatus.failed': '送信に失敗しました',
+  'message.editStatus.sending': '編集を保存中…',
+  'message.editStatus.failed': '編集を保存できませんでした',
+  'message.deleteStatus.sending': '削除中…',
+  'message.deleteStatus.failed': '削除できませんでした',
 } as const;

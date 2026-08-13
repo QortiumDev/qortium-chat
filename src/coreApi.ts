@@ -3,6 +3,7 @@ import { sortMessagesByTimestamp } from './messageThreads';
 import type {
   ActiveChats,
   ChatActionResult,
+  ChatSendResult,
   QdnPublishResult,
   ChatMessage,
   GroupApprovalResult,
@@ -731,6 +732,33 @@ export async function approveGroupJoinRequest(groupId: number, joiner: string) {
   });
 }
 
+// The Home v2 bridge resolves SEND_CHAT_MESSAGE with the bare broadcast
+// result `{ signature, timestamp }` (docs/CHAT_2_0_PLAN.md in qortium-home) —
+// not the accepted/action/result envelope ChatActionResult models for the
+// other chat actions. Read defensively (top-level fields first, falling back
+// to a `result`-wrapped or `transactionSignature` shape) so a caller on an
+// older/legacy bridge still gets a usable signature instead of `undefined`
+// silently breaking optimistic reconciliation.
+function normalizeChatSendResult(value: unknown): ChatSendResult {
+  const record = (value ?? {}) as Record<string, unknown>;
+  const nestedResult = (record.result ?? {}) as Record<string, unknown>;
+  const signature =
+    (typeof record.signature === 'string' && record.signature) ||
+    (typeof record.transactionSignature === 'string' && record.transactionSignature) ||
+    (typeof nestedResult.signature === 'string' && nestedResult.signature) ||
+    '';
+  const timestamp =
+    (typeof record.timestamp === 'number' && record.timestamp) ||
+    (typeof nestedResult.timestamp === 'number' && nestedResult.timestamp) ||
+    Date.now();
+
+  if (!signature) {
+    throw new Error('Chat send did not return a transaction signature.');
+  }
+
+  return { signature, timestamp };
+}
+
 export async function sendChatMessage(groupId: number, message: string, chatReference?: string) {
   const request = {
     action: 'SEND_CHAT_MESSAGE',
@@ -738,7 +766,7 @@ export async function sendChatMessage(groupId: number, message: string, chatRefe
     message,
   };
 
-  return qdnRequest<ChatActionResult>(chatReference ? { ...request, chatReference } : request);
+  return normalizeChatSendResult(await qdnRequest<unknown>(chatReference ? { ...request, chatReference } : request));
 }
 
 export async function sendDirectChatMessage(recipientAddress: string, message: string, chatReference?: string) {
@@ -748,5 +776,5 @@ export async function sendDirectChatMessage(recipientAddress: string, message: s
     recipientAddress,
   };
 
-  return qdnRequest<ChatActionResult>(chatReference ? { ...request, chatReference } : request);
+  return normalizeChatSendResult(await qdnRequest<unknown>(chatReference ? { ...request, chatReference } : request));
 }

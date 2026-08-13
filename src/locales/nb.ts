@@ -310,4 +310,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Gå til nye meldinger',
   'label.newMessagesCount': '{count} nye',
   'hint.olderMessagesExpired': 'Eldre meldinger kan ha utløpt og kan variere fra node til node.',
+  'message.sendStatus.sending': 'Sender…',
+  'message.sendStatus.failed': 'Sending mislyktes',
+  'message.editStatus.sending': 'Lagrer redigering…',
+  'message.editStatus.failed': 'Kunne ikke lagre redigeringen',
+  'message.deleteStatus.sending': 'Sletter…',
+  'message.deleteStatus.failed': 'Kunne ikke slette',
 } as const;

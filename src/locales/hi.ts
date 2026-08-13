@@ -310,4 +310,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'नए संदेशों पर जाएँ',
   'label.newMessagesCount': '{count} नए',
   'hint.olderMessagesExpired': 'पुराने संदेश समाप्त हो सकते हैं और नोड के अनुसार भिन्न हो सकते हैं।',
+  'message.sendStatus.sending': 'भेजा जा रहा है…',
+  'message.sendStatus.failed': 'भेजने में विफल',
+  'message.editStatus.sending': 'संपादन सहेजा जा रहा है…',
+  'message.editStatus.failed': 'संपादन सहेजा नहीं जा सका',
+  'message.deleteStatus.sending': 'हटाया जा रहा है…',
+  'message.deleteStatus.failed': 'हटाया नहीं जा सका',
 } as const;

@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Ir a los mensajes nuevos',
   'label.newMessagesCount': '{count} nuevos',
   'hint.olderMessagesExpired': 'Los mensajes más antiguos pueden haber caducado y varían según el nodo.',
+  'message.sendStatus.sending': 'Enviando…',
+  'message.sendStatus.failed': 'Error al enviar',
+  'message.editStatus.sending': 'Guardando edición…',
+  'message.editStatus.failed': 'No se pudo guardar la edición',
+  'message.deleteStatus.sending': 'Eliminando…',
+  'message.deleteStatus.failed': 'No se pudo eliminar',
 } as const;

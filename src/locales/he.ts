@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'מעבר להודעות חדשות',
   'label.newMessagesCount': '{count} חדשות',
   'hint.olderMessagesExpired': 'ייתכן שהודעות ישנות יותר פג תוקפן והן עשויות להשתנות לפי הצומת.',
+  'message.sendStatus.sending': 'שולח…',
+  'message.sendStatus.failed': 'השליחה נכשלה',
+  'message.editStatus.sending': 'שומר עריכה…',
+  'message.editStatus.failed': 'לא ניתן היה לשמור את העריכה',
+  'message.deleteStatus.sending': 'מוחק…',
+  'message.deleteStatus.failed': 'לא ניתן היה למחוק',
 } as const;

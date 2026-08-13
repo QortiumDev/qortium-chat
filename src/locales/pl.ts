@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Przejdź do nowych wiadomości',
   'label.newMessagesCount': '{count} nowych',
   'hint.olderMessagesExpired': 'Starsze wiadomości mogły wygasnąć i mogą się różnić w zależności od węzła.',
+  'message.sendStatus.sending': 'Wysyłanie…',
+  'message.sendStatus.failed': 'Wysyłanie nie powiodło się',
+  'message.editStatus.sending': 'Zapisywanie edycji…',
+  'message.editStatus.failed': 'Nie udało się zapisać edycji',
+  'message.deleteStatus.sending': 'Usuwanie…',
+  'message.deleteStatus.failed': 'Nie udało się usunąć',
 } as const;

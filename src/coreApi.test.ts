@@ -687,14 +687,8 @@ describe('Core API path builders', () => {
         result: true,
         transactionSignature: 'sig2',
       })
-      .mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', groupId: 9, result: true })
-      .mockResolvedValueOnce({
-        accepted: true,
-        action: 'SEND_CHAT_MESSAGE',
-        direct: true,
-        recipientAddress: 'Qpeer',
-        result: true,
-      });
+      .mockResolvedValueOnce({ signature: 'send-sig', timestamp: 1700000000000 })
+      .mockResolvedValueOnce({ signature: 'send-direct-sig', timestamp: 1700000000001 });
 
     await expect(joinGroup(9)).resolves.toMatchObject({ accepted: true, action: 'JOIN_GROUP', groupId: 9 });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
@@ -714,10 +708,9 @@ describe('Core API path builders', () => {
       joiner: 'Qjoiner',
     });
 
-    await expect(sendChatMessage(9, 'hello')).resolves.toMatchObject({
-      accepted: true,
-      action: 'SEND_CHAT_MESSAGE',
-      groupId: 9,
+    await expect(sendChatMessage(9, 'hello')).resolves.toEqual({
+      signature: 'send-sig',
+      timestamp: 1700000000000,
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
       action: 'SEND_CHAT_MESSAGE',
@@ -725,11 +718,9 @@ describe('Core API path builders', () => {
       message: 'hello',
     });
 
-    await expect(sendDirectChatMessage('Qpeer', 'hello direct')).resolves.toMatchObject({
-      accepted: true,
-      action: 'SEND_CHAT_MESSAGE',
-      direct: true,
-      recipientAddress: 'Qpeer',
+    await expect(sendDirectChatMessage('Qpeer', 'hello direct')).resolves.toEqual({
+      signature: 'send-direct-sig',
+      timestamp: 1700000000001,
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(4, {
       action: 'SEND_CHAT_MESSAGE',
@@ -740,8 +731,8 @@ describe('Core API path builders', () => {
 
   it('passes the edited message reference through to the bridge', async () => {
     qdnRequestMock
-      .mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', groupId: 9, result: true })
-      .mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', direct: true, result: true });
+      .mockResolvedValueOnce({ signature: 'edit-sig', timestamp: 1700000000010 })
+      .mockResolvedValueOnce({ signature: 'edit-direct-sig', timestamp: 1700000000011 });
 
     await sendChatMessage(9, 'fixed typo', 'original-sig');
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
@@ -758,6 +749,28 @@ describe('Core API path builders', () => {
       message: 'fixed direct typo',
       recipientAddress: 'Qpeer',
     });
+  });
+
+  it('reads a legacy result-wrapped signature defensively', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      accepted: true,
+      action: 'SEND_CHAT_MESSAGE',
+      groupId: 9,
+      result: { signature: 'legacy-sig', timestamp: 1700000000020 },
+    });
+
+    await expect(sendChatMessage(9, 'hello')).resolves.toEqual({
+      signature: 'legacy-sig',
+      timestamp: 1700000000020,
+    });
+  });
+
+  it('throws when the bridge accepts a chat send but returns no signature', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', groupId: 9 });
+
+    await expect(sendChatMessage(9, 'hello')).rejects.toThrow(
+      'Chat send did not return a transaction signature.',
+    );
   });
 
   it('fetches transaction status through FETCH_NODE_API', async () => {

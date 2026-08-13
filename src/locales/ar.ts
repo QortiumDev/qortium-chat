@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'الانتقال إلى الرسائل الجديدة',
   'label.newMessagesCount': '{count} جديدة',
   'hint.olderMessagesExpired': 'قد تكون الرسائل الأقدم قد انتهت صلاحيتها وتختلف حسب العقدة.',
+  'message.sendStatus.sending': 'جارٍ الإرسال…',
+  'message.sendStatus.failed': 'فشل الإرسال',
+  'message.editStatus.sending': 'جارٍ حفظ التعديل…',
+  'message.editStatus.failed': 'تعذّر حفظ التعديل',
+  'message.deleteStatus.sending': 'جارٍ الحذف…',
+  'message.deleteStatus.failed': 'تعذّر الحذف',
 } as const;

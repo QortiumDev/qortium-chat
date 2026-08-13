@@ -310,4 +310,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Μετάβαση στα νέα μηνύματα',
   'label.newMessagesCount': '{count} νέα',
   'hint.olderMessagesExpired': 'Τα παλαιότερα μηνύματα ίσως έχουν λήξει και ενδέχεται να διαφέρουν ανά κόμβο.',
+  'message.sendStatus.sending': 'Αποστολή…',
+  'message.sendStatus.failed': 'Η αποστολή απέτυχε',
+  'message.editStatus.sending': 'Αποθήκευση επεξεργασίας…',
+  'message.editStatus.failed': 'Δεν ήταν δυνατή η αποθήκευση της επεξεργασίας',
+  'message.deleteStatus.sending': 'Διαγραφή…',
+  'message.deleteStatus.failed': 'Δεν ήταν δυνατή η διαγραφή',
 } as const;

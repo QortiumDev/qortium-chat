@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': '새 메시지로 이동',
   'label.newMessagesCount': '새 메시지 {count}개',
   'hint.olderMessagesExpired': '오래된 메시지는 만료되었을 수 있으며 노드에 따라 다를 수 있습니다.',
+  'message.sendStatus.sending': '보내는 중…',
+  'message.sendStatus.failed': '전송하지 못했습니다',
+  'message.editStatus.sending': '수정 내용 저장 중…',
+  'message.editStatus.failed': '수정 내용을 저장하지 못했습니다',
+  'message.deleteStatus.sending': '삭제하는 중…',
+  'message.deleteStatus.failed': '삭제하지 못했습니다',
 } as const;

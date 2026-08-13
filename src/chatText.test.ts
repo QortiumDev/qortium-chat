@@ -4,6 +4,7 @@ import {
   buildDeletedMessageText,
   buildReactionMessageText,
   decodeChatMessage,
+  encodeBase64,
   formatTimeAgo,
   formatTimestamp,
   getSenderLabel,
@@ -16,6 +17,24 @@ function base64(value: string) {
 
   return btoa(String.fromCharCode(...bytes));
 }
+
+describe('encodeBase64', () => {
+  it('round-trips through decodeChatMessage identically to a server-encoded message', () => {
+    const text = 'a message with unicode: café 🎉';
+
+    expect(
+      decodeChatMessage({ data: encodeBase64(text), encoding: 'BASE64', isEncrypted: false, isText: true }),
+    ).toEqual({
+      body: text,
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('matches the existing base64() helper used by the rest of this suite', () => {
+    expect(encodeBase64('hello')).toBe(base64('hello'));
+  });
+});
 
 describe('chat text helpers', () => {
   it('decodes plain BASE64 text', () => {
