@@ -2132,6 +2132,49 @@ button.message__reply-preview:focus-visible {
   line-height: var(--qc-line-small);
 }
 
+/* A still-local optimistic echo (see pendingSends.ts) reads as visibly
+   provisional until it is confirmed or fails — same intent as the
+   .tx-status pending/failed treatment above, scaled down for a chat bubble. */
+.message--sending {
+  opacity: 0.7;
+}
+
+.message__send-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-tiny);
+  line-height: var(--qc-line-small);
+}
+
+.message__send-status--sending::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-end: 2px;
+  background: var(--qc-color-transaction-pending);
+  border-radius: 50%;
+}
+
+.message__send-status--failed {
+  color: var(--qc-color-transaction-failed);
+}
+
+.message__send-status button {
+  padding: 0;
+  color: inherit;
+  font-size: var(--qc-text-tiny);
+  font-weight: 600;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
 .message__actions {
   display: flex;
   flex-wrap: wrap;

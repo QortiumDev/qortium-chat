@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Siirry uusiin viesteihin',
   'label.newMessagesCount': '{count} uutta',
   'hint.olderMessagesExpired': 'Vanhemmat viestit ovat voineet vanhentua ja voivat vaihdella solmukohtaisesti.',
+  'message.sendStatus.sending': 'Lähetetään…',
+  'message.sendStatus.failed': 'Lähetys epäonnistui',
+  'message.editStatus.sending': 'Muokkausta tallennetaan…',
+  'message.editStatus.failed': 'Muokkauksen tallennus epäonnistui',
+  'message.deleteStatus.sending': 'Poistetaan…',
+  'message.deleteStatus.failed': 'Poisto epäonnistui',
 } as const;

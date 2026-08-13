@@ -26,6 +26,22 @@ function decodeBase64(value: string) {
   return new TextDecoder().decode(bytes);
 }
 
+// Inverse of decodeBase64 above. Used to build the local optimistic echo of a
+// just-submitted message: the same UTF-8-safe BASE64 encoding a confirmed
+// message carries in `data`, computed client-side before the send round trip
+// returns, so decodeChatMessage renders the optimistic bubble identically to
+// how the confirmed message will look once it lands.
+export function encodeBase64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary);
+}
+
 const MAX_REACTION_CONTENT_LENGTH = 32;
 
 export const DEFAULT_REACTION_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;

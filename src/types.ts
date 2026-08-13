@@ -175,10 +175,25 @@ export type ChatMessage = {
   recipientName?: string | null;
   sender: string;
   senderName?: string | null;
+  // Set only on a local optimistic echo (see pendingSends.ts); absent on every
+  // message the node has ever returned. `sendLocalId` is the temporary key used
+  // to find/update/retry that echo before it has (or ever gets) a real signature.
+  sendLocalId?: string;
+  sendState?: 'failed' | 'sending';
   signature?: string | null;
   status?: string;
   timestamp: number;
   txGroupId: number;
+};
+
+// What SEND_CHAT_MESSAGE resolves with once the Home v2 bridge accepts the
+// broadcast (see docs/CHAT_2_0_PLAN.md in qortium-home: "Returns the signature
+// immediately after broadcast acceptance"). This is the actual live shape —
+// distinct from the legacy accepted/action/result envelope ChatActionResult
+// models for the other chat actions.
+export type ChatSendResult = {
+  signature: string;
+  timestamp: number;
 };
 
 export type GroupInvite = {

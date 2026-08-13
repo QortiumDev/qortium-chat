@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Ugrás az új üzenetekhez',
   'label.newMessagesCount': '{count} új',
   'hint.olderMessagesExpired': 'A régebbi üzenetek lejárhattak, és csomópontonként eltérhetnek.',
+  'message.sendStatus.sending': 'Küldés…',
+  'message.sendStatus.failed': 'Sikertelen küldés',
+  'message.editStatus.sending': 'Szerkesztés mentése…',
+  'message.editStatus.failed': 'A szerkesztés mentése sikertelen',
+  'message.deleteStatus.sending': 'Törlés…',
+  'message.deleteStatus.failed': 'A törlés sikertelen',
 } as const;

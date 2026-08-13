@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Gå till nya meddelanden',
   'label.newMessagesCount': '{count} nya',
   'hint.olderMessagesExpired': 'Äldre meddelanden kan ha upphört att gälla och kan variera per nod.',
+  'message.sendStatus.sending': 'Skickar…',
+  'message.sendStatus.failed': 'Det gick inte att skicka',
+  'message.editStatus.sending': 'Sparar redigering…',
+  'message.editStatus.failed': 'Det gick inte att spara redigeringen',
+  'message.deleteStatus.sending': 'Tar bort…',
+  'message.deleteStatus.failed': 'Det gick inte att ta bort',
 } as const;

@@ -53,6 +53,7 @@ import { type AvatarLightboxImage } from './AvatarLightbox';
 import { DownIcon, UpIcon } from './icons';
 import { type TranslateFunction } from './i18n';
 import { type ChatMessage, type ChatScrollPosition, type TrackedTransaction } from './types';
+import { type PendingRevision } from './pendingSends';
 
 // Loaded on demand: the full picker only mounts after React → '+', and its
 // bundle (~300 KB, a third of the app's JS) must not weigh down every app
@@ -507,6 +508,8 @@ export const MessageList = memo(function MessageList({
   olderMessagesLoading,
   olderMessagesReachedStart,
   onDelete,
+  onDiscardMessage,
+  onDiscardRevision,
   onEdit,
   onLoadOlder,
   onOpenAccount,
@@ -514,8 +517,11 @@ export const MessageList = memo(function MessageList({
   onOpenImage,
   onReact,
   onReply,
+  onRetryMessage,
+  onRetryRevision,
   onScrollPositionChange,
   pendingReactionKey,
+  pendingRevisionBySignature,
   scrollChatKey,
   selfAddress,
   selfName,
@@ -538,6 +544,8 @@ export const MessageList = memo(function MessageList({
   olderMessagesLoading: boolean;
   olderMessagesReachedStart: boolean;
   onDelete: (thread: MessageThread) => void;
+  onDiscardMessage: (localId: string) => void;
+  onDiscardRevision: (localId: string) => void;
   onEdit: (thread: MessageThread) => void;
   onLoadOlder: () => void;
   onOpenAccount: (target: AccountInfoTarget) => void;
@@ -545,8 +553,11 @@ export const MessageList = memo(function MessageList({
   onOpenImage: (image: AvatarLightboxImage) => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   onReply: (message: ChatMessage) => void;
+  onRetryMessage: (localId: string) => void;
+  onRetryRevision: (localId: string) => void;
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
   pendingReactionKey: string;
+  pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
   scrollChatKey: string;
   selfAddress: string | null;
   selfName: string | null;
@@ -1682,6 +1693,14 @@ export const MessageList = memo(function MessageList({
             const isReactionPickerOpen = openReactionPickerKey === threadKey;
             const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
             const senderProfile = avatarProfiles.get(original.sender);
+            // Set only on a still-local optimistic echo (see pendingSends.ts);
+            // absent once the real confirmed message takes its place.
+            const sendState = original.sendState;
+            const sendLocalId = original.sendLocalId;
+            // An edit/delete already in flight for this (confirmed) original,
+            // driven from the side channel rather than an injected revision —
+            // see pendingSends.ts's module doc for why.
+            const pendingRevision = original.signature ? pendingRevisionBySignature.get(original.signature) : undefined;
             const actionButtons =
               canReplyOrEdit ||
               canReact ||
@@ -1768,7 +1787,7 @@ export const MessageList = memo(function MessageList({
                   </li>
                 ) : null}
               <li
-                className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}${!isOwn && mentionPattern?.test(decoded.body) ? ' message--mention' : ''}`}
+                className={`message message--${decoded.kind}${isOwn ? ' message--own' : ''}${isHighlighted ? ' message--highlight' : ''}${isContinuation ? ' message--continuation' : ''}${!isOwn && mentionPattern?.test(decoded.body) ? ' message--mention' : ''}${sendState ? ` message--${sendState}` : ''}`}
                 ref={(element) => {
                   if (element) {
                     itemsRef.current.set(threadKey, element);
@@ -1848,6 +1867,48 @@ export const MessageList = memo(function MessageList({
                   ) : null}
                   {isContinuation ? actionButtons : null}
                 </div>
+                {sendState === 'sending' ? (
+                  <p className="message__send-status message__send-status--sending" role="status">
+                    {t('message.sendStatus.sending')}
+                  </p>
+                ) : null}
+                {sendState === 'failed' && sendLocalId ? (
+                  <p className="message__send-status message__send-status--failed" role="alert">
+                    <span>{t('message.sendStatus.failed')}</span>
+                    <button onClick={() => onRetryMessage(sendLocalId)} type="button">
+                      {t('button.retry')}
+                    </button>
+                    <button onClick={() => onDiscardMessage(sendLocalId)} type="button">
+                      {t('button.cancel')}
+                    </button>
+                  </p>
+                ) : null}
+                {pendingRevision ? (
+                  <p
+                    className={`message__send-status message__send-status--${pendingRevision.status}`}
+                    role={pendingRevision.status === 'failed' ? 'alert' : 'status'}
+                  >
+                    <span>
+                      {pendingRevision.kind === 'edit'
+                        ? pendingRevision.status === 'sending'
+                          ? t('message.editStatus.sending')
+                          : t('message.editStatus.failed')
+                        : pendingRevision.status === 'sending'
+                          ? t('message.deleteStatus.sending')
+                          : t('message.deleteStatus.failed')}
+                    </span>
+                    {pendingRevision.status === 'failed' ? (
+                      <>
+                        <button onClick={() => onRetryRevision(pendingRevision.localId)} type="button">
+                          {t('button.retry')}
+                        </button>
+                        <button onClick={() => onDiscardRevision(pendingRevision.localId)} type="button">
+                          {t('button.cancel')}
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
               </li>
               </Fragment>
             );

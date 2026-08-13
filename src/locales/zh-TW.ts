@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': '跳到新訊息',
   'label.newMessagesCount': '{count} 則新訊息',
   'hint.olderMessagesExpired': '較早的訊息可能已過期，並因節點而異。',
+  'message.sendStatus.sending': '傳送中…',
+  'message.sendStatus.failed': '傳送失敗',
+  'message.editStatus.sending': '正在儲存編輯…',
+  'message.editStatus.failed': '無法儲存編輯',
+  'message.deleteStatus.sending': '正在刪除…',
+  'message.deleteStatus.failed': '無法刪除',
 } as const;

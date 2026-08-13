@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Hüppa uutele sõnumitele',
   'label.newMessagesCount': '{count} uut',
   'hint.olderMessagesExpired': 'Vanemad sõnumid võivad olla aegunud ja võivad sõlmiti erineda.',
+  'message.sendStatus.sending': 'Saatmine…',
+  'message.sendStatus.failed': 'Saatmine ebaõnnestus',
+  'message.editStatus.sending': 'Muudatuse salvestamine…',
+  'message.editStatus.failed': 'Muudatuse salvestamine ebaõnnestus',
+  'message.deleteStatus.sending': 'Kustutamine…',
+  'message.deleteStatus.failed': 'Kustutamine ebaõnnestus',
 } as const;

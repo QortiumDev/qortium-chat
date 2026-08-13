@@ -314,4 +314,10 @@ export const EN_STRINGS = {
   'aria.jumpToUnread': 'Jump to new messages',
   'label.newMessagesCount': '{count} new',
   'hint.olderMessagesExpired': 'Older messages may have expired and can vary by node.',
+  'message.sendStatus.sending': 'Sending…',
+  'message.sendStatus.failed': 'Failed to send',
+  'message.editStatus.sending': 'Saving edit…',
+  'message.editStatus.failed': "Couldn't save edit",
+  'message.deleteStatus.sending': 'Deleting…',
+  'message.deleteStatus.failed': "Couldn't delete",
 } as const;

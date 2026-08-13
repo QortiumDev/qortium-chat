@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Ir para as mensagens novas',
   'label.newMessagesCount': '{count} novas',
   'hint.olderMessagesExpired': 'As mensagens mais antigas podem ter expirado e variam conforme o nó.',
+  'message.sendStatus.sending': 'Enviando…',
+  'message.sendStatus.failed': 'Falha ao enviar',
+  'message.editStatus.sending': 'Salvando edição…',
+  'message.editStatus.failed': 'Não foi possível salvar a edição',
+  'message.deleteStatus.sending': 'Excluindo…',
+  'message.deleteStatus.failed': 'Não foi possível excluir',
 } as const;

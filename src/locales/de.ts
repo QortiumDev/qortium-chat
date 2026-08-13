@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Zu neuen Nachrichten springen',
   'label.newMessagesCount': '{count} neue',
   'hint.olderMessagesExpired': 'Ältere Nachrichten sind möglicherweise abgelaufen und können je nach Knoten variieren.',
+  'message.sendStatus.sending': 'Wird gesendet …',
+  'message.sendStatus.failed': 'Senden fehlgeschlagen',
+  'message.editStatus.sending': 'Bearbeitung wird gespeichert …',
+  'message.editStatus.failed': 'Bearbeitung konnte nicht gespeichert werden',
+  'message.deleteStatus.sending': 'Wird gelöscht …',
+  'message.deleteStatus.failed': 'Löschen fehlgeschlagen',
 } as const;

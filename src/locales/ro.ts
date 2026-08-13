@@ -312,4 +312,10 @@ export const STRINGS = {
   'aria.jumpToUnread': 'Salt la mesajele noi',
   'label.newMessagesCount': '{count} noi',
   'hint.olderMessagesExpired': 'Mesajele mai vechi pot fi expirat și pot varia în funcție de nod.',
+  'message.sendStatus.sending': 'Se trimite…',
+  'message.sendStatus.failed': 'Trimiterea a eșuat',
+  'message.editStatus.sending': 'Se salvează editarea…',
+  'message.editStatus.failed': 'Editarea nu a putut fi salvată',
+  'message.deleteStatus.sending': 'Se șterge…',
+  'message.deleteStatus.failed': 'Ștergerea nu a putut fi efectuată',
 } as const;
