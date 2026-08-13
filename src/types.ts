@@ -1,5 +1,10 @@
 export type QdnAction = string;
 
+// Chat 2.0 slice 2: which chain a group/chat/message belongs to. 'qortium' is
+// the default everywhere an existing (slice 1) value omits this field, so
+// every pre-dual-chain call site keeps behaving exactly as it did before.
+export type ChatNetwork = 'qortal' | 'qortium';
+
 export type BridgeTransport = 'browser-dev' | 'gateway' | 'home';
 
 // A loadable value with its fetch lifecycle: idle/loading keep the last value,

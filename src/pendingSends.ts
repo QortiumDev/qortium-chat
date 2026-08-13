@@ -24,13 +24,16 @@
 //    status line from a side channel keyed by the target's real signature.
 import { sortMessagesByTimestamp } from './messageThreads';
 import { encodeBase64 } from './chatText';
-import type { ChatMessage } from './types';
+import type { ChatMessage, ChatNetwork } from './types';
 
 export type PendingSendStatus = 'failed' | 'sending';
 
+// `network` is optional and defaults to 'qortium' at every read site (see
+// App.tsx's dispatchChatSend) — slice-1 callers that never set it keep
+// behaving exactly as they did before Chat 2.0 slice 2.
 export type PendingSendTarget =
-  | { kind: 'direct'; address: string }
-  | { kind: 'group'; groupId: number };
+  | { kind: 'direct'; address: string; network?: ChatNetwork }
+  | { kind: 'group'; groupId: number; network?: ChatNetwork };
 
 // A plain new message and a reaction both go out through SEND_CHAT_MESSAGE
 // and share this shape; 'reaction' entries are excluded from the merged
@@ -67,6 +70,20 @@ export type PendingRevision = {
   readonly target: PendingSendTarget;
   readonly text: string;
 };
+
+// Composite (network, signature) identity: two independent chains draw
+// signatures from unrelated namespaces, so a bare-signature Set/Map risks a
+// (vanishingly unlikely, but real) cross-chain collision wherever pending
+// entries from more than one chat/network are compared at once — see
+// prunePendingSends/prunePendingRevisions below, which run over the full
+// in-memory pending list rather than one already-chat-filtered slice.
+function getTargetNetwork(target: PendingSendTarget): ChatNetwork {
+  return target.network ?? 'qortium';
+}
+
+export function getPendingSignatureIdentity(network: ChatNetwork, signature: string): string {
+  return `${network}:${signature}`;
+}
 
 let localSendIdCounter = 0;
 
@@ -191,6 +208,13 @@ export function mergeOptimisticMessages(confirmed: ChatMessage[], pending: Pendi
     return confirmed;
   }
 
+  // Safe on a bare signature: every current caller has already narrowed both
+  // `confirmed` and `pending` to one chat (one network) before calling this —
+  // App.tsx filters `pending` by chatKey (which is itself network-prefixed,
+  // see getSelectedChatKey) and `confirmed` is that same chat's fetched
+  // transcript. Cross-chat/network safety for the *unfiltered* pending list
+  // lives in prunePendingSends below, which does have each entry's real
+  // target network to key against.
   const confirmedSignatures = new Set<string>();
 
   for (const message of confirmed) {
@@ -214,9 +238,15 @@ export function mergeOptimisticMessages(confirmed: ChatMessage[], pending: Pendi
   return sortMessagesByTimestamp([...confirmed, ...overlay.map((entry) => entry.message)]);
 }
 
-/** State-side cleanup companion to mergeOptimisticMessages: drops pending entries that are now confirmed, from whichever chat they belong to. Returns the same array when nothing changed, so callers can skip a re-render (same convention as retainChatMessagesWhenEqual). */
+/** State-side cleanup companion to mergeOptimisticMessages: drops pending entries that are now confirmed, from whichever chat (and network) they belong to. `confirmedSignatures` holds (network, signature) identities built with getPendingSignatureIdentity — this runs over the FULL in-memory pending list (every chat, every network), so a bare signature here really could collide across two independent chains; each entry is checked against its own target's network. Returns the same array when nothing changed, so callers can skip a re-render (same convention as retainChatMessagesWhenEqual). */
 export function prunePendingSends(pending: PendingSend[], confirmedSignatures: ReadonlySet<string>): PendingSend[] {
-  const next = pending.filter((entry) => !entry.resolvedSignature || !confirmedSignatures.has(entry.resolvedSignature));
+  const next = pending.filter((entry) => {
+    if (!entry.resolvedSignature) {
+      return true;
+    }
+
+    return !confirmedSignatures.has(getPendingSignatureIdentity(getTargetNetwork(entry.target), entry.resolvedSignature));
+  });
 
   return next.length === pending.length ? pending : next;
 }
@@ -257,7 +287,13 @@ export function prunePendingRevisions(
   pending: PendingRevision[],
   confirmedSignatures: ReadonlySet<string>,
 ): PendingRevision[] {
-  const next = pending.filter((entry) => !entry.resolvedSignature || !confirmedSignatures.has(entry.resolvedSignature));
+  const next = pending.filter((entry) => {
+    if (!entry.resolvedSignature) {
+      return true;
+    }
+
+    return !confirmedSignatures.has(getPendingSignatureIdentity(getTargetNetwork(entry.target), entry.resolvedSignature));
+  });
 
   return next.length === pending.length ? pending : next;
 }

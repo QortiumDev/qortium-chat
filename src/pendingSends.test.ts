@@ -5,6 +5,7 @@ import {
   createPendingSend,
   failPendingRevision,
   failPendingSend,
+  getPendingSignatureIdentity,
   indexPendingRevisionsByTarget,
   mergeOptimisticMessages,
   prunePendingRevisions,
@@ -148,7 +149,10 @@ describe('prunePendingSends', () => {
     const resolved = resolvePendingSend(pendingMessage(), { signature: 'real-sig' });
     const stillPending = pendingMessage({ localId: 'pending-2' });
 
-    const next = prunePendingSends([resolved, stillPending], new Set(['real-sig']));
+    const next = prunePendingSends(
+      [resolved, stillPending],
+      new Set([getPendingSignatureIdentity('qortium', 'real-sig')]),
+    );
 
     expect(next).toEqual([stillPending]);
   });
@@ -157,6 +161,36 @@ describe('prunePendingSends', () => {
     const pending = [pendingMessage()];
 
     expect(prunePendingSends(pending, new Set())).toBe(pending);
+  });
+
+  // Chat 2.0 slice 2: two independent chains draw signatures from unrelated
+  // namespaces, so identity must be (network, signature), not a bare
+  // signature — otherwise a Qortal send sharing a raw signature string with
+  // something confirmed on Qortium (or vice versa) would be wrongly dropped
+  // as "already confirmed" while it is still genuinely in flight.
+  it('does not drop a still-pending Qortal send just because the SAME raw signature is confirmed on Qortium', () => {
+    const qortalPending = resolvePendingSend(
+      pendingMessage({ chatKey: 'qortal:group:7', target: { groupId: 7, kind: 'group', network: 'qortal' } }),
+      { signature: 'shared-sig' },
+    );
+    const pending = [qortalPending];
+    const qortiumConfirmedSignatures = new Set([getPendingSignatureIdentity('qortium', 'shared-sig')]);
+
+    // Nothing pruned — the (network, signature) identities don't match — so
+    // the same array reference comes back (same convention as the "returns
+    // the same array reference when nothing was pruned" case above).
+    expect(prunePendingSends(pending, qortiumConfirmedSignatures)).toBe(pending);
+  });
+
+  it('does drop a Qortal send once ITS OWN network is confirmed for that signature', () => {
+    const qortalPending = resolvePendingSend(
+      pendingMessage({ chatKey: 'qortal:group:7', target: { groupId: 7, kind: 'group', network: 'qortal' } }),
+      { signature: 'shared-sig' },
+    );
+
+    const next = prunePendingSends([qortalPending], new Set([getPendingSignatureIdentity('qortal', 'shared-sig')]));
+
+    expect(next).toEqual([]);
   });
 });
 
@@ -206,7 +240,9 @@ describe('pending revisions (edit/delete side channel)', () => {
   it('prunePendingRevisions drops entries confirmed by signature, keeping array identity otherwise', () => {
     const resolved = resolvePendingRevision(pendingRevision(), { signature: 'revision-sig' });
 
-    expect(prunePendingRevisions([resolved], new Set(['revision-sig']))).toEqual([]);
+    expect(
+      prunePendingRevisions([resolved], new Set([getPendingSignatureIdentity('qortium', 'revision-sig')])),
+    ).toEqual([]);
 
     const stillPending = [pendingRevision()];
 

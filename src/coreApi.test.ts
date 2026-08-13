@@ -37,6 +37,7 @@ import {
   getGroupApprovalVotes,
   getMintingStatus,
   getNameOwnerAddress,
+  getQortalUserAccount,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   joinGroup,
@@ -52,15 +53,25 @@ import {
 } from './coreApi';
 
 const qdnRequestMock = vi.hoisted(() => vi.fn());
+// Chat 2.0 slice 2: coreApi's network-aware functions dispatch through
+// chatNetwork.ts's bridgeRequest, which calls qortalRequest for network
+// 'qortal' — mocked here the same way qdnRequest already is above, so the
+// qortal-specific tests below never touch the real window.qortalRequest.
+const qortalRequestMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./qdnRequest', () => ({
   buildNodeWebSocketUrl: (path: string) => `ws://127.0.0.1:24891${path}`,
   qdnRequest: qdnRequestMock,
 }));
 
+vi.mock('./qortalRequest', () => ({
+  qortalRequest: qortalRequestMock,
+}));
+
 describe('Core API path builders', () => {
   beforeEach(() => {
     qdnRequestMock.mockReset();
+    qortalRequestMock.mockReset();
   });
 
   it('builds browse and search group paths', () => {
@@ -217,14 +228,14 @@ describe('Core API path builders', () => {
       .mockResolvedValueOnce([{ groupId: 1, groupName: 'General' }])
       .mockResolvedValueOnce([{ groupId: 2, groupName: 'Dev' }]);
 
-    await expect(searchGroups('', ['LIST_GROUPS'])).resolves.toEqual([{ groupId: 1, groupName: 'General' }]);
+    await expect(searchGroups('qortium', '', ['LIST_GROUPS'])).resolves.toEqual([{ groupId: 1, groupName: 'General' }]);
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
       action: 'LIST_GROUPS',
       limit: 100,
       reverse: false,
     });
 
-    await expect(searchGroups('dev', ['SEARCH_GROUPS'])).resolves.toEqual([{ groupId: 2, groupName: 'Dev' }]);
+    await expect(searchGroups('qortium', 'dev', ['SEARCH_GROUPS'])).resolves.toEqual([{ groupId: 2, groupName: 'Dev' }]);
     expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
       action: 'SEARCH_GROUPS',
       limit: 100,
@@ -244,7 +255,7 @@ describe('Core API path builders', () => {
       statusText: 'OK',
     });
 
-    await expect(searchGroups('fallback', [])).resolves.toEqual([{ groupId: 3, groupName: 'Fallback' }]);
+    await expect(searchGroups('qortium', 'fallback', [])).resolves.toEqual([{ groupId: 3, groupName: 'Fallback' }]);
     expect(qdnRequestMock).toHaveBeenCalledWith({
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,
@@ -264,10 +275,10 @@ describe('Core API path builders', () => {
         statusText: 'OK',
       });
 
-    await expect(getGroup(42, ['GET_GROUP'])).resolves.toEqual({ groupId: 42, groupName: 'Bridge group' });
+    await expect(getGroup('qortium', 42, ['GET_GROUP'])).resolves.toEqual({ groupId: 42, groupName: 'Bridge group' });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, { action: 'GET_GROUP', groupId: 42 });
 
-    await expect(getGroup(43, [])).resolves.toEqual({ groupId: 43, groupName: 'Node group' });
+    await expect(getGroup('qortium', 43, [])).resolves.toEqual({ groupId: 43, groupName: 'Node group' });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
       action: 'FETCH_NODE_API',
       maxBytes: 2097152,
@@ -281,7 +292,7 @@ describe('Core API path builders', () => {
       groups: [],
     });
 
-    await expect(getMemberGroups('Qabc', ['GET_ACCOUNT_GROUPS'])).resolves.toEqual([
+    await expect(getMemberGroups('qortium', 'Qabc', ['GET_ACCOUNT_GROUPS'])).resolves.toEqual([
       { groupId: 4, groupName: 'Member' },
     ]);
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
@@ -289,7 +300,7 @@ describe('Core API path builders', () => {
       address: 'Qabc',
     });
 
-    await expect(getActiveChats('Qabc', ['GET_ACTIVE_CHATS'])).resolves.toEqual({ direct: [], groups: [] });
+    await expect(getActiveChats('qortium', 'Qabc', ['GET_ACTIVE_CHATS'])).resolves.toEqual({ direct: [], groups: [] });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
       action: 'GET_ACTIVE_CHATS',
       address: 'Qabc',
@@ -381,7 +392,7 @@ describe('Core API path builders', () => {
       members: [{ member: 'Qmember', primaryName: 'Member Name' }],
     });
 
-    await expect(getGroupMembers(9, ['GET_GROUP_MEMBERS'])).resolves.toEqual([
+    await expect(getGroupMembers('qortium', 9, ['GET_GROUP_MEMBERS'])).resolves.toEqual([
       { member: 'Qmember', primaryName: 'Member Name' },
     ]);
     expect(qdnRequestMock).toHaveBeenCalledWith({
@@ -445,7 +456,7 @@ describe('Core API path builders', () => {
       .mockResolvedValueOnce([{ sender: 'Qc', timestamp: 30, txGroupId: 8 }]);
 
     await expect(
-      getGroupMessages({ groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES']),
+      getGroupMessages('qortium', { groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES']),
     ).resolves.toEqual([
       { sender: 'Qa', timestamp: 10, txGroupId: 7 },
       { sender: 'Qb', timestamp: 20, txGroupId: 7 },
@@ -459,7 +470,7 @@ describe('Core API path builders', () => {
     });
 
     await expect(
-      getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, [
+      getGroupMessages('qortium', { groupId: 8, groupName: 'Closed', isOpen: false }, [
         'SEARCH_CHAT_MESSAGES',
         'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
       ]),
@@ -477,7 +488,7 @@ describe('Core API path builders', () => {
     qdnRequestMock.mockResolvedValueOnce([{ isEncrypted: true, sender: 'Qc', timestamp: 30, txGroupId: 8 }]);
 
     await expect(
-      getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, [
+      getGroupMessages('qortium', { groupId: 8, groupName: 'Closed', isOpen: false }, [
         'SEARCH_CHAT_MESSAGES',
         'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
       ], {
@@ -503,7 +514,7 @@ describe('Core API path builders', () => {
   it('forwards the before timestamp through the message bridge action', async () => {
     qdnRequestMock.mockResolvedValueOnce([{ sender: 'Qa', timestamp: 5, txGroupId: 7 }]);
 
-    await getGroupMessages({ groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES'], {
+    await getGroupMessages('qortium', { groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES'], {
       before: 1234,
     });
 
@@ -520,7 +531,7 @@ describe('Core API path builders', () => {
   it('forwards the before timestamp through raw closed-group reads', async () => {
     qdnRequestMock.mockResolvedValueOnce([{ isEncrypted: true, sender: 'Qa', timestamp: 5, txGroupId: 8 }]);
 
-    await getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES'], {
+    await getGroupMessages('qortium', { groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES'], {
       before: 1234,
       decryptPrivate: false,
     });
@@ -541,7 +552,7 @@ describe('Core API path builders', () => {
       .mockResolvedValueOnce([{ sender: 'Qa', timestamp: 10, txGroupId: 7 }])
       .mockResolvedValueOnce([{ sender: 'Qb', timestamp: 20, txGroupId: 0 }]);
 
-    await getGroupMessages({ groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES'], {
+    await getGroupMessages('qortium', { groupId: 7, groupName: 'Open', isOpen: true }, ['SEARCH_CHAT_MESSAGES'], {
       limit: 10,
     });
 
@@ -571,7 +582,7 @@ describe('Core API path builders', () => {
 
   it('fails closed for closed-group message reads when private bridge support is absent', async () => {
     await expect(
-      getGroupMessages({ groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES']),
+      getGroupMessages('qortium', { groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES']),
     ).rejects.toThrow('Closed group chat reads require Qortium Home private group chat support.');
     expect(qdnRequestMock).not.toHaveBeenCalled();
   });
@@ -708,7 +719,7 @@ describe('Core API path builders', () => {
       joiner: 'Qjoiner',
     });
 
-    await expect(sendChatMessage(9, 'hello')).resolves.toEqual({
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
       signature: 'send-sig',
       timestamp: 1700000000000,
     });
@@ -734,7 +745,7 @@ describe('Core API path builders', () => {
       .mockResolvedValueOnce({ signature: 'edit-sig', timestamp: 1700000000010 })
       .mockResolvedValueOnce({ signature: 'edit-direct-sig', timestamp: 1700000000011 });
 
-    await sendChatMessage(9, 'fixed typo', 'original-sig');
+    await sendChatMessage('qortium', 9, 'fixed typo', 'original-sig');
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
       action: 'SEND_CHAT_MESSAGE',
       chatReference: 'original-sig',
@@ -759,7 +770,7 @@ describe('Core API path builders', () => {
       result: { signature: 'legacy-sig', timestamp: 1700000000020 },
     });
 
-    await expect(sendChatMessage(9, 'hello')).resolves.toEqual({
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
       signature: 'legacy-sig',
       timestamp: 1700000000020,
     });
@@ -768,7 +779,7 @@ describe('Core API path builders', () => {
   it('throws when the bridge accepts a chat send but returns no signature', async () => {
     qdnRequestMock.mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', groupId: 9 });
 
-    await expect(sendChatMessage(9, 'hello')).rejects.toThrow(
+    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toThrow(
       'Chat send did not return a transaction signature.',
     );
   });
@@ -943,5 +954,136 @@ describe('Core API path builders', () => {
       'RESOLVE_IDENTITIES is not available in this Home build.',
     );
     expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  // Chat 2.0 slice 2: dual-chain network dispatch and per-protocol differences
+  // (docs/HOME_V2_BRIDGE_COMPATIBILITY.md in qortium-home).
+  describe('dual-chain (Chat 2.0 slice 2)', () => {
+    it('routes a qortium call through qdnRequest and never touches qortalRequest', async () => {
+      qdnRequestMock.mockResolvedValueOnce([{ groupId: 1, groupName: 'General' }]);
+
+      await expect(searchGroups('qortium', '', ['LIST_GROUPS'])).resolves.toEqual([
+        { groupId: 1, groupName: 'General' },
+      ]);
+      expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'LIST_GROUPS', limit: 100, reverse: false });
+      expect(qortalRequestMock).not.toHaveBeenCalled();
+    });
+
+    it('routes a qortal call through qortalRequest and never touches qdnRequest', async () => {
+      qortalRequestMock.mockResolvedValueOnce([{ groupId: 5, groupName: 'Qortal General' }]);
+
+      await expect(searchGroups('qortal', '', ['LIST_GROUPS'])).resolves.toEqual([
+        { groupId: 5, groupName: 'Qortal General' },
+      ]);
+      expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'LIST_GROUPS', limit: 100, reverse: false });
+      expect(qdnRequestMock).not.toHaveBeenCalled();
+    });
+
+    it('searches Qortal groups by listing every group and filtering client-side (no SEARCH_GROUPS on Qortal)', async () => {
+      qortalRequestMock.mockResolvedValueOnce([
+        { groupId: 1, groupName: 'Chess Fans' },
+        { groupId: 2, groupName: 'Dev Talk' },
+        { groupId: 3, groupName: 'Chess Openings' },
+      ]);
+
+      // Qortal never advertises SEARCH_GROUPS (Qortium-only — Qortal Core has
+      // no /groups/search), only LIST_GROUPS.
+      await expect(searchGroups('qortal', 'chess', ['LIST_GROUPS'])).resolves.toEqual([
+        { groupId: 1, groupName: 'Chess Fans' },
+        { groupId: 3, groupName: 'Chess Openings' },
+      ]);
+      // One LIST_GROUPS call, not a search action.
+      expect(qortalRequestMock).toHaveBeenCalledTimes(1);
+      expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'LIST_GROUPS', limit: 100, reverse: false });
+    });
+
+    it('still uses SEARCH_GROUPS on Qortium even when a query is present (byte-identical to slice 1)', async () => {
+      qdnRequestMock.mockResolvedValueOnce([{ groupId: 4, groupName: 'Chess Fans' }]);
+
+      await expect(searchGroups('qortium', 'chess', ['SEARCH_GROUPS', 'LIST_GROUPS'])).resolves.toEqual([
+        { groupId: 4, groupName: 'Chess Fans' },
+      ]);
+      expect(qdnRequestMock).toHaveBeenCalledWith({
+        action: 'SEARCH_GROUPS',
+        limit: 100,
+        query: 'chess',
+        reverse: false,
+        visibility: 'ALL',
+      });
+    });
+
+    it('rejects sending to Qortal group 0 (no general chat there) without ever calling the bridge', async () => {
+      await expect(sendChatMessage('qortal', 0, 'hi')).rejects.toThrow('Qortal has no general chat group.');
+      expect(qortalRequestMock).not.toHaveBeenCalled();
+      expect(qdnRequestMock).not.toHaveBeenCalled();
+    });
+
+    it('still allows Qortium group 0 (general chat) sends', async () => {
+      qdnRequestMock.mockResolvedValueOnce({ signature: 'general-sig', timestamp: 1700000000030 });
+
+      await expect(sendChatMessage('qortium', 0, 'hi all')).resolves.toEqual({
+        signature: 'general-sig',
+        timestamp: 1700000000030,
+      });
+    });
+
+    it('reads Qortal group messages via qortalRequest and sorts them the same way as Qortium', async () => {
+      qortalRequestMock.mockResolvedValueOnce([
+        { data: 'Yg==', sender: 'QsenderA', signature: 'sig-a', timestamp: 200, txGroupId: 7 },
+        { data: 'YQ==', sender: 'QsenderB', signature: 'sig-b', timestamp: 100, txGroupId: 7 },
+      ]);
+
+      const messages = await getGroupMessages(
+        'qortal',
+        { groupId: 7, groupName: 'Qortal group', isOpen: true },
+        ['SEARCH_CHAT_MESSAGES'],
+      );
+
+      expect(messages.map((message) => message.signature)).toEqual(['sig-b', 'sig-a']);
+      expect(qortalRequestMock).toHaveBeenCalledWith({
+        action: 'SEARCH_CHAT_MESSAGES',
+        encoding: 'BASE64',
+        groupId: 7,
+        limit: 100,
+        reverse: true,
+      });
+    });
+
+    it('gates a closed Qortal group the same way an unsupported closed Qortium group is gated', async () => {
+      // Neither protocol's Home 2.0 v2 bridge advertises
+      // SEARCH_PRIVATE_GROUP_CHAT_MESSAGES for qortalRequest in this slice.
+      await expect(
+        getGroupMessages('qortal', { groupId: 8, groupName: 'Closed', isOpen: false }, ['SEARCH_CHAT_MESSAGES']),
+      ).rejects.toThrow('Closed group chat reads require Qortium Home private group chat support.');
+      expect(qortalRequestMock).not.toHaveBeenCalled();
+    });
+
+    it('resolves a Qortal identity (address + publicKey, then a separate primary-name lookup)', async () => {
+      qortalRequestMock
+        .mockResolvedValueOnce({ address: 'QortalAddr', publicKey: 'pub123' })
+        .mockResolvedValueOnce({ name: 'alice' });
+
+      await expect(getQortalUserAccount(['GET_PRIMARY_NAME'])).resolves.toEqual({
+        address: 'QortalAddr',
+        name: 'alice',
+        publicKey: 'pub123',
+      });
+      expect(qortalRequestMock).toHaveBeenNthCalledWith(1, { action: 'GET_USER_ACCOUNT' });
+      expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+        action: 'GET_PRIMARY_NAME',
+        address: 'QortalAddr',
+      });
+    });
+
+    it('resolves a Qortal identity with no registered name when GET_PRIMARY_NAME is not offered', async () => {
+      qortalRequestMock.mockResolvedValueOnce({ address: 'QortalAddr', publicKey: null });
+
+      await expect(getQortalUserAccount([])).resolves.toEqual({
+        address: 'QortalAddr',
+        name: null,
+        publicKey: null,
+      });
+      expect(qortalRequestMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

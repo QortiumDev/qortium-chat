@@ -1,8 +1,10 @@
 import { buildNodeWebSocketUrl, qdnRequest } from './qdnRequest';
+import { bridgeRequest } from './chatNetwork';
 import { sortMessagesByTimestamp } from './messageThreads';
 import type {
   ActiveChats,
   ChatActionResult,
+  ChatNetwork,
   ChatSendResult,
   QdnPublishResult,
   ChatMessage,
@@ -195,8 +197,13 @@ export function buildActiveChatsWebSocketUrl(address: string) {
   return buildNodeWebSocketUrl(`/websockets/chat/active/${encodeURIComponent(address)}?${query.toString()}`);
 }
 
-export async function fetchNodeApiData<T>(path: string, label: string, maxBytes = DEFAULT_MAX_BYTES) {
-  const result = await qdnRequest<NodeApiFetchResult<T>>({
+async function fetchNodeApiDataFor<T>(
+  network: ChatNetwork,
+  path: string,
+  label: string,
+  maxBytes = DEFAULT_MAX_BYTES,
+) {
+  const result = await bridgeRequest<NodeApiFetchResult<T>>(network, {
     action: 'FETCH_NODE_API',
     maxBytes,
     path,
@@ -205,15 +212,24 @@ export async function fetchNodeApiData<T>(path: string, label: string, maxBytes 
   return assertOk(result, label);
 }
 
+export async function fetchNodeApiData<T>(path: string, label: string, maxBytes = DEFAULT_MAX_BYTES) {
+  return fetchNodeApiDataFor<T>('qortium', path, label, maxBytes);
+}
+
 export async function getNodeStatus() {
   return qdnRequest<NodeStatus>({ action: 'GET_NODE_STATUS' });
 }
 
-export async function searchGroups(search: string, actions?: QdnAction[]) {
+// `network` picks Qortium vs Qortal (default 'qortium' keeps every pre-dual-
+// chain call site byte-identical). SEARCH_GROUPS is Qortium-only — Qortal Core
+// has no /groups/search — so a Qortal search with a query term lists every
+// group and filters client-side by name instead (see docs/
+// HOME_V2_BRIDGE_COMPATIBILITY.md in qortium-home).
+export async function searchGroups(network: ChatNetwork, search: string, actions?: QdnAction[]) {
   const trimmedSearch = search.trim();
 
   if (trimmedSearch && hasBridgeAction(actions, 'SEARCH_GROUPS')) {
-    return qdnRequest<GroupData[]>({
+    return bridgeRequest<GroupData[]>(network, {
       action: 'SEARCH_GROUPS',
       limit: DEFAULT_LIST_LIMIT,
       query: trimmedSearch,
@@ -223,36 +239,47 @@ export async function searchGroups(search: string, actions?: QdnAction[]) {
   }
 
   if (!trimmedSearch && hasBridgeAction(actions, 'LIST_GROUPS')) {
-    return qdnRequest<GroupData[]>({
+    return bridgeRequest<GroupData[]>(network, {
       action: 'LIST_GROUPS',
       limit: DEFAULT_LIST_LIMIT,
       reverse: false,
     });
   }
 
-  return fetchNodeApiData<GroupData[]>(buildGroupsPath(search), 'Group search');
+  if (trimmedSearch && network === 'qortal' && hasBridgeAction(actions, 'LIST_GROUPS')) {
+    const allGroups = await bridgeRequest<GroupData[]>(network, {
+      action: 'LIST_GROUPS',
+      limit: DEFAULT_LIST_LIMIT,
+      reverse: false,
+    });
+    const needle = trimmedSearch.toLowerCase();
+
+    return allGroups.filter((group) => group.groupName?.toLowerCase().includes(needle));
+  }
+
+  return fetchNodeApiDataFor<GroupData[]>(network, buildGroupsPath(search), 'Group search');
 }
 
-export async function getGroup(groupId: number, actions?: QdnAction[]) {
+export async function getGroup(network: ChatNetwork, groupId: number, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_GROUP')) {
-    return qdnRequest<GroupData>({
+    return bridgeRequest<GroupData>(network, {
       action: 'GET_GROUP',
       groupId,
     });
   }
 
-  return fetchNodeApiData<GroupData>(`/groups/${groupId}`, 'Group info');
+  return fetchNodeApiDataFor<GroupData>(network, `/groups/${groupId}`, 'Group info');
 }
 
-export async function getMemberGroups(address: string, actions?: QdnAction[]) {
+export async function getMemberGroups(network: ChatNetwork, address: string, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_ACCOUNT_GROUPS')) {
-    return qdnRequest<GroupData[]>({
+    return bridgeRequest<GroupData[]>(network, {
       action: 'GET_ACCOUNT_GROUPS',
       address,
     });
   }
 
-  return fetchNodeApiData<GroupData[]>(buildMemberGroupsPath(address), 'Member groups');
+  return fetchNodeApiDataFor<GroupData[]>(network, buildMemberGroupsPath(address), 'Member groups');
 }
 
 export async function getAccountNames(address: string, actions?: QdnAction[]) {
@@ -321,9 +348,9 @@ export async function resolveIdentities(addresses: string[], actions?: QdnAction
   return resolved;
 }
 
-export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
+export async function getGroupMembers(network: ChatNetwork, groupId: number, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_GROUP_MEMBERS')) {
-    const response = await qdnRequest<GroupMember[] | GroupMembersResponse>({
+    const response = await bridgeRequest<GroupMember[] | GroupMembersResponse>(network, {
       action: 'GET_GROUP_MEMBERS',
       groupId,
       limit: DEFAULT_LIST_LIMIT,
@@ -334,7 +361,11 @@ export async function getGroupMembers(groupId: number, actions?: QdnAction[]) {
   }
 
   return normalizeGroupMembers(
-    await fetchNodeApiData<GroupMember[] | GroupMembersResponse>(buildGroupMembersPath(groupId), 'Group members'),
+    await fetchNodeApiDataFor<GroupMember[] | GroupMembersResponse>(
+      network,
+      buildGroupMembersPath(groupId),
+      'Group members',
+    ),
   );
 }
 
@@ -521,9 +552,9 @@ export async function startMinting() {
   });
 }
 
-export async function getActiveChats(address: string, actions?: QdnAction[]) {
+export async function getActiveChats(network: ChatNetwork, address: string, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_ACTIVE_CHATS')) {
-    return qdnRequest<ActiveChats>({
+    return bridgeRequest<ActiveChats>(network, {
       action: 'GET_ACTIVE_CHATS',
       address,
       encoding: 'BASE64',
@@ -531,7 +562,7 @@ export async function getActiveChats(address: string, actions?: QdnAction[]) {
     });
   }
 
-  return fetchNodeApiData<ActiveChats>(buildActiveChatsPath(address), 'Active chats');
+  return fetchNodeApiDataFor<ActiveChats>(network, buildActiveChatsPath(address), 'Active chats');
 }
 
 export async function getPrivateDirectActiveChats(actions?: QdnAction[]) {
@@ -547,6 +578,7 @@ export async function getPrivateDirectActiveChats(actions?: QdnAction[]) {
 }
 
 export async function getGroupMessages(
+  network: ChatNetwork,
   group: GroupData,
   actions?: QdnAction[],
   options: { before?: number; decryptPrivate?: boolean; limit?: number } = {},
@@ -567,11 +599,15 @@ export async function getGroupMessages(
   };
 
   if (group.isOpen === false && shouldDecryptPrivate) {
+    // Neither protocol's Home 2.0 v2 bridge advertises
+    // SEARCH_PRIVATE_GROUP_CHAT_MESSAGES for qortalRequest (no private-group
+    // decryption on Qortal in this slice), so a closed Qortal group hits this
+    // same gate a closed Qortium group hits on an older/legacy bridge.
     if (!hasBridgeAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')) {
       throw new Error('Closed group chat reads require Qortium Home private group chat support.');
     }
 
-    const messages = await qdnRequest<ChatMessage[]>({
+    const messages = await bridgeRequest<ChatMessage[]>(network, {
       action: 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
       ...messageRequest,
     });
@@ -580,7 +616,7 @@ export async function getGroupMessages(
   }
 
   if (hasBridgeAction(actions, 'SEARCH_CHAT_MESSAGES')) {
-    const messages = await qdnRequest<ChatMessage[]>({
+    const messages = await bridgeRequest<ChatMessage[]>(network, {
       action: 'SEARCH_CHAT_MESSAGES',
       ...messageRequest,
     });
@@ -588,7 +624,8 @@ export async function getGroupMessages(
     return sortMessagesByTimestamp(messages);
   }
 
-  const messages = await fetchNodeApiData<ChatMessage[]>(
+  const messages = await fetchNodeApiDataFor<ChatMessage[]>(
+    network,
     buildGroupMessagesPath(groupId, limit, options.before),
     'Group messages',
   );
@@ -759,14 +796,76 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
   return { signature, timestamp };
 }
 
-export async function sendChatMessage(groupId: number, message: string, chatReference?: string) {
+export async function sendChatMessage(
+  network: ChatNetwork,
+  groupId: number,
+  message: string,
+  chatReference?: string,
+) {
+  // Qortal has no general chat (txGroupId 0 is Qortium-only — Home's bridge
+  // rejects it on qortalRequest); catch it here too so a caller mistake fails
+  // fast instead of round-tripping to Home first.
+  if (network === 'qortal' && groupId === 0) {
+    throw new Error('Qortal has no general chat group.');
+  }
+
   const request = {
     action: 'SEND_CHAT_MESSAGE',
     groupId,
     message,
   };
 
-  return normalizeChatSendResult(await qdnRequest<unknown>(chatReference ? { ...request, chatReference } : request));
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, chatReference ? { ...request, chatReference } : request),
+  );
+}
+
+// Qortal's identity shape (docs/HOME_V2_BRIDGE_COMPATIBILITY.md in
+// qortium-home): GET_USER_ACCOUNT returns address + publicKey only, with no
+// name or lock state (unlike Qortium's GET_SELECTED_ACCOUNT) — the display
+// name is a separate GET_PRIMARY_NAME lookup. Same underlying wallet as the
+// Qortium identity, but a distinct address/name pair.
+export type QortalUserIdentity = {
+  address: string;
+  name: string | null;
+  publicKey: string | null;
+};
+
+function getPrimaryNameFromResult(result: unknown): string | null {
+  if (typeof result === 'string') {
+    return result || null;
+  }
+
+  if (result && typeof result === 'object' && typeof (result as { name?: unknown }).name === 'string') {
+    const name = (result as { name: string }).name;
+
+    return name || null;
+  }
+
+  return null;
+}
+
+export async function getQortalUserAccount(actions?: QdnAction[]): Promise<QortalUserIdentity> {
+  const account = await bridgeRequest<{ address: string; publicKey?: string | null }>('qortal', {
+    action: 'GET_USER_ACCOUNT',
+  });
+  let name: string | null = null;
+
+  if (hasBridgeAction(actions, 'GET_PRIMARY_NAME')) {
+    try {
+      const primary = await bridgeRequest<unknown>('qortal', {
+        action: 'GET_PRIMARY_NAME',
+        address: account.address,
+      });
+
+      name = getPrimaryNameFromResult(primary);
+    } catch {
+      // No primary name registered (or the lookup failed) — display by address.
+      name = null;
+    }
+  }
+
+  return { address: account.address, name, publicKey: account.publicKey ?? null };
 }
 
 export async function sendDirectChatMessage(recipientAddress: string, message: string, chatReference?: string) {
