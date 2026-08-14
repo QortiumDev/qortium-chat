@@ -590,7 +590,12 @@ export async function getGroupMessages(
   const limit = options.limit ?? DEFAULT_LIST_LIMIT;
   const messageRequest = {
     encoding: 'BASE64',
+    // Home 2's native chain-read gate requires the Core-canonical field name,
+    // while older Home/private-group handlers still read `groupId`. Supplying
+    // the same validated value under both names keeps the request compatible
+    // across those hosts without leaving room for conflicting selectors.
     groupId,
+    txGroupId: groupId,
     limit,
     reverse: true,
     // When set, return the window of messages immediately older than this
@@ -811,8 +816,8 @@ export async function sendChatMessage(
 
   const request = {
     action: 'SEND_CHAT_MESSAGE',
-    groupId,
     message,
+    txGroupId: groupId,
   };
 
   return normalizeChatSendResult(

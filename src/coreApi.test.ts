@@ -465,6 +465,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 7,
+      txGroupId: 7,
       limit: 100,
       reverse: true,
     });
@@ -479,6 +480,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 8,
+      txGroupId: 8,
       limit: 100,
       reverse: true,
     });
@@ -500,6 +502,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 8,
+      txGroupId: 8,
       limit: 100,
       reverse: true,
     });
@@ -523,6 +526,7 @@ describe('Core API path builders', () => {
       before: 1234,
       encoding: 'BASE64',
       groupId: 7,
+      txGroupId: 7,
       limit: 100,
       reverse: true,
     });
@@ -541,6 +545,7 @@ describe('Core API path builders', () => {
       before: 1234,
       encoding: 'BASE64',
       groupId: 8,
+      txGroupId: 8,
       limit: 100,
       reverse: true,
     });
@@ -560,6 +565,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 7,
+      txGroupId: 7,
       limit: 10,
       reverse: true,
     });
@@ -725,8 +731,8 @@ describe('Core API path builders', () => {
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
       action: 'SEND_CHAT_MESSAGE',
-      groupId: 9,
       message: 'hello',
+      txGroupId: 9,
     });
 
     await expect(sendDirectChatMessage('Qpeer', 'hello direct')).resolves.toEqual({
@@ -749,8 +755,8 @@ describe('Core API path builders', () => {
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
       action: 'SEND_CHAT_MESSAGE',
       chatReference: 'original-sig',
-      groupId: 9,
       message: 'fixed typo',
+      txGroupId: 9,
     });
 
     await sendDirectChatMessage('Qpeer', 'fixed direct typo', 'direct-sig');
@@ -1044,6 +1050,7 @@ describe('Core API path builders', () => {
         action: 'SEARCH_CHAT_MESSAGES',
         encoding: 'BASE64',
         groupId: 7,
+        txGroupId: 7,
         limit: 100,
         reverse: true,
       });
