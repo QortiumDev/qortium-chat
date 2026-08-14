@@ -41,7 +41,6 @@ import {
   getMintingStatus,
   getNameOwnerAddress,
   getPendingGroupApprovals,
-  getQortalUserAccount,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   leaveGroup,
@@ -147,13 +146,17 @@ import {
   enableDirectMessageNotifications,
   getEnabledChatAttentionKind,
   getChatAttentionKinds,
+  getChatSelfIdentity,
   hasAnyChatNotificationsEnabled,
+  isIncomingChatMessage,
   readChatNotificationPreferences,
   reconcileChatNotifications,
   showChatAttentionNotification,
   writeChatNotificationPreferences,
   type ChatNotificationPreferences,
 } from './notifications';
+import { LatestRequestGuard } from './latestRequest';
+import { loadQortalAccountSnapshot } from './qortalAccountSession';
 import {
   mergePersistedDirect,
   readLastChat,
@@ -1154,6 +1157,7 @@ export default function App() {
   const requestedPrivateGroupKeysRef = useRef(new Set<string>());
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const pendingApprovalsRequestRef = useRef(0);
+  const qortalAccountRefreshGuardRef = useRef(new LatestRequestGuard());
   const [directAddress, setDirectAddress] = useState('');
   const [isDirectSearchOpen, setDirectSearchOpen] = useState(false);
   const [directLookupPending, setDirectLookupPending] = useState(false);
@@ -1983,10 +1987,13 @@ export default function App() {
   // "Own message" styling and reply/mention self-detection must compare
   // against THIS chat's chain identity — a confirmed Qortal message carries a
   // Qortal sender address, which never equals the Qortium account.address.
-  const selfAddress = isSelectedQortalGroup ? (qortalAccount?.address ?? null) : (account?.address ?? null);
-  const selfName = isSelectedQortalGroup
-    ? (qortalAccount?.name ?? null)
-    : (normalizeRegisteredName(account?.name) ?? null);
+  const selfIdentity = getChatSelfIdentity(
+    selectedChat?.network ?? 'qortium',
+    account,
+    qortalAccount,
+  );
+  const selfAddress = selfIdentity.address;
+  const selfName = normalizeRegisteredName(selfIdentity.name);
   const accountRequiredLabel = bridge.value.isHomeBridge
     ? t('action.account.notShared')
     : t('action.noAccountUse');
@@ -2218,15 +2225,46 @@ export default function App() {
     }
   }
 
-  async function loadQortalMemberGroups(address: string, actionList = qortalBridge.value.actions) {
+  async function refreshQortalSelectedAccount(actionList = qortalBridge.value.actions) {
+    const requestId = qortalAccountRefreshGuardRef.current.begin();
+
+    // A selected-account event means the old chain identity is no longer safe
+    // to use. Clear it synchronously so the composer cannot send with the old
+    // sender while Home resolves the new Qortal wallet account.
+    setQortalAccount(null);
+    setQortalAccountError('');
+    setQortalMemberGroups({ phase: 'loading', value: emptyGroups });
+
     try {
-      setQortalMemberGroups({ phase: 'ready', value: await getMemberGroups('qortal', address, actionList) });
+      const snapshot = await loadQortalAccountSnapshot(actionList);
+
+      if (!qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
+        return;
+      }
+
+      if (snapshot.phase === 'membership-error') {
+        setQortalAccount(snapshot.account);
+        setQortalMemberGroups({
+          error: getBridgeErrorMessage(snapshot.error, t('status.loadingError.joinedGroups'), t),
+          phase: 'error',
+          value: emptyGroups,
+        });
+        return;
+      }
+
+      // Commit identity and membership from one request generation together,
+      // so a late prior lookup cannot pair one account with another's groups.
+      setQortalAccount(snapshot.account);
+      setQortalAccountError('');
+      setQortalMemberGroups({ phase: 'ready', value: snapshot.memberGroups });
     } catch (error) {
-      setQortalMemberGroups((current) => ({
-        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
-        phase: 'error',
-        value: current.value,
-      }));
+      if (!qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
+        return;
+      }
+
+      setQortalAccount(null);
+      setQortalAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
+      setQortalMemberGroups({ phase: 'ready', value: emptyGroups });
     }
   }
 
@@ -2239,17 +2277,7 @@ export default function App() {
       setQortalBridge({ phase: 'ready', value: nextBridge });
       void loadQortalGroups(qortalSearch, nextBridge.actions);
 
-      try {
-        const identity = await getQortalUserAccount(nextBridge.actions);
-
-        setQortalAccount(identity);
-        setQortalAccountError('');
-        void loadQortalMemberGroups(identity.address, nextBridge.actions);
-      } catch (error) {
-        setQortalAccount(null);
-        setQortalAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
-        setQortalMemberGroups({ phase: 'ready', value: emptyGroups });
-      }
+      void refreshQortalSelectedAccount(nextBridge.actions);
     } catch (error) {
       setQortalBridge({
         error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
@@ -4510,7 +4538,7 @@ export default function App() {
       previous.chatKey === messagesChatKey &&
       previous.signature &&
       signature !== previous.signature &&
-      newest.sender !== account?.address &&
+      isIncomingChatMessage(newest.sender, selfAddress) &&
       decodeChatMessage(newest, t).kind === 'text'
     ) {
       const decoded = decodeChatMessage(newest, t);
@@ -4519,15 +4547,15 @@ export default function App() {
       if (
         canShowNotifications &&
         selectedChat?.kind === 'group' &&
-        account
+        selfAddress
       ) {
         const attention = getChatAttentionKinds({
           body: decoded.body,
           message: newest,
           messages: [...olderMessages, ...list],
           repliedTo: decoded.repliedTo,
-          selfAddress: account.address,
-          selfName: account.name,
+          selfAddress,
+          selfName,
         });
 
         const enabledAttention = getEnabledChatAttentionKind(attention, chatNotificationPreferences);
@@ -4546,7 +4574,6 @@ export default function App() {
 
     lastAnnouncedRef.current = { chatKey: messagesChatKey, signature };
   }, [
-    account,
     canShowNotifications,
     chatNotificationPreferences.mentions,
     chatNotificationPreferences.replies,
@@ -4554,6 +4581,8 @@ export default function App() {
     messagesChatKey,
     olderMessages,
     selectedChat,
+    selfAddress,
+    selfName,
     t,
   ]);
 
@@ -5204,13 +5233,16 @@ export default function App() {
 
       if (isSelectedAccountChangedMessage(event.data)) {
         void connectSelectedAccount(actions);
+        if (hasNetworkBridge('qortal')) {
+          void refreshQortalSelectedAccount(qortalBridge.value.actions);
+        }
       }
     }
 
     window.addEventListener('message', handleHostMessage);
 
     return () => window.removeEventListener('message', handleHostMessage);
-  }, [actionsKey]);
+  }, [actionsKey, qortalBridge.value.actions]);
 
   useEffect(() => {
     const pendingTransactions = Object.values(trackedTransactions).filter(

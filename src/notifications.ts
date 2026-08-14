@@ -1,9 +1,32 @@
 import { qdnRequest } from './qdnRequest';
-import type { ChatMessage, QdnAction } from './types';
+import type { ChatMessage, ChatNetwork, QdnAction } from './types';
 
 export const DIRECT_MESSAGE_NOTIFICATION_ID = 'chat.direct';
 export const CHAT_NOTIFICATIONS_STORAGE_KEY = 'qortium-chat-notifications-v2';
 export const LEGACY_CHAT_NOTIFICATIONS_STORAGE_KEY = 'qortium-chat-notifications-v1';
+
+type ChatAccountIdentity = {
+  address: string;
+  name?: string | null;
+};
+
+export function getChatSelfIdentity(
+  network: ChatNetwork,
+  qortiumAccount: ChatAccountIdentity | null,
+  qortalAccount: ChatAccountIdentity | null,
+) {
+  const selectedAccount = network === 'qortal' ? qortalAccount : qortiumAccount;
+
+  return {
+    address: selectedAccount?.address ?? null,
+    name: selectedAccount?.name ?? null,
+  };
+}
+
+export function isIncomingChatMessage(sender: string, selfAddress: string | null) {
+  return selfAddress !== null && sender !== selfAddress;
+}
+
 export const CHAT_APP_LINK = 'qdn://APP/Chat/Chat';
 
 export type ChatNotificationPreferences = {
