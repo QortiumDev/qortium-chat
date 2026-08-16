@@ -731,6 +731,7 @@ describe('Core API path builders', () => {
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
       action: 'SEND_CHAT_MESSAGE',
+      groupId: 9,
       message: 'hello',
       txGroupId: 9,
     });
@@ -755,6 +756,7 @@ describe('Core API path builders', () => {
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
       action: 'SEND_CHAT_MESSAGE',
       chatReference: 'original-sig',
+      groupId: 9,
       message: 'fixed typo',
       txGroupId: 9,
     });
@@ -780,6 +782,32 @@ describe('Core API path builders', () => {
       signature: 'legacy-sig',
       timestamp: 1700000000020,
     });
+  });
+
+  it('normalizes a serialized group id before sending both Home bridge field names', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ signature: 'group-12-sig', timestamp: 1700000000021 });
+
+    await expect(sendChatMessage('qortium', '12', 'announcement')).resolves.toEqual({
+      signature: 'group-12-sig',
+      timestamp: 1700000000021,
+    });
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'SEND_CHAT_MESSAGE',
+      groupId: 12,
+      message: 'announcement',
+      txGroupId: 12,
+    });
+  });
+
+  it('rejects malformed group ids before calling either bridge', async () => {
+    for (const groupId of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '', '12x']) {
+      await expect(sendChatMessage('qortium', groupId, 'hello')).rejects.toThrow(
+        'Chat group id must be a non-negative safe integer.',
+      );
+    }
+
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+    expect(qortalRequestMock).not.toHaveBeenCalled();
   });
 
   it('throws when the bridge accepts a chat send but returns no signature', async () => {
@@ -1030,6 +1058,12 @@ describe('Core API path builders', () => {
       await expect(sendChatMessage('qortium', 0, 'hi all')).resolves.toEqual({
         signature: 'general-sig',
         timestamp: 1700000000030,
+      });
+      expect(qdnRequestMock).toHaveBeenCalledWith({
+        action: 'SEND_CHAT_MESSAGE',
+        groupId: 0,
+        message: 'hi all',
+        txGroupId: 0,
       });
     });
 

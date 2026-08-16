@@ -801,23 +801,39 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
   return { signature, timestamp };
 }
 
+function normalizeChatGroupId(value: number | string) {
+  const normalized = typeof value === 'number' ? value : /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN;
+
+  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+    throw new Error('Chat group id must be a non-negative safe integer.');
+  }
+
+  return normalized;
+}
+
 export async function sendChatMessage(
   network: ChatNetwork,
-  groupId: number,
+  groupId: number | string,
   message: string,
   chatReference?: string,
 ) {
+  const txGroupId = normalizeChatGroupId(groupId);
+
   // Qortal has no general chat (txGroupId 0 is Qortium-only — Home's bridge
   // rejects it on qortalRequest); catch it here too so a caller mistake fails
   // fast instead of round-tripping to Home first.
-  if (network === 'qortal' && groupId === 0) {
+  if (network === 'qortal' && txGroupId === 0) {
     throw new Error('Qortal has no general chat group.');
   }
 
   const request = {
     action: 'SEND_CHAT_MESSAGE',
+    // Home 2 requires the Core-canonical name. Keep the legacy alias with the
+    // exact same normalized number for older Home/q-apps hosts that still read
+    // `groupId`; never forward an unvalidated runtime value under either name.
+    groupId: txGroupId,
     message,
-    txGroupId: groupId,
+    txGroupId,
   };
 
   return normalizeChatSendResult(
