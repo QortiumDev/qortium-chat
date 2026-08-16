@@ -1,106 +1,96 @@
 import { memo, useMemo } from 'react';
 import { getAvatarView, getDirectTitle, UserAvatar, type AvatarProfilesByAddress } from './accountDisplay';
 import { formatTimeAgo, formatTimestamp } from './chatText';
-import { getGroupTitle, isGeneralChatGroup } from './generalChat';
+import { type GroupConversationSummary } from './conversationModel';
+import { isGeneralChatGroup } from './generalChat';
 import { CloseIcon, LockIcon } from './icons';
 import { type TranslateFunction } from './i18n';
-import { type ActiveDirectChat, type GroupData } from './types';
+import { type ActiveDirectChat } from './types';
 
 export const GroupList = memo(function GroupList({
-  activityByGroupId,
   collapsed = false,
-  groups,
-  memberCountsByGroupId,
+  conversations,
   onSelect,
-  previewByGroupId,
-  selectedGroupId,
+  selectedConversationKey,
   t,
-  unreadGroupIds,
   now,
 }: {
-  activityByGroupId: ReadonlyMap<number, number>;
   collapsed?: boolean;
-  groups: GroupData[];
-  memberCountsByGroupId?: ReadonlyMap<number, number>;
-  onSelect: (group: GroupData) => void;
-  previewByGroupId?: ReadonlyMap<number, string>;
-  selectedGroupId: number | null;
+  conversations: GroupConversationSummary[];
+  onSelect: (conversation: GroupConversationSummary) => void;
+  selectedConversationKey: string | null;
   t: TranslateFunction;
-  unreadGroupIds: ReadonlySet<number>;
   now: number;
 }) {
   // A collapsed section still surfaces the groups that need attention: unread
   // ones, plus the currently open group (unread sets exclude the open chat).
-  const visibleGroups = collapsed
-    ? groups.filter((group) => unreadGroupIds.has(group.groupId) || group.groupId === selectedGroupId)
-    : groups;
+  const visibleConversations = collapsed
+    ? conversations.filter((conversation) => conversation.unread || conversation.key === selectedConversationKey)
+    : conversations;
 
-  if (visibleGroups.length === 0) {
+  if (visibleConversations.length === 0) {
     return collapsed ? null : <p className="empty">{t('hint.noGroups')}</p>;
   }
 
   return (
     <ul className="group-list">
-      {visibleGroups.map((group) => {
-        const lastMessageTimestamp = activityByGroupId.get(group.groupId);
-        const isUnread = unreadGroupIds.has(group.groupId);
-        const memberCount =
-          memberCountsByGroupId?.get(group.groupId) ?? (isGeneralChatGroup(group) ? undefined : group.memberCount);
+      {visibleConversations.map((conversation) => {
+        const { activityAt, group, memberCount, membership, preview, protocol, title, unread } = conversation;
         // Closed groups' stream payloads are encrypted — never show those as a
         // decoded "preview"; their rows stay as before.
-        const preview = group.isOpen === false ? undefined : previewByGroupId?.get(group.groupId);
+        const visiblePreview = group.isOpen === false ? null : preview;
 
         return (
-          <li key={group.groupId}>
-          <button
-            className={`group-row${selectedGroupId === group.groupId ? ' group-row--selected' : ''}${isUnread ? ' group-row--unread' : ''}`}
-            onClick={() => onSelect(group)}
-            type="button"
-          >
-            <span className="group-row__top">
-              <span className="group-row__heading">
-                {isUnread ? (
-                  <span
-                    aria-label={t('label.unread')}
-                    className="group-row__unread"
-                    role="img"
-                    title={t('label.unread')}
-                  />
+          <li key={conversation.key}>
+            <button
+              className={`group-row${selectedConversationKey === conversation.key ? ' group-row--selected' : ''}${unread ? ' group-row--unread' : ''}${membership === 'preview' ? ' group-row--preview' : ''}`}
+              onClick={() => onSelect(conversation)}
+              type="button"
+            >
+              <span className="group-row__top">
+                <span className="group-row__heading">
+                  {unread ? (
+                    <span
+                      aria-label={t('label.unread')}
+                      className="group-row__unread"
+                      role="img"
+                      title={t('label.unread')}
+                    />
+                  ) : null}
+                  <span className="group-row__name">{title}</span>
+                </span>
+                {activityAt ? (
+                  <span className="group-row__time" title={formatTimestamp(activityAt, t.locale)}>
+                    {formatTimeAgo(activityAt, now, t.locale)}
+                  </span>
                 ) : null}
-                <span className="group-row__name">{getGroupTitle(group, t)}</span>
               </span>
-              {lastMessageTimestamp ? (
-                <span className="group-row__time" title={formatTimestamp(lastMessageTimestamp, t.locale)}>
-                  {formatTimeAgo(lastMessageTimestamp, now, t.locale)}
-                </span>
-              ) : null}
-            </span>
-            {preview ? <span className="group-row__preview">{preview}</span> : null}
-            <span className="group-row__footer">
-              {!isGeneralChatGroup(group) ? <span className="group-row__id">{`id:${group.groupId}`}</span> : null}
-              {!isGeneralChatGroup(group) && group.isOpen === false ? (
-                <span
-                  aria-label={t('label.group.closed')}
-                  className="group-row__lock"
-                  role="img"
-                  title={t('label.group.closed')}
-                >
-                  <LockIcon />
-                </span>
-              ) : null}
-              {typeof memberCount === 'number' ? (
-                <span className="group-row__members">
-                  {isGeneralChatGroup(group)
-                    ? t('group.meta.activeCount', { count: memberCount.toLocaleString(t.locale) })
-                    : t('group.meta.memberCount', { count: memberCount.toLocaleString(t.locale) })}
-                </span>
-              ) : null}
-            </span>
-          </button>
+              {visiblePreview ? <span className="group-row__preview">{visiblePreview}</span> : null}
+              <span className="group-row__footer">
+                <span className="group-row__protocol">{protocol.toUpperCase()}</span>
+                {!isGeneralChatGroup(group) && group.isOpen === false ? (
+                  <span
+                    aria-label={t('label.group.closed')}
+                    className="group-row__lock"
+                    role="img"
+                    title={t('label.group.closed')}
+                  >
+                    <LockIcon />
+                  </span>
+                ) : null}
+                {typeof memberCount === 'number' ? (
+                  <span className="group-row__members">
+                    {isGeneralChatGroup(group)
+                      ? t('group.meta.activeCount', { count: memberCount.toLocaleString(t.locale) })
+                      : t('group.meta.memberCount', { count: memberCount.toLocaleString(t.locale) })}
+                  </span>
+                ) : null}
+              </span>
+            </button>
           </li>
         );
       })}
-      </ul>
+    </ul>
     );
 });
 

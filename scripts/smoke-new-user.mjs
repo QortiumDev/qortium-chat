@@ -8,6 +8,7 @@ const previewPort = 4181;
 const cdpPort = 9341;
 const previewUrl = `http://127.0.0.1:${previewPort}/`;
 const desktopScreenshotPath = path.join(tmpdir(), 'qortium-chat-new-user-desktop-smoke.png');
+const discoveryScreenshotPath = path.join(tmpdir(), 'qortium-chat-membership-discovery-smoke.png');
 const mobileScreenshotPath = path.join(tmpdir(), 'qortium-chat-new-user-mobile-smoke.png');
 const browserProfile = mkdtempSync(path.join(tmpdir(), 'qortium-chat-new-user-smoke-'));
 const children = [];
@@ -108,7 +109,7 @@ function launch(command, args) {
 const bootstrap = `
   (() => {
     localStorage.setItem('qortium-chat:sidebarCollapse', JSON.stringify({ direct: true, groups: false }));
-    window.__newUserSmoke = { calls: [], resolveGroups: null };
+    window.__newUserSmoke = { calls: [] };
     window.qdnRequest = async (request) => {
       window.__newUserSmoke.calls.push({ ...request });
 
@@ -131,17 +132,19 @@ const bootstrap = `
           throw new Error('No account shared for newcomer smoke.');
         case 'FETCH_NODE_API':
           if (String(request.path || '').startsWith('/groups?')) {
-            return new Promise((resolve) => {
-              window.__newUserSmoke.resolveGroups = () => resolve({
-                body: '[]',
-                contentLength: 2,
-                contentType: 'application/json',
-                data: [],
-                ok: true,
-                status: 200,
-                statusText: 'OK'
-              });
-            });
+            return {
+              body: '[]',
+              contentLength: 2,
+              contentType: 'application/json',
+              data: [
+                { groupId: 7, groupName: 'Public Lounge', isOpen: true, memberCount: 14 },
+                { groupId: 8, groupName: 'Quiet Public Group', isOpen: true, memberCount: 2 },
+                { groupId: 9, groupName: 'Closed Group', isOpen: false, memberCount: 5 }
+              ],
+              ok: true,
+              status: 200,
+              statusText: 'OK'
+            };
           }
           return {
             body: '[]',
@@ -153,7 +156,19 @@ const bootstrap = `
             statusText: 'OK'
           };
         case 'SEARCH_CHAT_MESSAGES':
-          return [];
+          return request.txGroupId === 7
+            ? [{
+                data: btoa('A public preview'),
+                encoding: 'BASE64',
+                isEncrypted: false,
+                isText: true,
+                sender: 'Qpreview1111111111111111111111111111',
+                senderName: 'Previewer',
+                signature: 'preview-signature',
+                timestamp: 1786914000000,
+                txGroupId: 7
+              }]
+            : [];
         default:
           return [];
       }
@@ -196,21 +211,7 @@ try {
   await client.send('Page.addScriptToEvaluateOnNewDocument', { source: bootstrap });
   await client.send('Page.navigate', { url: previewUrl });
 
-  const firstPaint = await waitUntil('first-run empty state', 12_000, async () =>
-    evaluate(
-      client,
-      `(() => {
-        const empty = document.querySelector('.chat-empty-state');
-        const notice = document.querySelector('.composer--notice');
-        return empty && notice && window.__newUserSmoke.resolveGroups
-          ? { empty: empty.textContent.trim(), notice: notice.textContent.trim() }
-          : null;
-      })()`,
-    ),
-  );
-
-  await evaluate(client, 'window.__newUserSmoke.resolveGroups()');
-  const desktop = await waitUntil('General Chat newcomer view', 12_000, async () =>
+  const desktop = await waitUntil('membership-first newcomer view', 12_000, async () =>
     evaluate(
       client,
       `(() => {
@@ -218,9 +219,14 @@ try {
         const intro = document.querySelector('.panel__intro');
         const empty = document.querySelector('.empty');
         const notice = document.querySelector('.composer--notice');
+        const title = document.querySelector('.chat-pane__title');
+        const catalogueCalls = window.__newUserSmoke.calls.filter((call) =>
+          String(call.path || '').startsWith('/groups?')
+        ).length;
 
-        return row && intro && empty && notice
+        return row && intro && empty && notice && title?.textContent.trim() === 'General Chat'
           ? {
+              catalogueCalls,
               empty: empty.textContent.trim(),
               generalMetadata: row.querySelector('.group-row__footer').textContent.trim(),
               intro: intro.textContent.trim(),
@@ -236,6 +242,71 @@ try {
   });
   writeFileSync(desktopScreenshotPath, Buffer.from(desktopScreenshot.data, 'base64'));
 
+  await waitUntil('initial selected-account refresh', 5_000, async () =>
+    evaluate(
+      client,
+      `window.__newUserSmoke.calls.some(
+        (call) => String(call.action || '').toUpperCase() === 'GET_SELECTED_ACCOUNT'
+      )`,
+    ),
+  );
+
+  await evaluate(
+    client,
+    `(() => {
+      const panel = Array.from(document.querySelectorAll('.panel')).find(
+        (candidate) => candidate.querySelector('h2')?.textContent.trim() === 'Groups'
+      );
+      panel?.querySelector('.panel__header-actions button[aria-label="Search groups"]')?.click();
+    })()`,
+  );
+  await waitUntil('group discovery form', 5_000, async () =>
+    evaluate(
+      client,
+      `(() => {
+        const form = document.querySelector('form.search');
+        if (!form) return false;
+        form.requestSubmit();
+        return true;
+      })()`,
+    ),
+  );
+  const discovery = await waitUntil('bounded public group discovery', 12_000, async () =>
+    evaluate(
+      client,
+      `(() => {
+        const rows = Array.from(document.querySelectorAll('.group-discovery .group-row'));
+        const catalogueCalls = window.__newUserSmoke.calls.filter((call) =>
+          String(call.path || '').startsWith('/groups?')
+        ).length;
+        const messageProbeIds = window.__newUserSmoke.calls
+          .filter((call) => String(call.action || '').toUpperCase() === 'SEARCH_CHAT_MESSAGES' && call.txGroupId > 0)
+          .map((call) => call.txGroupId)
+          .sort((first, second) => first - second);
+
+        return rows.length === 1
+          ? {
+              catalogueCalls,
+              messageProbeIds,
+              metadata: rows[0].querySelector('.group-row__footer')?.textContent.trim(),
+              preview: rows[0].querySelector('.group-row__preview')?.textContent.trim(),
+              title: rows[0].querySelector('.group-row__name')?.textContent.trim()
+            }
+          : null;
+      })()`,
+    ),
+  );
+  await evaluate(client, `document.querySelector('.group-discovery .group-row')?.click()`);
+  await waitUntil('public preview conversation', 5_000, async () =>
+    evaluate(client, `document.querySelector('.chat-pane__title')?.textContent.trim() === 'Public Lounge'`),
+  );
+  await delay(150);
+  const discoveryScreenshot = await client.send('Page.captureScreenshot', {
+    captureBeyondViewport: false,
+    format: 'png',
+  });
+  writeFileSync(discoveryScreenshotPath, Buffer.from(discoveryScreenshot.data, 'base64'));
+
   await client.send('Emulation.setDeviceMetricsOverride', {
     deviceScaleFactor: 1,
     height: 844,
@@ -244,7 +315,12 @@ try {
     screenWidth: 390,
     width: 390,
   });
-  await evaluate(client, "document.querySelector('.group-row').click()");
+  await evaluate(
+    client,
+    `Array.from(document.querySelectorAll('.group-row')).find(
+      (row) => row.querySelector('.group-row__name')?.textContent.trim() === 'General Chat'
+    )?.click()`,
+  );
   const mobile = await waitUntil('mobile conversation view', 5_000, async () =>
     evaluate(
       client,
@@ -264,22 +340,27 @@ try {
   writeFileSync(mobileScreenshotPath, Buffer.from(mobileScreenshot.data, 'base64'));
 
   if (
-    !firstPaint.empty.includes('Choose a conversation') ||
-    !firstPaint.notice.includes('Choose a conversation') ||
+    desktop.catalogueCalls !== 0 ||
     !desktop.empty.includes('Say hello') ||
     desktop.generalMetadata.includes('id:0') ||
     !desktop.intro.includes('General Chat is public') ||
     !desktop.notice.includes('Share the selected account') ||
+    discovery.catalogueCalls !== 1 ||
+    JSON.stringify(discovery.messageProbeIds) !== JSON.stringify([7, 8]) ||
+    discovery.title !== 'Public Lounge' ||
+    discovery.preview !== 'A public preview' ||
+    !discovery.metadata.includes('CHAT') ||
     !mobile.notice.includes('Share the selected account') ||
     mobile.title !== 'General Chat'
   ) {
-    throw new Error(`New-user smoke assertions failed: ${JSON.stringify({ desktop, firstPaint, mobile })}`);
+    throw new Error(`New-user smoke assertions failed: ${JSON.stringify({ desktop, mobile })}`);
   }
 
   console.log(JSON.stringify({
     desktop,
     desktopScreenshotPath,
-    firstPaint,
+    discovery,
+    discoveryScreenshotPath,
     mobile,
     mobileScreenshotPath,
   }, null, 2));
