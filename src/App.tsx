@@ -4364,6 +4364,17 @@ export default function App() {
     }
   };
 
+  function requestSelectedAccountRefresh() {
+    const coordinator = startupAccountRefreshCoordinatorRef.current;
+
+    if (coordinator) {
+      coordinator.request();
+      return;
+    }
+
+    void connectSelectedAccount();
+  }
+
   async function initializeSession(accountRefreshCoordinator: StartupAccountRefreshCoordinator) {
     setBridge({ phase: 'loading', value: bridge.value });
     let nextActions = bridge.value.actions;
@@ -6010,7 +6021,7 @@ export default function App() {
             error={accountError}
             isHomeBridge={bridge.value.isHomeBridge}
             isGateway={bridge.value.transport === 'gateway'}
-            onConnect={() => void connectSelectedAccount()}
+            onConnect={requestSelectedAccountRefresh}
             onOpenAvatar={setAvatarLightboxImage}
             profile={account ? avatarProfiles.get(account.address) : undefined}
             t={t}
