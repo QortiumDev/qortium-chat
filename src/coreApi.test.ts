@@ -465,6 +465,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 7,
+      txGroupId: 7,
       limit: 100,
       reverse: true,
     });
@@ -479,6 +480,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 8,
+      txGroupId: 8,
       limit: 100,
       reverse: true,
     });
@@ -500,6 +502,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 8,
+      txGroupId: 8,
       limit: 100,
       reverse: true,
     });
@@ -523,6 +526,7 @@ describe('Core API path builders', () => {
       before: 1234,
       encoding: 'BASE64',
       groupId: 7,
+      txGroupId: 7,
       limit: 100,
       reverse: true,
     });
@@ -541,6 +545,7 @@ describe('Core API path builders', () => {
       before: 1234,
       encoding: 'BASE64',
       groupId: 8,
+      txGroupId: 8,
       limit: 100,
       reverse: true,
     });
@@ -560,6 +565,7 @@ describe('Core API path builders', () => {
       action: 'SEARCH_CHAT_MESSAGES',
       encoding: 'BASE64',
       groupId: 7,
+      txGroupId: 7,
       limit: 10,
       reverse: true,
     });
@@ -727,6 +733,7 @@ describe('Core API path builders', () => {
       action: 'SEND_CHAT_MESSAGE',
       groupId: 9,
       message: 'hello',
+      txGroupId: 9,
     });
 
     await expect(sendDirectChatMessage('Qpeer', 'hello direct')).resolves.toEqual({
@@ -751,6 +758,7 @@ describe('Core API path builders', () => {
       chatReference: 'original-sig',
       groupId: 9,
       message: 'fixed typo',
+      txGroupId: 9,
     });
 
     await sendDirectChatMessage('Qpeer', 'fixed direct typo', 'direct-sig');
@@ -774,6 +782,32 @@ describe('Core API path builders', () => {
       signature: 'legacy-sig',
       timestamp: 1700000000020,
     });
+  });
+
+  it('normalizes a serialized group id before sending both Home bridge field names', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ signature: 'group-12-sig', timestamp: 1700000000021 });
+
+    await expect(sendChatMessage('qortium', '12', 'announcement')).resolves.toEqual({
+      signature: 'group-12-sig',
+      timestamp: 1700000000021,
+    });
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'SEND_CHAT_MESSAGE',
+      groupId: 12,
+      message: 'announcement',
+      txGroupId: 12,
+    });
+  });
+
+  it('rejects malformed group ids before calling either bridge', async () => {
+    for (const groupId of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '', '12x']) {
+      await expect(sendChatMessage('qortium', groupId, 'hello')).rejects.toThrow(
+        'Chat group id must be a non-negative safe integer.',
+      );
+    }
+
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+    expect(qortalRequestMock).not.toHaveBeenCalled();
   });
 
   it('throws when the bridge accepts a chat send but returns no signature', async () => {
@@ -1025,6 +1059,12 @@ describe('Core API path builders', () => {
         signature: 'general-sig',
         timestamp: 1700000000030,
       });
+      expect(qdnRequestMock).toHaveBeenCalledWith({
+        action: 'SEND_CHAT_MESSAGE',
+        groupId: 0,
+        message: 'hi all',
+        txGroupId: 0,
+      });
     });
 
     it('reads Qortal group messages via qortalRequest and sorts them the same way as Qortium', async () => {
@@ -1044,6 +1084,7 @@ describe('Core API path builders', () => {
         action: 'SEARCH_CHAT_MESSAGES',
         encoding: 'BASE64',
         groupId: 7,
+        txGroupId: 7,
         limit: 100,
         reverse: true,
       });

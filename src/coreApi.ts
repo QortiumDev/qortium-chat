@@ -590,7 +590,12 @@ export async function getGroupMessages(
   const limit = options.limit ?? DEFAULT_LIST_LIMIT;
   const messageRequest = {
     encoding: 'BASE64',
+    // Home 2's native chain-read gate requires the Core-canonical field name,
+    // while older Home/private-group handlers still read `groupId`. Supplying
+    // the same validated value under both names keeps the request compatible
+    // across those hosts without leaving room for conflicting selectors.
     groupId,
+    txGroupId: groupId,
     limit,
     reverse: true,
     // When set, return the window of messages immediately older than this
@@ -796,23 +801,39 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
   return { signature, timestamp };
 }
 
+function normalizeChatGroupId(value: number | string) {
+  const normalized = typeof value === 'number' ? value : /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN;
+
+  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+    throw new Error('Chat group id must be a non-negative safe integer.');
+  }
+
+  return normalized;
+}
+
 export async function sendChatMessage(
   network: ChatNetwork,
-  groupId: number,
+  groupId: number | string,
   message: string,
   chatReference?: string,
 ) {
+  const txGroupId = normalizeChatGroupId(groupId);
+
   // Qortal has no general chat (txGroupId 0 is Qortium-only — Home's bridge
   // rejects it on qortalRequest); catch it here too so a caller mistake fails
   // fast instead of round-tripping to Home first.
-  if (network === 'qortal' && groupId === 0) {
+  if (network === 'qortal' && txGroupId === 0) {
     throw new Error('Qortal has no general chat group.');
   }
 
   const request = {
     action: 'SEND_CHAT_MESSAGE',
-    groupId,
+    // Home 2 requires the Core-canonical name. Keep the legacy alias with the
+    // exact same normalized number for older Home/q-apps hosts that still read
+    // `groupId`; never forward an unvalidated runtime value under either name.
+    groupId: txGroupId,
     message,
+    txGroupId,
   };
 
   return normalizeChatSendResult(

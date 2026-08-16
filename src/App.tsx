@@ -90,6 +90,7 @@ import {
   type PendingSend,
   type PendingSendTarget,
 } from './pendingSends';
+import { updatePendingStateRef } from './pendingState';
 import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupPreviews';
 import {
   getReactionPendingKey,
@@ -157,6 +158,7 @@ import {
 } from './notifications';
 import { LatestRequestGuard } from './latestRequest';
 import { loadQortalAccountSnapshot } from './qortalAccountSession';
+import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
 import {
   mergePersistedDirect,
   readLastChat,
@@ -1158,6 +1160,8 @@ export default function App() {
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const pendingApprovalsRequestRef = useRef(0);
   const qortalAccountRefreshGuardRef = useRef(new LatestRequestGuard());
+  const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
+  const selectedAccountRefreshCallbackRef = useRef<() => void>(() => undefined);
   const [directAddress, setDirectAddress] = useState('');
   const [isDirectSearchOpen, setDirectSearchOpen] = useState(false);
   const [directLookupPending, setDirectLookupPending] = useState(false);
@@ -1268,6 +1272,10 @@ export default function App() {
   const [now, setNow] = useState(() => Date.now());
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
+  const selectedAccountRefreshActionsRef = useRef({
+    qortal: qortalBridge.value.actions,
+    qortium: actions,
+  });
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30000);
@@ -2276,14 +2284,14 @@ export default function App() {
 
       setQortalBridge({ phase: 'ready', value: nextBridge });
       void loadQortalGroups(qortalSearch, nextBridge.actions);
-
-      void refreshQortalSelectedAccount(nextBridge.actions);
+      return nextBridge.actions;
     } catch (error) {
       setQortalBridge({
         error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
         phase: 'error',
         value: qortalBridge.value,
       });
+      return qortalBridge.value.actions;
     }
   }
 
@@ -2969,23 +2977,11 @@ export default function App() {
   // runPendingSend/runPendingRevision (fired with `void`, not awaited by the
   // caller) always look up the current entry by localId.
   function updatePendingSends(updater: (current: PendingSend[]) => PendingSend[]) {
-    setPendingSends((current) => {
-      const next = updater(current);
-
-      pendingSendsRef.current = next;
-
-      return next;
-    });
+    setPendingSends(updatePendingStateRef(pendingSendsRef, updater));
   }
 
   function updatePendingRevisions(updater: (current: PendingRevision[]) => PendingRevision[]) {
-    setPendingRevisions((current) => {
-      const next = updater(current);
-
-      pendingRevisionsRef.current = next;
-
-      return next;
-    });
+    setPendingRevisions(updatePendingStateRef(pendingRevisionsRef, updater));
   }
 
   function pendingSendTargetFor(chat: SelectedChat): PendingSendTarget {
@@ -4209,7 +4205,16 @@ export default function App() {
     }
   }
 
-  async function initializeSession() {
+  selectedAccountRefreshCallbackRef.current = () => {
+    const refreshActions = selectedAccountRefreshActionsRef.current;
+
+    void connectSelectedAccount(refreshActions.qortium);
+    if (hasNetworkBridge('qortal')) {
+      void refreshQortalSelectedAccount(refreshActions.qortal);
+    }
+  };
+
+  async function initializeSession(accountRefreshCoordinator: StartupAccountRefreshCoordinator) {
     setBridge({ phase: 'loading', value: bridge.value });
     let nextActions = bridge.value.actions;
 
@@ -4232,6 +4237,7 @@ export default function App() {
 
       setChatStorageReady(true);
       setBridge({ phase: 'ready', value: nextBridge });
+      selectedAccountRefreshActionsRef.current.qortium = nextActions;
     } catch (error) {
       setChatStorageMode('persistent');
       setChatStorageReady(true);
@@ -4243,7 +4249,6 @@ export default function App() {
     }
 
     void loadGroups(search, nextActions);
-    void connectSelectedAccount(nextActions);
 
     // Chat 2.0 slice 2: the Qortal section is only ever shown when the host
     // actually injected window.qortalRequest — an older Home build (or a
@@ -4251,8 +4256,10 @@ export default function App() {
     // rather than rendering with everything disabled.
     if (hasNetworkBridge('qortal')) {
       setQortalAvailable(true);
-      void initializeQortalSession();
+      selectedAccountRefreshActionsRef.current.qortal = await initializeQortalSession();
     }
+
+    accountRefreshCoordinator.markReady(() => selectedAccountRefreshCallbackRef.current());
   }
 
   async function refreshAfterTrackedTransaction(transaction: TrackedTransaction) {
@@ -4272,7 +4279,16 @@ export default function App() {
   }
 
   useEffect(() => {
-    void initializeSession();
+    const accountRefreshCoordinator = new StartupAccountRefreshCoordinator();
+    startupAccountRefreshCoordinatorRef.current = accountRefreshCoordinator;
+    void initializeSession(accountRefreshCoordinator);
+
+    return () => {
+      if (startupAccountRefreshCoordinatorRef.current === accountRefreshCoordinator) {
+        startupAccountRefreshCoordinatorRef.current = null;
+      }
+      accountRefreshCoordinator.dispose();
+    };
   }, []);
 
   // Initial URL targets and runtime Home targets share this one resolver. It
@@ -5232,17 +5248,14 @@ export default function App() {
       }
 
       if (isSelectedAccountChangedMessage(event.data)) {
-        void connectSelectedAccount(actions);
-        if (hasNetworkBridge('qortal')) {
-          void refreshQortalSelectedAccount(qortalBridge.value.actions);
-        }
+        startupAccountRefreshCoordinatorRef.current?.notify();
       }
     }
 
     window.addEventListener('message', handleHostMessage);
 
     return () => window.removeEventListener('message', handleHostMessage);
-  }, [actionsKey, qortalBridge.value.actions]);
+  }, []);
 
   useEffect(() => {
     const pendingTransactions = Object.values(trackedTransactions).filter(
