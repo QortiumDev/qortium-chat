@@ -1,13 +1,11 @@
-// Mirrors qdnRequest.ts for the Qortal protocol: Home 2.0's v2 bridge exposes
-// Qortium as window.qdnRequest and Qortal as a SEPARATE global,
-// window.qortalRequest, each with its own SHOW_ACTIONS catalogue (see
-// docs/HOME_V2_BRIDGE_COMPATIBILITY.md in qortium-home). The two entry points
-// are kept deliberately distinct (not merged into one "network" bridge file)
-// so a Qortium-only host is never at risk of a Qortal code path — the whole
-// module is a no-op unless window.qortalRequest exists or a caller invokes it
-// directly (browser-dev fallback below).
+// Home 2 exposes Qortal through a dedicated window.qortalRequest bridge. Home
+// 1.7 exposes the same bounded Qortal group-chat foundation through older,
+// Qortal-prefixed actions on window.qdnRequest (the contract ChibiHub uses).
+// This adapter normalizes both hosts to the Home 2 action names consumed by the
+// rest of Chat; it never moves account keys or signing into the QDN app.
 import type { BridgeState, BridgeTransport, NodeApiFetchResult, QdnAction } from './types';
-import { classifyBridgeTransport } from './qdnRequest';
+import { classifyBridgeTransport, hasHomeBridge, qdnRequest } from './qdnRequest';
+import { buildQortalHubGroupChatPayload, normalizeQortalOutgoingMessage } from './qortalChatPayload';
 
 const DEFAULT_NODE_API_URL = 'http://127.0.0.1:12391';
 
@@ -26,6 +24,122 @@ type QortalRequestPayload = {
   path?: string;
   [key: string]: unknown;
 };
+
+const LEGACY_QORTAL_ACTIONS: Readonly<Record<string, string>> = Object.freeze({
+  FETCH_NODE_API: 'FETCH_QORTAL_NODE_API',
+  FETCH_QDN_RESOURCE: 'FETCH_QORTAL_RESOURCE',
+  GET_ACCOUNT_GROUPS: 'GET_QORTAL_ACCOUNT_GROUPS',
+  GET_ACCOUNT_NAMES: 'GET_QORTAL_ACCOUNT_NAMES',
+  GET_ACTIVE_CHATS: 'GET_QORTAL_ACTIVE_CHATS',
+  GET_CHAT_MESSAGE: 'GET_QORTAL_CHAT_MESSAGE',
+  GET_NAME_DATA: 'GET_QORTAL_NAME_DATA',
+  GET_NODE_STATUS: 'GET_QORTAL_NODE_STATUS',
+  GET_PRIMARY_NAME: 'GET_QORTAL_PRIMARY_NAME',
+  GET_QDN_RESOURCE_METADATA: 'GET_QORTAL_RESOURCE_METADATA',
+  GET_QDN_RESOURCE_STATUS: 'GET_QORTAL_RESOURCE_STATUS',
+  GET_QDN_RESOURCE_URL: 'GET_QORTAL_RESOURCE_URL',
+  SEARCH_CHAT_MESSAGES: 'GET_QORTAL_CHAT_MESSAGES',
+  SEARCH_QDN_RESOURCES: 'SEARCH_QORTAL_RESOURCES',
+  SEARCH_TRANSACTIONS: 'SEARCH_QORTAL_TRANSACTIONS',
+  SEND_CHAT_MESSAGE: 'SEND_QORTAL_GROUP_CHAT',
+});
+
+const LEGACY_PASSTHROUGH_ACTIONS = ['SHOW_ACTIONS', 'WHICH_UI'] as const;
+
+function getLegacyQortalActions(value: unknown): QdnAction[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const legacyActions = new Set(
+    value.filter((action): action is string => typeof action === 'string').map((action) => action.toUpperCase()),
+  );
+  const actions = Object.entries(LEGACY_QORTAL_ACTIONS)
+    .filter(([, legacyAction]) => legacyActions.has(legacyAction))
+    .map(([action]) => action);
+
+  if (legacyActions.has('GET_SELECTED_ACCOUNT')) {
+    actions.push('GET_USER_ACCOUNT');
+  }
+
+  for (const action of LEGACY_PASSTHROUGH_ACTIONS) {
+    if (legacyActions.has(action)) {
+      actions.push(action);
+    }
+  }
+
+  // Home 1.7 chooses a healthy local or public Qortal read node internally.
+  // It has no separate Qortal node-mode action, and this first compatibility
+  // slice exposes only public groups, so reporting false avoids accidentally
+  // applying the primary Qortium connection's mode to Qortal.
+  actions.push('IS_USING_PUBLIC_NODE');
+
+  return Array.from(new Set(actions));
+}
+
+export function hasQortalChatBridgeActions(actions: readonly string[]) {
+  const available = new Set(actions.map((action) => action.toUpperCase()));
+
+  return (
+    available.has('GET_USER_ACCOUNT') &&
+    available.has('GET_ACCOUNT_GROUPS') &&
+    available.has('SEARCH_CHAT_MESSAGES')
+  );
+}
+
+async function requestLegacyQortal<T>(request: QortalRequestPayload): Promise<T> {
+  const action = request.action.toUpperCase();
+
+  if (action === 'SHOW_ACTIONS') {
+    return getLegacyQortalActions(await qdnRequest<unknown>({ action: 'SHOW_ACTIONS' })) as T;
+  }
+
+  if (action === 'WHICH_UI') {
+    return qdnRequest<T>({ action: 'WHICH_UI' });
+  }
+
+  if (action === 'IS_USING_PUBLIC_NODE') {
+    return false as T;
+  }
+
+  if (action === 'GET_USER_ACCOUNT') {
+    const account = await qdnRequest<{ address: string; publicKey?: string | null }>({
+      action: 'GET_SELECTED_ACCOUNT',
+    });
+
+    return { address: account.address, publicKey: account.publicKey ?? null } as T;
+  }
+
+  const legacyAction = LEGACY_QORTAL_ACTIONS[action];
+
+  if (!legacyAction) {
+    throw new Error(`${request.action} is not available through the Home 1.7 Qortal bridge.`);
+  }
+
+  if (action === 'SEND_CHAT_MESSAGE') {
+    if (typeof request.chatReference === 'string' && request.chatReference) {
+      throw new Error('Qortal edits and reactions require a newer Home bridge.');
+    }
+
+    if (typeof request.message !== 'string') {
+      throw new Error('Qortal chat messages require text.');
+    }
+
+    const outgoing = normalizeQortalOutgoingMessage(request.message);
+
+    return qdnRequest<T>({
+      action: legacyAction,
+      groupId: request.groupId,
+      repliedTo: outgoing.repliedTo ?? undefined,
+      text: outgoing.text,
+      txGroupId: request.txGroupId,
+    });
+  }
+
+  const { action: _action, ...requestValue } = request;
+
+  return qdnRequest<T>({ action: legacyAction, ...requestValue });
+}
 
 export function getNodeApiUrl() {
   return (import.meta.env.VITE_QORTAL_NODE_API_URL || DEFAULT_NODE_API_URL).replace(/\/+$/, '');
@@ -132,12 +246,15 @@ async function fallbackQortalRequest<T>(request: QortalRequestPayload): Promise<
   }
 }
 
-/** True only when the host actually injected window.qortalRequest — an older
- * Home build (or a Qortium-only gateway) never sets this global, which is the
- * signal the app uses to hide the whole Qortal section rather than just
- * gating individual actions. */
+/** True only for Home 2's dedicated protocol global. Home 1.7 is detected
+ * separately and must prove its Qortal-prefixed action catalogue before Chat
+ * shows the network section. */
 export function hasQortalHomeBridge() {
   return typeof window !== 'undefined' && typeof window.qortalRequest === 'function';
+}
+
+export function hasLegacyQortalBridgeCandidate() {
+  return !hasQortalHomeBridge() && hasHomeBridge();
 }
 
 export async function qortalRequest<T = unknown>(request: QortalRequestPayload): Promise<T> {
@@ -148,14 +265,35 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
   const bridgeRequest = typeof window !== 'undefined' ? window.qortalRequest : undefined;
 
   if (typeof bridgeRequest === 'function') {
+    if (request.action.toUpperCase() === 'SEND_CHAT_MESSAGE') {
+      if (typeof request.chatReference === 'string' && request.chatReference) {
+        throw new Error('Qortal edits and reactions require a newer Home bridge.');
+      }
+
+      if (typeof request.message !== 'string') {
+        throw new Error('Qortal chat messages require text.');
+      }
+
+      return bridgeRequest<T>({
+        ...request,
+        message: buildQortalHubGroupChatPayload(normalizeQortalOutgoingMessage(request.message)),
+      });
+    }
+
     return bridgeRequest<T>(request);
+  }
+
+  if (hasLegacyQortalBridgeCandidate()) {
+    return requestLegacyQortal<T>(request);
   }
 
   return fallbackQortalRequest<T>(request);
 }
 
 export async function getQortalBridgeState(): Promise<BridgeState> {
-  const hasInjectedBridge = hasQortalHomeBridge();
+  const hasDedicatedBridge = hasQortalHomeBridge();
+  const hasLegacyCandidate = hasLegacyQortalBridgeCandidate();
+  const hasInjectedBridge = hasDedicatedBridge || hasLegacyCandidate;
   let actions: QdnAction[] = [];
   let ui = hasInjectedBridge ? 'QORTIUM_HOME_ELECTRON' : 'BROWSER_DEV';
   let isUsingPublicNode = false;
@@ -186,7 +324,11 @@ export async function getQortalBridgeState(): Promise<BridgeState> {
     isUsingPublicNode = false;
   }
 
-  const transport: BridgeTransport = classifyBridgeTransport(ui, hasInjectedBridge);
+  const hasQortalCapabilities = hasQortalChatBridgeActions(actions);
+  const transport: BridgeTransport = classifyBridgeTransport(
+    ui,
+    hasDedicatedBridge || (hasLegacyCandidate && hasQortalCapabilities),
+  );
 
   return {
     actions,

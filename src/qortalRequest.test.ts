@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getQortalBridgeState, hasQortalHomeBridge, LOCAL_READ_ACTIONS, qortalRequest } from './qortalRequest';
+import {
+  getQortalBridgeState,
+  hasLegacyQortalBridgeCandidate,
+  hasQortalChatBridgeActions,
+  hasQortalHomeBridge,
+  LOCAL_READ_ACTIONS,
+  qortalRequest,
+} from './qortalRequest';
 
 describe('qortalRequest bridge adapter', () => {
   afterEach(() => {
@@ -25,10 +32,129 @@ describe('qortalRequest bridge adapter', () => {
     });
   });
 
-  it('reports no Qortal bridge when only window.qdnRequest is injected (older host)', () => {
+  it('recognizes a legacy Home bridge candidate without claiming a dedicated global', () => {
     vi.stubGlobal('window', { qdnRequest: vi.fn() });
 
     expect(hasQortalHomeBridge()).toBe(false);
+    expect(hasLegacyQortalBridgeCandidate()).toBe(true);
+  });
+
+  it('normalizes the released Home 1.7 Qortal action catalogue', async () => {
+    const qdnRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce([
+        'FETCH_QORTAL_NODE_API',
+        'GET_QORTAL_ACCOUNT_GROUPS',
+        'GET_QORTAL_ACTIVE_CHATS',
+        'GET_QORTAL_CHAT_MESSAGE',
+        'GET_QORTAL_CHAT_MESSAGES',
+        'GET_QORTAL_PRIMARY_NAME',
+        'GET_SELECTED_ACCOUNT',
+        'SEND_QORTAL_GROUP_CHAT',
+        'SHOW_ACTIONS',
+        'WHICH_UI',
+      ])
+      .mockResolvedValueOnce('QORTIUM_HOME_ELECTRON');
+
+    vi.stubGlobal('window', { qdnRequest: qdnRequestMock });
+
+    const bridge = await getQortalBridgeState();
+
+    expect(bridge).toMatchObject({
+      isHomeBridge: true,
+      isUsingPublicNode: false,
+      transport: 'home',
+      ui: 'QORTIUM_HOME_ELECTRON',
+    });
+    expect(bridge.actions).toEqual(
+      expect.arrayContaining([
+        'FETCH_NODE_API',
+        'GET_ACCOUNT_GROUPS',
+        'GET_ACTIVE_CHATS',
+        'GET_CHAT_MESSAGE',
+        'GET_PRIMARY_NAME',
+        'GET_USER_ACCOUNT',
+        'SEARCH_CHAT_MESSAGES',
+        'SEND_CHAT_MESSAGE',
+      ]),
+    );
+    expect(hasQortalChatBridgeActions(bridge.actions)).toBe(true);
+  });
+
+  it('does not present a Qortium-only legacy catalogue as Qortal Chat', async () => {
+    const qdnRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce(['FETCH_NODE_API', 'GET_SELECTED_ACCOUNT', 'SHOW_ACTIONS', 'WHICH_UI'])
+      .mockResolvedValueOnce('QORTIUM_HOME_ELECTRON');
+
+    vi.stubGlobal('window', { qdnRequest: qdnRequestMock });
+
+    const bridge = await getQortalBridgeState();
+
+    expect(hasQortalChatBridgeActions(bridge.actions)).toBe(false);
+    expect(bridge.isHomeBridge).toBe(false);
+    expect(bridge.transport).toBe('browser-dev');
+  });
+
+  it('maps legacy account, message-read, and reply-send requests without exposing keys', async () => {
+    const qdnRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce({ address: 'QortalAddress', isUnlocked: true, name: 'QortiumName' })
+      .mockResolvedValueOnce([{ data: 'message' }])
+      .mockResolvedValueOnce({ accepted: true, signature: 'sent-sig' });
+
+    vi.stubGlobal('window', { qdnRequest: qdnRequestMock });
+
+    await expect(qortalRequest({ action: 'GET_USER_ACCOUNT' })).resolves.toEqual({
+      address: 'QortalAddress',
+      publicKey: null,
+    });
+    await expect(
+      qortalRequest({ action: 'SEARCH_CHAT_MESSAGES', limit: 100, reverse: true, txGroupId: 12 }),
+    ).resolves.toEqual([{ data: 'message' }]);
+    await expect(
+      qortalRequest({
+        action: 'SEND_CHAT_MESSAGE',
+        groupId: 12,
+        message: '{"message":"hello","repliedTo":"reply-sig"}',
+        txGroupId: 12,
+      }),
+    ).resolves.toEqual({ accepted: true, signature: 'sent-sig' });
+
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(1, { action: 'GET_SELECTED_ACCOUNT' });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'GET_QORTAL_CHAT_MESSAGES',
+      limit: 100,
+      reverse: true,
+      txGroupId: 12,
+    });
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
+      action: 'SEND_QORTAL_GROUP_CHAT',
+      groupId: 12,
+      repliedTo: 'reply-sig',
+      text: 'hello',
+      txGroupId: 12,
+    });
+  });
+
+  it('builds a Hub v3 payload for Home 2 and refuses unsupported Qortal revisions', async () => {
+    const qortalRequestMock = vi.fn().mockResolvedValueOnce({ signature: 'sent-sig' });
+
+    vi.stubGlobal('window', { qdnRequest: vi.fn(), qortalRequest: qortalRequestMock });
+
+    await qortalRequest({ action: 'SEND_CHAT_MESSAGE', message: 'hello', txGroupId: 12 });
+
+    const request = qortalRequestMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    const payload = JSON.parse(String(request.message)) as Record<string, unknown>;
+
+    expect(payload).toMatchObject({ images: [], isEdited: false, repliedTo: '', type: '', version: 3 });
+    expect(payload.specialId).toEqual(expect.any(String));
+    expect(request.txGroupId).toBe(12);
+
+    await expect(
+      qortalRequest({ action: 'SEND_CHAT_MESSAGE', chatReference: 'edit-sig', message: 'edited', txGroupId: 12 }),
+    ).rejects.toThrow('Qortal edits and reactions require a newer Home bridge.');
+    expect(qortalRequestMock).toHaveBeenCalledTimes(1);
   });
 
   it('uses local fallback actions outside Home, distinct from GET_SELECTED_ACCOUNT', async () => {
