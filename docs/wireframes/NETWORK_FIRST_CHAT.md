@@ -1,8 +1,9 @@
 # Network-first Chat wireframes
 
-Status: approved direction. The first production tranche implements the
-embedded shell, network rail, joined/discovery labels, conversation context,
-and reserved initials avatars. The HTML/PNG files remain design references.
+Status: approved direction. The first production tranche implements Chat's
+Home app-tab shell, network rail, joined/discovery labels, conversation
+context, and reserved initials avatars. Chat remains a separate QDN app; the
+HTML/PNG files remain design references.
 
 ## Decision represented
 
@@ -27,8 +28,8 @@ different apps or hiding either network.
 
 ## Layout decisions
 
-- Embedded Home mode uses a compact Chat utility header instead of repeating
-  the full brand and account masthead already supplied by Home.
+- Home app-tab mode uses a compact Chat utility header instead of repeating
+  the full brand and account masthead already visible around the app in Home.
 - Desktop keeps the network-first rail and conversation visible together.
 - Mobile uses separate full-height list and conversation views.
 - Conversation headers show network and protocol badges, membership context,
@@ -40,8 +41,9 @@ different apps or hiding either network.
 
 ## Production boundary after the first tranche
 
-- Home v2 embedded mode is selected only by the explicit `homeV2Bridge=1`
-  contract. Standalone and gateway Chat keep the full branded masthead.
+- Home v2 app-tab mode is selected only by the explicit `homeV2Bridge=1`
+  contract. This changes Chat's presentation when Home hosts the separate app;
+  standalone and gateway Chat keep the full branded masthead.
 - Qortium and Qortal group rails show their current `CHAT` source. No `RCHAT`
   badge is rendered until that protocol is implemented and honestly usable.
 - Discover remains an explicit, bounded search. It does not poll the public

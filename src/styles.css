@@ -1719,9 +1719,9 @@ samp,
   padding: 1px 6px;
 }
 
-/* Home v2 passes an explicit query contract. Keep standalone and gateway Chat
-   fully branded, while the embedded app adopts Home's quieter warm shell and
-   leaves more room for conversations. */
+/* Home v2 passes an explicit query contract to the separate Chat QDN app when
+   it runs in a Home app tab. Keep standalone and gateway Chat fully branded;
+   app-tab mode adopts a quieter warm shell and leaves more room for messages. */
 .app-shell--home-v2 {
   --qc-color-page-bg: #f3efe7;
   --qc-color-frame-bg: #e9e3d9;

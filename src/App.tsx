@@ -96,7 +96,7 @@ import {
   getReactionPendingKey,
 } from './messageReactions';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
-import { isHomeV2Embedded } from './hostContext';
+import { isHomeV2AppTab } from './hostContext';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
 import {
@@ -1018,7 +1018,7 @@ function useStableCallback<Args extends unknown[], Result>(callback: (...args: A
 }
 
 export default function App() {
-  const homeV2Embedded = isHomeV2Embedded(window.location.search);
+  const homeV2AppTab = isHomeV2AppTab(window.location.search);
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
     isHomeBridge: false,
@@ -5947,12 +5947,12 @@ export default function App() {
   }
 
   return (
-    <main className={`app-shell${homeV2Embedded ? ' app-shell--home-v2' : ''}`}>
+    <main className={`app-shell${homeV2AppTab ? ' app-shell--home-v2' : ''}`}>
       <header className="topbar">
         <div className="topbar__title">
-          {homeV2Embedded ? null : <BrandMark />}
-          <h1>{homeV2Embedded ? 'Chat' : t('app.title')}</h1>
-          {homeV2Embedded ? (
+          {homeV2AppTab ? null : <BrandMark />}
+          <h1>{homeV2AppTab ? 'Chat' : t('app.title')}</h1>
+          {homeV2AppTab ? (
             <span className="topbar__host-context">Home</span>
           ) : (
             <span className="topbar__version">{APP_VERSION}</span>
