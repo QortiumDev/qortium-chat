@@ -1,13 +1,16 @@
 # Network-first Chat wireframes
 
-Status: review-only product artifact. These files do not change the production
-Chat application.
+Status: approved direction. The first production tranche implements the
+embedded shell, network rail, joined/discovery labels, conversation context,
+and reserved initials avatars. The HTML/PNG files remain design references.
 
 ## Decision represented
 
 Chat keeps Qortium and Qortal as separate, simultaneously visible navigation
-sections. Each network owns its own Direct, Joined groups, and Discover
-surfaces. There is no global network switcher.
+sections. Each network ultimately owns its own Direct, Joined groups, and
+Discover surfaces. There is no global network switcher. The current Qortal
+bridge slice exposes groups only; Qortal direct messages stay in the roadmap
+rather than appearing as a non-functional placeholder.
 
 Every conversation also carries its protocol source (`CHAT` or `RCHAT`). This
 keeps Qortal legacy CHAT and Qortal RCHAT distinct without splitting them into
@@ -34,6 +37,18 @@ different apps or hiding either network.
   descriptor/resolver contract.
 - Direct conversation titles prefer names. Full addresses belong in account
   details rather than the ordinary conversation header.
+
+## Production boundary after the first tranche
+
+- Home v2 embedded mode is selected only by the explicit `homeV2Bridge=1`
+  contract. Standalone and gateway Chat keep the full branded masthead.
+- Qortium and Qortal group rails show their current `CHAT` source. No `RCHAT`
+  badge is rendered until that protocol is implemented and honestly usable.
+- Discover remains an explicit, bounded search. It does not poll the public
+  catalogue or interrupt an open conversation in the background.
+- Administrative header actions and component extraction remain follow-up UI
+  work. Link cards, shared group avatars, Qortal direct messages, and RCHAT are
+  not part of this tranche.
 
 ## Review files
 

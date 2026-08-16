@@ -670,6 +670,25 @@ samp,
   font-weight: 600;
 }
 
+.topbar__host-context,
+.network-section__protocol,
+.chat-pane__context span,
+.group-row__membership {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 20px;
+  padding: 2px 7px;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  background: var(--qc-color-chip-bg);
+  border: 1px solid var(--qc-color-border-subtle);
+  border-radius: var(--qc-radius-pill);
+}
+
 .topbar__brand-mark {
   flex: none;
   font-size: var(--qc-text-heading);
@@ -889,13 +908,37 @@ samp,
   border-bottom: none;
 }
 
+.network-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 16px 5px;
+}
+
 .network-section__title {
-  padding: 12px 16px 0;
+  margin: 0;
   color: var(--qc-color-muted);
   font-size: var(--qc-text-small);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.network-section--qortium .network-section__title {
+  color: #9a5530;
+}
+
+.network-section--qortal .network-section__title {
+  color: #5f6e86;
+}
+
+:root[data-theme='dark'] .network-section--qortium .network-section__title {
+  color: #e0a27e;
+}
+
+:root[data-theme='dark'] .network-section--qortal .network-section__title {
+  color: #aab9d1;
 }
 
 .panel__header,
@@ -1281,9 +1324,30 @@ samp,
 
 .group-row {
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   padding: 10px 12px;
   text-align: start;
+}
+
+.group-row__avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--qc-color-avatar-text);
+  font-size: var(--qc-text-tiny);
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  background: var(--qc-color-avatar);
+  border-radius: 10px;
+}
+
+.group-row__content {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .group-row--preview {
@@ -1376,6 +1440,14 @@ samp,
   background: var(--qc-color-frame-bg);
   border: 1px solid var(--qc-color-border-subtle);
   border-radius: var(--qc-radius-pill);
+}
+
+.group-row__membership {
+  min-height: 18px;
+  padding: 1px 6px;
+  color: var(--qc-color-warning);
+  background: var(--qc-color-warning-bg);
+  border-color: var(--qc-color-warning-border);
 }
 
 .group-row__lock {
@@ -1632,6 +1704,131 @@ samp,
 
 .chat-pane__heading {
   min-width: 0;
+}
+
+.chat-pane__context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.chat-pane__context span {
+  min-height: 18px;
+  padding: 1px 6px;
+}
+
+/* Home v2 passes an explicit query contract. Keep standalone and gateway Chat
+   fully branded, while the embedded app adopts Home's quieter warm shell and
+   leaves more room for conversations. */
+.app-shell--home-v2 {
+  --qc-color-page-bg: #f3efe7;
+  --qc-color-frame-bg: #e9e3d9;
+  --qc-color-frame-surface: #f6f3ed;
+  --qc-color-surface: #fbfaf7;
+  --qc-color-surface-alt: #f3eee6;
+  --qc-color-surface-raised: #fffdf9;
+  --qc-color-control-bg: #eee7dd;
+  --qc-color-control-hover: #e5dbcf;
+  --qc-color-control-selected: #f2e2d7;
+  --qc-color-input-bg: #fffdf9;
+  --qc-color-message-bg: #fffdf9;
+  --qc-color-border: #d8cec1;
+  --qc-color-border-strong: #bcae9e;
+  --qc-color-border-subtle: #e4dbd0;
+  --qc-color-accent: #a75d36;
+  --qc-color-accent-hover: #874726;
+  --qc-color-accent-readable: #874726;
+  --qc-color-accent-text: #ffffff;
+  --qc-color-accent-ring: rgb(167 93 54 / 18%);
+  --qc-color-accent-soft: rgb(167 93 54 / 10%);
+  --qc-color-accent-glow: rgb(167 93 54 / 18%);
+  --qc-color-avatar: #9d765f;
+  --qc-color-row-hover: #f3e7dd;
+  --qc-color-row-hover-border: #cfaa91;
+  --qc-gradient-primary: #a75d36;
+  --qc-gradient-primary-hover: #974f2c;
+  --qc-gradient-primary-active: #874726;
+  --qc-shadow-card: 0 1px 2px rgb(52 39 28 / 5%);
+  --qc-shadow-card-hover: 0 2px 8px rgb(52 39 28 / 8%);
+  --qc-shadow-bar: 0 1px 2px rgb(52 39 28 / 4%);
+}
+
+:root[data-theme='dark'] .app-shell--home-v2 {
+  --qc-color-page-bg: #171411;
+  --qc-color-frame-bg: #15120f;
+  --qc-color-frame-surface: #1c1916;
+  --qc-color-surface: #211d19;
+  --qc-color-surface-alt: #29231e;
+  --qc-color-surface-raised: #2d2721;
+  --qc-color-control-bg: #332b25;
+  --qc-color-control-hover: #40352d;
+  --qc-color-control-selected: #453026;
+  --qc-color-input-bg: #1e1a17;
+  --qc-color-message-bg: #241f1b;
+  --qc-color-border: #4a4038;
+  --qc-color-border-strong: #716156;
+  --qc-color-border-subtle: #382f29;
+  --qc-color-accent: #e29a6f;
+  --qc-color-accent-hover: #cf855b;
+  --qc-color-accent-readable: #f0aa80;
+  --qc-color-accent-text: #24140c;
+  --qc-color-accent-ring: rgb(226 154 111 / 20%);
+  --qc-color-accent-soft: rgb(226 154 111 / 12%);
+  --qc-color-avatar: #b77d5c;
+  --qc-color-avatar-text: #1f120b;
+  --qc-color-row-hover: #35271f;
+  --qc-color-row-hover-border: #865d45;
+  --qc-gradient-primary: #e29a6f;
+  --qc-gradient-primary-hover: #eda77e;
+  --qc-gradient-primary-active: #cf855b;
+}
+
+.app-shell--home-v2 .topbar {
+  min-height: 54px;
+  padding-block: 7px;
+  background: var(--qc-color-surface);
+}
+
+.app-shell--home-v2 .topbar h1 {
+  font-size: calc(18px * var(--qc-text-scale));
+}
+
+.app-shell--home-v2 .account-summary {
+  gap: 8px;
+}
+
+.app-shell--home-v2 .account-summary__avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--qc-radius-pill);
+}
+
+.app-shell--home-v2 .account-summary__address {
+  display: none;
+}
+
+.app-shell--home-v2 .account-summary__text {
+  gap: 0;
+}
+
+.app-shell--home-v2 .layout {
+  grid-template-columns: minmax(280px, 328px) minmax(0, 1fr);
+}
+
+.app-shell--home-v2 .layout--members-open {
+  grid-template-columns: minmax(280px, 320px) minmax(320px, 1fr) minmax(240px, 300px);
+}
+
+.app-shell--home-v2 .chat-pane {
+  padding: 14px 18px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  background: var(--qc-color-surface);
+}
+
+.app-shell--home-v2 .chat-pane__header {
+  padding-bottom: 10px;
 }
 
 /* The back control only exists in the narrow single-view layout; hidden while
@@ -3475,6 +3672,11 @@ button.message__reply-preview:focus-visible,
     display: grid;
   }
 
+  .app-shell--home-v2 .layout,
+  .app-shell--home-v2 .layout--members-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .chat-pane__back {
     display: inline-flex;
   }
@@ -3539,6 +3741,52 @@ button.message__reply-preview:focus-visible,
     margin-top: 12px;
   }
 
+  .app-shell--home-v2 .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-block: 6px;
+    padding-inline: calc(10px + env(safe-area-inset-left, 0px)) calc(10px + env(safe-area-inset-right, 0px));
+  }
+
+  .app-shell--home-v2 .topbar__account {
+    justify-content: flex-end;
+    margin-top: 0;
+  }
+
+  .app-shell--home-v2 .topbar__host-context,
+  .app-shell--home-v2 .account-summary__status {
+    display: none;
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect {
+    display: flex;
+    max-width: min(56vw, 240px);
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect .muted {
+    display: none;
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect .button {
+    min-width: 0;
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+
+  .app-shell--home-v2 .panel {
+    padding: 10px 12px;
+  }
+
+  .app-shell--home-v2 .network-section__header {
+    padding: 12px 12px 4px;
+  }
+
+  .app-shell--home-v2 .chat-pane {
+    padding: 10px 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
   .notification-settings__popover {
     inset-inline-start: 0;
     inset-inline-end: auto;
@@ -3600,6 +3848,20 @@ button.message__reply-preview:focus-visible,
      "Replying to…"/"Editing" text to zero. */
   .composer > .button {
     width: 100%;
+  }
+
+  .app-shell--home-v2 .composer {
+    flex-wrap: nowrap;
+  }
+
+  .app-shell--home-v2 .composer textarea {
+    flex-basis: auto;
+    width: auto;
+  }
+
+  .app-shell--home-v2 .composer > .button {
+    width: auto;
+    min-width: 72px;
   }
 
   .account-dialog {

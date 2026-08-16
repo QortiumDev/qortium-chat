@@ -196,7 +196,7 @@ try {
           .map((element) => element.textContent.trim())
           .filter(Boolean);
         const groupsToggle = [...document.querySelectorAll('.panel__toggle')]
-          .find((button) => button.textContent.includes('Groups'));
+          .find((button) => button.textContent.includes('Joined groups'));
 
         return notices.length >= 2 && groupsToggle
           ? {
@@ -213,7 +213,7 @@ try {
     client,
     `(() => {
       const groupsToggle = [...document.querySelectorAll('.panel__toggle')]
-        .find((button) => button.textContent.includes('Groups'));
+        .find((button) => button.textContent.includes('Joined groups'));
       groupsToggle.click();
     })()`,
   );
@@ -224,7 +224,7 @@ try {
     `(() => ({
       calls: window.__gatewaySmoke.calls.map((call) => call.action),
       groupsExpanded: [...document.querySelectorAll('.panel__toggle')]
-        .find((button) => button.textContent.includes('Groups'))
+        .find((button) => button.textContent.includes('Joined groups'))
         .getAttribute('aria-expanded'),
       notificationStorage: localStorage.getItem('qortium-chat-notifications-v2'),
       sidebarStorage: localStorage.getItem('qortium-chat:sidebarCollapse'),

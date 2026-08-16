@@ -6,7 +6,7 @@ import path from 'node:path';
 const repoRoot = process.cwd();
 const previewPort = 4181;
 const cdpPort = 9341;
-const previewUrl = `http://127.0.0.1:${previewPort}/`;
+const previewUrl = `http://127.0.0.1:${previewPort}/?homeV2Bridge=1`;
 const desktopScreenshotPath = path.join(tmpdir(), 'qortium-chat-new-user-desktop-smoke.png');
 const discoveryScreenshotPath = path.join(tmpdir(), 'qortium-chat-membership-discovery-smoke.png');
 const mobileScreenshotPath = path.join(tmpdir(), 'qortium-chat-new-user-mobile-smoke.png');
@@ -173,6 +173,26 @@ const bootstrap = `
           return [];
       }
     };
+    window.qortalRequest = async (request) => {
+      switch (String(request.action || '').toUpperCase()) {
+        case 'SHOW_ACTIONS':
+          return ['GET_ACCOUNT_GROUPS', 'GET_PRIMARY_NAME', 'GET_USER_ACCOUNT', 'SEARCH_CHAT_MESSAGES'];
+        case 'WHICH_UI':
+          return 'QORTIUM_HOME_ELECTRON';
+        case 'IS_USING_PUBLIC_NODE':
+          return true;
+        case 'GET_USER_ACCOUNT':
+          return { address: 'Qqortal1111111111111111111111111111', publicKey: 'qortal-public-key' };
+        case 'GET_PRIMARY_NAME':
+          return { name: 'Qortal Newcomer' };
+        case 'GET_ACCOUNT_GROUPS':
+          return [{ groupId: 12, groupName: 'Qortal Community', isOpen: true, memberCount: 24 }];
+        case 'SEARCH_CHAT_MESSAGES':
+          return [];
+        default:
+          return [];
+      }
+    };
   })();
 `;
 
@@ -217,20 +237,27 @@ try {
       `(() => {
         const row = document.querySelector('.group-row');
         const intro = document.querySelector('.panel__intro');
-        const empty = document.querySelector('.empty');
+        const empty = document.querySelector('.chat-pane .empty');
         const notice = document.querySelector('.composer--notice');
         const title = document.querySelector('.chat-pane__title');
+        const shell = document.querySelector('.app-shell--home-v2');
+        const networks = Array.from(document.querySelectorAll('.network-section__title'))
+          .map((heading) => heading.textContent.trim());
+        const qortalGroup = Array.from(document.querySelectorAll('.group-row__name'))
+          .some((heading) => heading.textContent.trim() === 'Qortal Community');
         const catalogueCalls = window.__newUserSmoke.calls.filter((call) =>
           String(call.path || '').startsWith('/groups?')
         ).length;
 
-        return row && intro && empty && notice && title?.textContent.trim() === 'General Chat'
+        return row && intro && empty && notice && shell && qortalGroup && networks.length === 2 && title?.textContent.trim() === 'General Chat'
           ? {
               catalogueCalls,
               empty: empty.textContent.trim(),
               generalMetadata: row.querySelector('.group-row__footer').textContent.trim(),
               intro: intro.textContent.trim(),
-              notice: notice.textContent.trim()
+              notice: notice.textContent.trim(),
+              networks,
+              shellTitle: document.querySelector('.topbar h1')?.textContent.trim()
             }
           : null;
       })()`,
@@ -255,7 +282,7 @@ try {
     client,
     `(() => {
       const panel = Array.from(document.querySelectorAll('.panel')).find(
-        (candidate) => candidate.querySelector('h2')?.textContent.trim() === 'Groups'
+        (candidate) => candidate.querySelector('h2')?.textContent.trim() === 'Joined groups'
       );
       panel?.querySelector('.panel__header-actions button[aria-label="Search groups"]')?.click();
     })()`,
@@ -341,6 +368,8 @@ try {
 
   if (
     desktop.catalogueCalls !== 0 ||
+    JSON.stringify(desktop.networks) !== JSON.stringify(['Qortium', 'Qortal']) ||
+    desktop.shellTitle !== 'Chat' ||
     !desktop.empty.includes('Say hello') ||
     desktop.generalMetadata.includes('id:0') ||
     !desktop.intro.includes('General Chat is public') ||
