@@ -498,6 +498,7 @@ function MessageReactionChips({
 export const MessageList = memo(function MessageList({
   avatarProfiles,
   canCompose,
+  canRevise,
   canOpenDocumentViewer,
   canOpenMediaPlayer,
   canSaveQdnResource,
@@ -534,6 +535,7 @@ export const MessageList = memo(function MessageList({
 }: {
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
+  canRevise: boolean;
   canOpenDocumentViewer: boolean;
   canOpenMediaPlayer: boolean;
   canSaveQdnResource: boolean;
@@ -1688,8 +1690,9 @@ export const MessageList = memo(function MessageList({
             const hasDocumentViewerActions = canOpenDocumentViewer && hasDocumentResources;
             const hasDocumentSaveActions = canSaveQdnResource && hasDocumentResources;
             const areImagePreviewsOpen = openImagePreviews.has(threadKey);
-            const canReplyOrEdit = canCompose && !!original.signature;
-            const canReact = canReplyOrEdit;
+            const canReply = canCompose && !!original.signature;
+            const canEditOrDelete = canRevise && !!original.signature;
+            const canReact = canEditOrDelete;
             const isReactionPickerOpen = openReactionPickerKey === threadKey;
             const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
             const senderProfile = avatarProfiles.get(original.sender);
@@ -1702,7 +1705,7 @@ export const MessageList = memo(function MessageList({
             // see pendingSends.ts's module doc for why.
             const pendingRevision = original.signature ? pendingRevisionBySignature.get(original.signature) : undefined;
             const actionButtons =
-              canReplyOrEdit ||
+              canReply ||
               canReact ||
               hasImagePreviews ||
               hasMediaActions ||
@@ -1751,7 +1754,7 @@ export const MessageList = memo(function MessageList({
                         </button>
                       ))
                     : null}
-                  {canReplyOrEdit ? (
+                  {canReply ? (
                     <button onClick={() => onReply(original)} type="button">
                       {t('button.reply')}
                     </button>
@@ -1766,12 +1769,12 @@ export const MessageList = memo(function MessageList({
                       {t('button.react')}
                     </button>
                   ) : null}
-                  {canReplyOrEdit && canEdit ? (
+                  {canEditOrDelete && canEdit ? (
                     <button onClick={() => onEdit(thread)} type="button">
                       {t('button.edit')}
                     </button>
                   ) : null}
-                  {canReplyOrEdit && canEdit ? (
+                  {canEditOrDelete && canEdit ? (
                     <button onClick={() => onDelete(thread)} type="button">
                       {t('button.delete')}
                     </button>
@@ -1972,7 +1975,7 @@ export const MessageList = memo(function MessageList({
       >
         <MessageReactionDetails
           avatarProfiles={avatarProfiles}
-          canReact={canCompose && !!detailsThread.original.signature}
+          canReact={canRevise && !!detailsThread.original.signature}
           now={now}
           onClose={closeReactionPopover}
           onReact={onReact}

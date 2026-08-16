@@ -55,6 +55,7 @@ import {
   submitGroupApproval,
 } from './coreApi';
 import { getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
+import { hasLegacyQortalBridgeCandidate, hasQortalChatBridgeActions } from './qortalRequest';
 import { computeApprovalProgress, NULL_ACCOUNT_ADDRESS } from './approvalProgress';
 import {
   buildChatMessageText,
@@ -1041,9 +1042,11 @@ export default function App() {
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   // Qortal keeps its chain-specific bridge/account state separate, while the
   // rendered group rows are normalized later into the same source-qualified
-  // conversation model as Qortium. Older hosts still omit the entire section
-  // when window.qortalRequest is unavailable (see qortalAvailable below).
+  // conversation model as Qortium. Home 2 supplies window.qortalRequest;
+  // Home 1.7 is admitted only after its Qortal-prefixed qdnRequest catalogue
+  // proves the required read contract (see qortalAvailable below).
   const [qortalAvailable, setQortalAvailable] = useState(false);
+  const qortalAvailableRef = useRef(false);
   const [qortalBridge, setQortalBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
     isHomeBridge: false,
@@ -2025,7 +2028,10 @@ export default function App() {
     isSelectedQortalGroup &&
     qortalMemberGroups.phase === 'ready' &&
     qortalMemberGroups.value.some((candidate) => candidate.groupId === selectedGroupId);
-  const canPostInSelectedQortalGroup = isSelectedQortalGroup && isConfirmedJoinedQortalGroup;
+  const canPostInSelectedQortalGroup =
+    isSelectedQortalGroup &&
+    selectedChat.group.isOpen === true &&
+    isConfirmedJoinedQortalGroup;
   // Qortal has no UNLOCK_SELECTED_ACCOUNT shortcut of its own — a pure-Qortal
   // send depends on the shared Home wallet already being unlocked via
   // Qortium's canUseSelectedAccount gate (see handleSendMessage's reuse of
@@ -2085,7 +2091,9 @@ export default function App() {
   // qortium-home), so this notice is informational only.
   const showQortalGroupComposerNotice = canUseQortalAccount && canSendQortalGroupChat && isSelectedQortalGroup && !canPostInSelectedQortalGroup;
   const qortalGroupComposerNotice =
-    qortalMemberGroups.phase === 'error'
+    isSelectedQortalGroup && selectedChat.group.isOpen !== true
+      ? t('action.closedGroupHistoryUnsupported')
+      : qortalMemberGroups.phase === 'error'
       ? t('hint.groupMembershipUnavailable')
       : qortalMemberGroups.phase !== 'ready'
         ? t('hint.groupMembershipChecking')
@@ -2405,14 +2413,14 @@ export default function App() {
       const nextBridge = await getNetworkBridgeState('qortal');
 
       setQortalBridge({ phase: 'ready', value: nextBridge });
-      return nextBridge.actions;
+      return nextBridge;
     } catch (error) {
       setQortalBridge({
         error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
         phase: 'error',
         value: qortalBridge.value,
       });
-      return qortalBridge.value.actions;
+      return null;
     }
   }
 
@@ -4361,7 +4369,7 @@ export default function App() {
     const refreshActions = selectedAccountRefreshActionsRef.current;
 
     void connectSelectedAccount(refreshActions.qortium);
-    if (hasNetworkBridge('qortal')) {
+    if (qortalAvailableRef.current) {
       void refreshQortalSelectedAccount(refreshActions.qortal);
     }
   };
@@ -4427,13 +4435,17 @@ export default function App() {
       });
     }
 
-    // Chat 2.0 slice 2: the Qortal section is only ever shown when the host
-    // actually injected window.qortalRequest — an older Home build (or a
-    // Qortium-only gateway) never sets it, and the section is simply absent
-    // rather than rendering with everything disabled.
-    if (hasNetworkBridge('qortal')) {
-      setQortalAvailable(true);
-      selectedAccountRefreshActionsRef.current.qortal = await initializeQortalSession();
+    // Home 2 injects window.qortalRequest. Home 1.7 instead advertises its
+    // Qortal-prefixed actions through window.qdnRequest, so availability must
+    // be proven from the normalized action catalogue before the section is
+    // shown. Older Qortium-only hosts remain hidden.
+    if (hasNetworkBridge('qortal') || hasLegacyQortalBridgeCandidate()) {
+      const nextQortalBridge = await initializeQortalSession();
+      const isAvailable = !!nextQortalBridge && hasQortalChatBridgeActions(nextQortalBridge.actions);
+
+      qortalAvailableRef.current = isAvailable;
+      setQortalAvailable(isAvailable);
+      selectedAccountRefreshActionsRef.current.qortal = isAvailable ? nextQortalBridge.actions : [];
     }
 
     accountRefreshCoordinator.markReady(() => selectedAccountRefreshCallbackRef.current());
@@ -6591,6 +6603,7 @@ export default function App() {
               <MessageList
                 avatarProfiles={avatarProfiles}
                 canCompose={canComposeMessage}
+                canRevise={canComposeMessage && selectedChat?.network !== 'qortal'}
                 canOpenDocumentViewer={canOpenDocumentViewer}
                 canOpenMediaPlayer={canOpenMediaPlayer}
                 canSaveQdnResource={canSaveQdnResource}

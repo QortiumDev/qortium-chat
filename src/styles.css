@@ -896,9 +896,9 @@ samp,
 
 /* Chat 2.0 slice 2: the two always-visible Qortium/Qortal sidebar sections
    (owner UX decision, 2026-08-13 — not a network switcher). --solo applies
-   when the Qortal section is not shown at all (older host, no
-   window.qortalRequest), so a Qortium-only sidebar renders exactly as before
-   slice 2 — no title, no extra spacing. */
+   when the Qortal section is not shown at all (no dedicated Home 2 bridge and
+   no compatible Home 1.7 action catalogue), so a Qortium-only sidebar renders
+   exactly as before slice 2 — no title, no extra spacing. */
 .network-section {
   display: grid;
   border-bottom: 1px solid var(--qc-color-border);

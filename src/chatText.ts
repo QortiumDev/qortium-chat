@@ -73,6 +73,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function extractTiptapText(node: unknown): string {
+  if (!isPlainObject(node)) {
+    return '';
+  }
+
+  if (node.type === 'text') {
+    return typeof node.text === 'string' ? node.text : '';
+  }
+
+  if (node.type === 'hardBreak') {
+    return '\n';
+  }
+
+  const content = Array.isArray(node.content) ? node.content : [];
+  const joined = content.map(extractTiptapText).join('');
+
+  return node.type === 'paragraph' ? `${joined}\n` : joined;
+}
+
 // Machine-message convention shared with other QDN apps (e.g. Chess): a JSON
 // object carrying a string `app` marker, no string `message`, and at least one
 // other key holding an object payload is app-to-app data, not human chat, and
@@ -149,7 +168,22 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
       message?: unknown;
       repliedTo?: unknown;
       type?: unknown;
+      version?: unknown;
+      messageText?: unknown;
     };
+
+    // Qortal Hub v3 messages carry a Tiptap document instead of Chat's small
+    // `{ message, repliedTo }` envelope. Decode it here so the same message
+    // list renders both Home 1.7/ChibiHub traffic and Home 2 traffic.
+    if (envelope.version === 3 && isPlainObject(envelope.messageText)) {
+      body = extractTiptapText(envelope.messageText).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+
+      if (typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
+        repliedTo = envelope.repliedTo;
+      }
+
+      break;
+    }
 
     if (typeof envelope.message !== 'string') {
       break;

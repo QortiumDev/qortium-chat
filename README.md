@@ -1,9 +1,10 @@
 # Qortium Chat
 
-A small QDN app for Qortium Home that can browse groups, join groups, send group
-chat, open direct chats, send direct private chat, and read public or approved
-private chat using the current `qdnRequest` bridge. The app follows Home's
-display settings, including the Classic, Modern, and Fun UI styles.
+A QDN chat app for Qortium Home. Qortium conversations use `window.qdnRequest`;
+Qortal public-group conversations use Home 2's separate `window.qortalRequest`
+bridge or the Qortal-prefixed `window.qdnRequest` actions supplied by released
+Home 1.7.0. The app follows Home's display settings, including the Classic,
+Modern, and Fun UI styles.
 
 On Home versions that expose app notifications, the bell beside the selected
 account opens separate choices for direct chat activity, mentions, and replies.
@@ -64,7 +65,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 1.4.7, where the `1.4` prefix declares the minimum Qortium platform
+version is 1.4.11, where the `1.4` prefix declares the minimum Qortium platform
 level the app is built against and the last number is the app's own release
 counter. The build emits a `qortium-app.json` manifest (see `vite.config.ts`)
 that Qortium Home reads from the published root to show the compatibility
@@ -79,16 +80,13 @@ npm test
 npm run build
 ```
 
-Then open `qdn://APP/Chat/Chat` in Qortium Home with a local
-node selected and an unlocked tab account. Confirm that the status pill reports
-Home, account approval succeeds, group search loads, joined groups and active
-direct chats load, group join/send requests open Home approval prompts, direct
-chat can be opened by address, direct private send/read requests use Home's
-approval bridge, joined group leave requests open a Home approval prompt, Home
-display settings update theme, text size, accent, UI style (Classic, Modern, or
-Fun), and language in the app, and
-encrypted/binary/unsupported message placeholders render in the selected
-language.
+Then open `qdn://APP/Chat/Chat` in Qortium Home with an unlocked tab account.
+Confirm that the status pill reports Home, account approval succeeds, joined
+Qortium and Qortal groups load, both public-group send paths open Home approval
+prompts, Qortal Hub v3 text/replies render correctly, and Qortium direct/private
+flows retain their existing behavior. Also confirm that Home display settings
+update theme, text size, accent, UI style (Classic, Modern, or Fun), and
+language in the app.
 
 For a publish pass, confirm the local Core is fully synchronized before running
 `npm run qdn:publish`. The expected identified render URL is
@@ -115,3 +113,11 @@ whose CHAT_MESSAGE event carries only addresses and envelope metadata and whose
 filters are address-scoped, so Chat has no way to exclude a message it has not
 seen yet. Suppressing it requires Home to fetch, decrypt, and classify the
 message before displaying.
+
+Qortal support in this release is intentionally limited to joined public
+groups: history, ordinary messages, and replies. Qortal DMs, closed/private
+groups, edits, deletes, and reactions require newer Home bridge actions that
+preserve the protocol's encryption and transaction-reference semantics. Chat
+hides the unsupported revision controls instead of broadcasting them as
+unrelated new messages. Reticulum/RCHAT remains a later, separate source
+family.

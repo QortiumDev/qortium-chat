@@ -17,9 +17,8 @@ export function getNetworkBridgeState(network: ChatNetwork): Promise<BridgeState
   return network === 'qortal' ? getQortalBridgeState() : getBridgeState();
 }
 
-/** Whether the host actually injected this protocol's bridge global — the gate
- * for showing/hiding a whole network's section (not just an individual
- * action), per the "Qortal absent → section simply not shown" rule. */
+/** Synchronous bridge-global check. Qortal's Home 1.7 fallback is catalogued
+ * asynchronously by getQortalBridgeState before the section is shown. */
 export function hasNetworkBridge(network: ChatNetwork): boolean {
   return network === 'qortal' ? hasQortalHomeBridge() : hasHomeBridge();
 }

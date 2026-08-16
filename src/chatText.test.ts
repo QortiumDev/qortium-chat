@@ -307,6 +307,41 @@ describe('machine messages', () => {
     expect(decoded.repliedTo).toBe('sig-reply');
   });
 
+  it('decodes Qortal Hub v3 Tiptap text and reply metadata', () => {
+    const message = {
+      data: encodeBase64(
+        JSON.stringify({
+          images: [],
+          isEdited: false,
+          messageText: {
+            content: [
+              {
+                content: [
+                  { text: 'Hello', type: 'text' },
+                  { type: 'hardBreak' },
+                  { text: 'Qortal', type: 'text' },
+                ],
+                type: 'paragraph',
+              },
+            ],
+            type: 'doc',
+          },
+          repliedTo: 'reply-sig',
+          version: 3,
+        }),
+      ),
+      encoding: 'BASE64' as const,
+      isEncrypted: false,
+      isText: true,
+    };
+
+    expect(decodeChatMessage(message)).toMatchObject({
+      body: 'Hello\nQortal',
+      kind: 'text',
+      repliedTo: 'reply-sig',
+    });
+  });
+
   it('keeps a human-pasted flat JSON object with an app key visible', () => {
     const typedObject = base64(JSON.stringify({ app: 'myapp', name: 'test' }));
     const typed = decodeChatMessage({ data: typedObject, isText: true });
