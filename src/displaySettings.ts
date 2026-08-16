@@ -18,7 +18,7 @@ export type QdnDisplaySettings = {
 };
 
 // NOT dead code: when the app is rendered directly by Qortium Core (the
-// standalone `render`/`gateway` path, rather than embedded in Home), Core injects
+// standalone `render`/`gateway` path, rather than loaded in a Home app tab), Core injects
 // these as `var _qdn*` globals into the document head — see
 // qortium `src/main/java/org/qortium/api/HTMLParser.java` (`_qdnTheme`, `_qdnLang`,
 // `_qdnTextSize`, `_qdnAccent`). Home instead supplies display settings via query

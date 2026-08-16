@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Qortium Chat network-first wireframe</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #edece8;
+        --chrome: #e7e4de;
+        --surface: #f8f7f3;
+        --surface-raised: #fffefa;
+        --surface-soft: #efede8;
+        --ink: #302f2d;
+        --muted: #716e69;
+        --line: #d5d1ca;
+        --line-strong: #b9b2a9;
+        --clay: #9a6750;
+        --clay-soft: #f1e4dd;
+        --qortium: #2f7953;
+        --qortium-soft: #e3f1e9;
+        --qortal: #356da5;
+        --qortal-soft: #e4eef8;
+        --warning: #956d24;
+        --shadow: 0 12px 30px rgb(48 44 39 / 9%);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      body,
+      button,
+      textarea {
+        color: var(--ink);
+        font: 15px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      button,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      .app {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        grid-template-rows: 58px minmax(0, 1fr);
+        background: var(--bg);
+      }
+
+      .utility-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .utility-title,
+      .utility-actions,
+      .account-chip,
+      .conversation-title,
+      .header-actions,
+      .network-heading,
+      .section-heading,
+      .row-top,
+      .row-title,
+      .message-author,
+      .composer-row {
+        display: flex;
+        align-items: center;
+      }
+
+      .utility-title {
+        min-width: 0;
+        gap: 10px;
+      }
+
+      .utility-title h1 {
+        margin: 0;
+        font-size: 19px;
+        letter-spacing: -0.02em;
+      }
+
+      .home-context {
+        padding: 3px 7px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        background: var(--surface-soft);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+      }
+
+      .utility-actions {
+        gap: 8px;
+      }
+
+      .account-chip {
+        gap: 8px;
+        padding: 6px 10px 6px 7px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface-raised);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .account-avatar,
+      .group-avatar,
+      .row-avatar,
+      .message-avatar {
+        display: grid;
+        flex: 0 0 auto;
+        place-items: center;
+        color: #fff;
+        background: var(--clay);
+        font-weight: 800;
+      }
+
+      .account-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        font-size: 11px;
+      }
+
+      .icon-button,
+      .secondary-button,
+      .primary-button,
+      .back-button,
+      .composer-button {
+        display: inline-grid;
+        place-items: center;
+        min-width: 36px;
+        min-height: 36px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        color: var(--ink);
+        background: var(--surface-raised);
+      }
+
+      .secondary-button,
+      .primary-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .primary-button {
+        border-color: var(--clay);
+        color: #fff;
+        background: var(--clay);
+      }
+
+      .workspace {
+        display: grid;
+        min-height: 0;
+        grid-template-columns: minmax(290px, 330px) minmax(0, 1fr);
+      }
+
+      .rail {
+        min-width: 0;
+        overflow: auto;
+        border-right: 1px solid var(--line);
+        background: var(--chrome);
+      }
+
+      .rail-search {
+        position: sticky;
+        z-index: 2;
+        top: 0;
+        display: flex;
+        gap: 8px;
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--chrome) 94%, transparent);
+        backdrop-filter: blur(10px);
+      }
+
+      .rail-search button {
+        display: flex;
+        flex: 1 1 auto;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 9px;
+        min-height: 38px;
+        padding: 8px 11px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        color: var(--muted);
+        background: var(--surface-raised);
+      }
+
+      .network {
+        padding: 14px 12px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .network-heading {
+        justify-content: space-between;
+        min-height: 30px;
+        margin-bottom: 8px;
+      }
+
+      .network-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 850;
+        letter-spacing: -0.01em;
+      }
+
+      .network-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--qortium);
+        box-shadow: 0 0 0 4px var(--qortium-soft);
+      }
+
+      .network--qortal .network-dot {
+        background: var(--qortal);
+        box-shadow: 0 0 0 4px var(--qortal-soft);
+      }
+
+      .node-state {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .rail-section + .rail-section {
+        margin-top: 13px;
+      }
+
+      .section-heading {
+        justify-content: space-between;
+        margin: 0 4px 5px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.075em;
+      }
+
+      .section-count {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .conversation-row {
+        width: 100%;
+        padding: 9px;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        text-align: left;
+        background: transparent;
+      }
+
+      .conversation-row + .conversation-row {
+        margin-top: 3px;
+      }
+
+      .conversation-row:hover {
+        background: rgb(255 254 250 / 56%);
+      }
+
+      .conversation-row.is-selected {
+        border-color: color-mix(in srgb, var(--qortium) 38%, var(--line));
+        background: var(--surface-raised);
+        box-shadow: inset 3px 0 0 var(--qortium), 0 6px 18px rgb(48 44 39 / 7%);
+      }
+
+      .conversation-row.is-preview {
+        border-color: var(--line-strong);
+        border-style: dashed;
+        background: rgb(255 254 250 / 42%);
+      }
+
+      .row-layout {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 9px;
+      }
+
+      .row-avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        background: var(--qortium);
+        font-size: 12px;
+      }
+
+      .network--qortal .row-avatar {
+        background: var(--qortal);
+      }
+
+      .row-avatar.is-person {
+        border-radius: 50%;
+        background: var(--clay);
+      }
+
+      .row-content {
+        min-width: 0;
+      }
+
+      .row-top {
+        min-width: 0;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .row-title {
+        min-width: 0;
+        gap: 6px;
+      }
+
+      .row-title strong {
+        overflow: hidden;
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row-time {
+        flex: 0 0 auto;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .row-preview {
+        display: block;
+        overflow: hidden;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 19px;
+        padding: 2px 6px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        background: var(--surface-soft);
+        font-size: 9px;
+        font-weight: 850;
+        letter-spacing: 0.045em;
+        line-height: 1;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .badge--qortium {
+        border-color: color-mix(in srgb, var(--qortium) 25%, var(--line));
+        color: var(--qortium);
+        background: var(--qortium-soft);
+      }
+
+      .badge--qortal {
+        border-color: color-mix(in srgb, var(--qortal) 25%, var(--line));
+        color: var(--qortal);
+        background: var(--qortal-soft);
+      }
+
+      .badge--preview {
+        color: var(--warning);
+        background: #f4eddb;
+      }
+
+      .unread {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--clay);
+      }
+
+      .discover-more {
+        width: 100%;
+        margin-top: 5px;
+        padding: 7px 9px;
+        border: 0;
+        color: var(--clay);
+        background: transparent;
+        text-align: left;
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .conversation {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        background: var(--surface);
+      }
+
+      .conversation-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 74px;
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .back-button {
+        display: none;
+      }
+
+      .group-avatar {
+        width: 43px;
+        height: 43px;
+        border-radius: 12px;
+        background: var(--qortium);
+      }
+
+      .conversation-heading {
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+
+      .conversation-title {
+        min-width: 0;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .conversation-title h2 {
+        overflow: hidden;
+        margin: 0;
+        font-size: 18px;
+        letter-spacing: -0.02em;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .conversation-meta {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .header-actions {
+        flex: 0 0 auto;
+        gap: 8px;
+      }
+
+      .message-feed {
+        min-height: 0;
+        overflow: auto;
+        padding: 22px max(22px, 5vw) 16px;
+        background:
+          linear-gradient(rgb(248 247 243 / 92%), rgb(248 247 243 / 92%)),
+          radial-gradient(circle at 20% 20%, var(--clay-soft) 0 1px, transparent 1px 100%);
+        background-size: auto, 20px 20px;
+      }
+
+      .day-divider {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .day-divider::before,
+      .day-divider::after {
+        height: 1px;
+        flex: 1 1 auto;
+        content: "";
+        background: var(--line);
+      }
+
+      .message {
+        display: grid;
+        max-width: min(680px, 78%);
+        grid-template-columns: 32px minmax(0, 1fr);
+        gap: 9px;
+        margin-bottom: 14px;
+      }
+
+      .message.is-self {
+        margin-left: auto;
+      }
+
+      .message-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--clay);
+        font-size: 11px;
+      }
+
+      .message.is-self .message-avatar {
+        background: var(--qortium);
+      }
+
+      .message-card {
+        min-width: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface-raised);
+        box-shadow: 0 6px 18px rgb(48 44 39 / 6%);
+      }
+
+      .message.is-self .message-card {
+        border-color: color-mix(in srgb, var(--qortium) 24%, var(--line));
+        background: var(--qortium-soft);
+      }
+
+      .message-author {
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 4px;
+      }
+
+      .message-author strong {
+        font-size: 12px;
+      }
+
+      .message-time {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .message-card p {
+        margin: 0;
+        font-size: 14px;
+      }
+
+      .reply-card {
+        margin: 2px 0 8px;
+        padding: 7px 9px;
+        border-left: 3px solid var(--clay);
+        border-radius: 6px;
+        color: var(--muted);
+        background: rgb(154 103 80 / 8%);
+        font-size: 11px;
+      }
+
+      .composer {
+        padding: 11px 18px max(12px, env(safe-area-inset-bottom));
+        border-top: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .composer-row {
+        gap: 8px;
+      }
+
+      .composer textarea {
+        min-width: 0;
+        min-height: 42px;
+        max-height: 118px;
+        flex: 1 1 auto;
+        resize: none;
+        padding: 10px 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 11px;
+        outline: none;
+        color: var(--ink);
+        background: var(--surface-raised);
+      }
+
+      .composer textarea:focus {
+        border-color: var(--clay);
+        box-shadow: 0 0 0 3px rgb(154 103 80 / 12%);
+      }
+
+      .composer-button {
+        width: 42px;
+        height: 42px;
+        padding: 0;
+        border-radius: 11px;
+      }
+
+      .composer-button.is-send {
+        border-color: var(--clay);
+        color: #fff;
+        background: var(--clay);
+      }
+
+      .composer-note {
+        margin: 6px 50px 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .mobile-network-summary {
+        display: none;
+      }
+
+      @media (max-width: 680px) {
+        .app {
+          grid-template-rows: 52px minmax(0, 1fr);
+        }
+
+        .utility-bar {
+          padding: 0 12px;
+        }
+
+        .home-context,
+        .account-chip > span:last-child {
+          display: none;
+        }
+
+        .utility-title h1 {
+          font-size: 18px;
+        }
+
+        .workspace {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .rail,
+        .conversation {
+          grid-column: 1;
+          grid-row: 1;
+        }
+
+        .conversation {
+          display: none;
+        }
+
+        body[data-view="chat"] .rail {
+          display: none;
+        }
+
+        body[data-view="chat"] .conversation {
+          display: grid;
+        }
+
+        body[data-view="chat"] .app {
+          grid-template-rows: minmax(0, 1fr);
+        }
+
+        body[data-view="chat"] .utility-bar {
+          display: none;
+        }
+
+        .rail {
+          border-right: 0;
+        }
+
+        .rail-search {
+          padding: 10px 12px;
+        }
+
+        .network {
+          padding: 12px;
+        }
+
+        .mobile-network-summary {
+          display: block;
+          margin: -2px 4px 10px;
+          color: var(--muted);
+          font-size: 11px;
+        }
+
+        .conversation-header {
+          min-height: 66px;
+          gap: 9px;
+          padding: 9px 10px;
+        }
+
+        .back-button {
+          display: inline-grid;
+          width: 36px;
+          height: 36px;
+          padding: 0;
+        }
+
+        .group-avatar {
+          width: 36px;
+          height: 36px;
+          border-radius: 10px;
+          font-size: 12px;
+        }
+
+        .conversation-title {
+          gap: 4px;
+        }
+
+        .conversation-title h2 {
+          max-width: 160px;
+          font-size: 15px;
+        }
+
+        .conversation-meta {
+          margin-top: 1px;
+          font-size: 10px;
+        }
+
+        .header-actions .secondary-button {
+          width: 36px;
+          min-width: 36px;
+          padding: 0;
+          font-size: 0;
+        }
+
+        .header-actions .secondary-button::before {
+          content: "◉";
+          font-size: 15px;
+        }
+
+        .message-feed {
+          padding: 14px 10px 8px;
+        }
+
+        .day-divider {
+          margin-bottom: 12px;
+        }
+
+        .message {
+          max-width: 90%;
+          grid-template-columns: 27px minmax(0, 1fr);
+          gap: 7px;
+          margin-bottom: 10px;
+        }
+
+        .message-avatar {
+          width: 27px;
+          height: 27px;
+          font-size: 9px;
+        }
+
+        .message-card {
+          padding: 8px 10px;
+          border-radius: 10px;
+        }
+
+        .message-card p {
+          font-size: 13px;
+        }
+
+        .composer {
+          padding: 8px 9px max(9px, env(safe-area-inset-bottom));
+        }
+
+        .composer textarea {
+          min-height: 40px;
+          padding: 9px 10px;
+        }
+
+        .composer-button {
+          width: 40px;
+          height: 40px;
+        }
+
+        .composer-note {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <header class="utility-bar">
+        <div class="utility-title">
+          <h1>Chat</h1>
+          <span class="home-context">Home app tab</span>
+        </div>
+        <div class="utility-actions">
+          <button class="icon-button" aria-label="Notification settings" title="Notification settings">♢</button>
+          <button class="account-chip" type="button">
+            <span class="account-avatar">QM</span>
+            <span>QuickMythril</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="rail" aria-label="Conversations">
+          <div class="rail-search">
+            <button type="button"><span aria-hidden="true">⌕</span><span>Search conversations and groups</span></button>
+          </div>
+
+          <section class="network network--qortium">
+            <header class="network-heading">
+              <span class="network-name"><span class="network-dot"></span>Qortium</span>
+              <span class="node-state">Local · synced</span>
+            </header>
+            <p class="mobile-network-summary">QuickMythril · unlocked</p>
+
+            <div class="rail-section">
+              <div class="section-heading"><span>Direct</span><span class="section-count">2</span></div>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar is-person">AR</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Artemis</strong><span class="badge badge--qortium">CHAT</span><span class="unread"></span></span><span class="row-time">2m</span></span>
+                    <span class="row-preview">That sounds good — I’ll test it tonight.</span>
+                  </span>
+                </span>
+              </button>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar is-person">JM</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>JupiterMiner</strong><span class="badge badge--qortium">CHAT</span></span><span class="row-time">1h</span></span>
+                    <span class="row-preview">Shared an existing QDN publish</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            <div class="rail-section">
+              <div class="section-heading"><span>Joined groups</span><span class="section-count">3</span></div>
+              <button class="conversation-row is-selected" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar">QC</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Qortium Community</strong><span class="badge badge--qortium">CHAT</span></span><span class="row-time">now</span></span>
+                    <span class="row-preview">QuickMythril: The network-first layout is clearer.</span>
+                  </span>
+                </span>
+              </button>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar">DV</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Developers</strong><span class="badge badge--qortium">CHAT</span><span class="unread"></span></span><span class="row-time">8m</span></span>
+                    <span class="row-preview">New Home 1.7.0 artifacts are live.</span>
+                  </span>
+                </span>
+              </button>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar">GN</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>General Chat</strong><span class="badge badge--qortium">CHAT</span></span><span class="row-time">24m</span></span>
+                    <span class="row-preview">Open public conversation</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            <div class="rail-section">
+              <div class="section-heading"><span>Discover</span><span class="section-count">Active public</span></div>
+              <button class="conversation-row is-preview" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar">OL</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Open Source Lounge</strong><span class="badge badge--qortium">CHAT</span><span class="badge badge--preview">Preview</span></span><span class="row-time">12m</span></span>
+                    <span class="row-preview">Read-only until you join · 18 recent messages</span>
+                  </span>
+                </span>
+              </button>
+              <button class="discover-more" type="button">Browse Qortium public groups →</button>
+            </div>
+          </section>
+
+          <section class="network network--qortal">
+            <header class="network-heading">
+              <span class="network-name"><span class="network-dot"></span>Qortal</span>
+              <span class="node-state">Public · connected</span>
+            </header>
+            <p class="mobile-network-summary">GreenMythril · unlocked</p>
+
+            <div class="rail-section">
+              <div class="section-heading"><span>Direct</span><span class="section-count">2</span></div>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar is-person">ST</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Stonecrow</strong><span class="badge badge--qortal">CHAT</span></span><span class="row-time">18m</span></span>
+                    <span class="row-preview">Legacy encrypted direct conversation</span>
+                  </span>
+                </span>
+              </button>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar is-person">RV</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Raven</strong><span class="badge badge--qortal">RCHAT</span><span class="unread"></span></span><span class="row-time">4m</span></span>
+                    <span class="row-preview">Reticulum direct message</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            <div class="rail-section">
+              <div class="section-heading"><span>Joined groups</span><span class="section-count">2</span></div>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar">QT</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Qortium</strong><span class="badge badge--qortal">CHAT</span></span><span class="row-time">6m</span></span>
+                    <span class="row-preview">Legacy on-chain Qortal chat</span>
+                  </span>
+                </span>
+              </button>
+              <button class="conversation-row" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar">RC</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Reticulum Commons</strong><span class="badge badge--qortal">RCHAT</span></span><span class="row-time">9m</span></span>
+                    <span class="row-preview">Off-chain Qortal community chat</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            <div class="rail-section">
+              <div class="section-heading"><span>Discover</span><span class="section-count">Active public</span></div>
+              <button class="conversation-row is-preview" type="button">
+                <span class="row-layout">
+                  <span class="row-avatar">TV</span>
+                  <span class="row-content">
+                    <span class="row-top"><span class="row-title"><strong>Travelers</strong><span class="badge badge--qortal">CHAT</span><span class="badge badge--preview">Preview</span></span><span class="row-time">21m</span></span>
+                    <span class="row-preview">Read-only preview · Qortal CHAT</span>
+                  </span>
+                </span>
+              </button>
+              <button class="discover-more" type="button">Browse Qortal public groups →</button>
+            </div>
+          </section>
+        </aside>
+
+        <section class="conversation" aria-label="Qortium Community conversation">
+          <header class="conversation-header">
+            <button class="back-button" aria-label="Back to conversations" type="button">‹</button>
+            <span class="group-avatar">QC</span>
+            <div class="conversation-heading">
+              <div class="conversation-title">
+                <h2>Qortium Community</h2>
+                <span class="badge badge--qortium">Qortium</span>
+                <span class="badge">CHAT</span>
+              </div>
+              <p class="conversation-meta">Joined · 1,284 members</p>
+            </div>
+            <div class="header-actions">
+              <button class="secondary-button" type="button">Members</button>
+              <button class="icon-button" aria-label="More conversation actions" type="button">•••</button>
+            </div>
+          </header>
+
+          <div class="message-feed">
+            <div class="day-divider">Today</div>
+            <article class="message">
+              <span class="message-avatar">AR</span>
+              <div class="message-card">
+                <div class="message-author"><strong>Artemis</strong><span class="message-time">4:08 PM</span></div>
+                <p>I like keeping the networks visible. It makes the source of a conversation obvious without hiding anything.</p>
+              </div>
+            </article>
+            <article class="message">
+              <span class="message-avatar">JM</span>
+              <div class="message-card">
+                <div class="message-author"><strong>JupiterMiner</strong><span class="message-time">4:10 PM</span></div>
+                <div class="reply-card">Artemis · “keeping the networks visible”</div>
+                <p>The CHAT and RCHAT badges also make sense once both histories are present.</p>
+              </div>
+            </article>
+            <article class="message is-self">
+              <span class="message-avatar">QM</span>
+              <div class="message-card">
+                <div class="message-author"><strong>QuickMythril</strong><span class="message-time">4:12 PM</span></div>
+                <p>Agreed. Joined groups stay primary, and Discover remains clearly read-only until the account joins.</p>
+              </div>
+            </article>
+          </div>
+
+          <form class="composer">
+            <div class="composer-row">
+              <button class="composer-button" aria-label="Add attachment" type="button">＋</button>
+              <textarea aria-label="Message Qortium Community" placeholder="Message Qortium Community"></textarea>
+              <button class="composer-button" aria-label="Choose emoji" type="button">☺</button>
+              <button class="composer-button is-send" aria-label="Send message" type="button">➤</button>
+            </div>
+            <p class="composer-note">Sending with QuickMythril on Qortium · CHAT</p>
+          </form>
+        </section>
+      </div>
+    </main>
+    <script>
+      const requestedView = new URLSearchParams(window.location.search).get('view');
+      document.body.dataset.view = requestedView === 'chat' ? 'chat' : 'list';
+    </script>
+  </body>
+</html>

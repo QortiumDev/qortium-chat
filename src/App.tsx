@@ -96,6 +96,7 @@ import {
   getReactionPendingKey,
 } from './messageReactions';
 import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
+import { isHomeV2AppTab } from './hostContext';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
 import {
@@ -1017,6 +1018,7 @@ function useStableCallback<Args extends unknown[], Result>(callback: (...args: A
 }
 
 export default function App() {
+  const homeV2AppTab = isHomeV2AppTab(window.location.search);
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
     isHomeBridge: false,
@@ -5945,12 +5947,16 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${homeV2AppTab ? ' app-shell--home-v2' : ''}`}>
       <header className="topbar">
         <div className="topbar__title">
-          <BrandMark />
-          <h1>{t('app.title')}</h1>
-          <span className="topbar__version">{APP_VERSION}</span>
+          {homeV2AppTab ? null : <BrandMark />}
+          <h1>{homeV2AppTab ? 'Chat' : t('app.title')}</h1>
+          {homeV2AppTab ? (
+            <span className="topbar__host-context">Home</span>
+          ) : (
+            <span className="topbar__version">{APP_VERSION}</span>
+          )}
         </div>
         <div className="topbar__account">
           {canManageNotifications ? (
@@ -6041,8 +6047,13 @@ export default function App() {
               this app already rendered before slice 2 (Invites/Direct/Groups),
               now labelled and wrapped rather than changed. "Qortium"/"Qortal" are
               brand names, not translated. */}
-          <div className={`network-section${qortalAvailable ? '' : ' network-section--solo'}`}>
-            {qortalAvailable ? <h2 className="network-section__title">Qortium</h2> : null}
+          <div className={`network-section network-section--qortium${qortalAvailable ? '' : ' network-section--solo'}`}>
+            {qortalAvailable ? (
+              <div className="network-section__header">
+                <h2 className="network-section__title">Qortium</h2>
+                <span className="network-section__protocol">CHAT</span>
+              </div>
+            ) : null}
           {pendingGroupInvites.length > 0 || (!!account && groupInvites.phase === 'error') ? (
             <section className="panel">
               <div className="panel__header">
@@ -6171,7 +6182,7 @@ export default function App() {
                 type="button"
               >
                 <DownIcon />
-                <h2>{t('label.common.groups')}</h2>
+                <h2>{t('label.group.joinedGroups')}</h2>
               </button>
               <div className="panel__header-actions">
                 {hasUnreadGroups ? (
@@ -6218,7 +6229,7 @@ export default function App() {
             {!isGroupsCollapsed && isGroupSearchVisible && groupDiscoveries.phase !== 'idle' ? (
               <div className="group-discovery">
                 <div className="group-discovery__header">
-                  <h3>{t('label.searchGroups')}</h3>
+                  <h3>{t('label.group.discover')}</h3>
                   {groupDiscoveries.phase === 'ready' ? (
                     <span className="panel__count">{groupDiscoveryConversations.length}</span>
                   ) : null}
@@ -6268,8 +6279,11 @@ export default function App() {
           </div>
 
           {qortalAvailable ? (
-            <div className="network-section">
-              <h2 className="network-section__title">Qortal</h2>
+            <div className="network-section network-section--qortal">
+              <div className="network-section__header">
+                <h2 className="network-section__title">Qortal</h2>
+                <span className="network-section__protocol">CHAT</span>
+              </div>
               <section className={`panel${isQortalGroupsCollapsed ? ' panel--collapsed' : ''}`}>
                 <div className="panel__header">
                   <button
@@ -6279,7 +6293,7 @@ export default function App() {
                     type="button"
                   >
                     <DownIcon />
-                    <h2>{t('label.common.groups')}</h2>
+                    <h2>{t('label.group.joinedGroups')}</h2>
                   </button>
                   <div className="panel__header-actions">
                     <span className="panel__count">{qortalGroups.value.length}</span>
@@ -6320,7 +6334,7 @@ export default function App() {
                 qortalGroupDiscoveries.phase !== 'idle' ? (
                   <div className="group-discovery">
                     <div className="group-discovery__header">
-                      <h3>{t('label.searchGroups')}</h3>
+                      <h3>{t('label.group.discover')}</h3>
                       {qortalGroupDiscoveries.phase === 'ready' ? (
                         <span className="panel__count">{qortalGroupDiscoveryConversations.length}</span>
                       ) : null}
@@ -6407,14 +6421,34 @@ export default function App() {
                   : t('label.chat.select')}
                 </span>
               </h2>
+              {selectedChat ? (
+                <div className="chat-pane__context">
+                  <span>{selectedChat.network === 'qortal' ? 'Qortal' : 'Qortium'}</span>
+                  <span>CHAT</span>
+                  {selectedChat.kind === 'group' ? (
+                    <span>
+                      {isGeneralChatGroup(selectedChat.group)
+                        ? t('label.group.global')
+                        : selectedChat.network === 'qortal'
+                          ? qortalMemberGroups.phase === 'ready'
+                            ? qortalJoinedIds.has(selectedChat.group.groupId)
+                              ? t('label.group.joined')
+                              : t('label.group.preview')
+                            : t('label.loading')
+                          : memberGroups.phase === 'ready'
+                            ? isConfirmedJoinedGroup
+                              ? t('label.group.joined')
+                              : t('label.group.preview')
+                            : t('label.loading')}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               {selectedChat?.kind === 'group' && selectedChat.group.description?.trim() ? (
                 <p>{selectedChat.group.description.trim()}</p>
               ) : null}
               {selectedChat?.kind === 'direct' ? (
-                <p>
-                  {canReadPrivateDirectChat ? t('group.meta.directPrivateRead') : t('group.meta.direct')} /{' '}
-                  {selectedChat.direct.address}
-                </p>
+                <p>{canReadPrivateDirectChat ? t('group.meta.directPrivateRead') : t('group.meta.direct')}</p>
               ) : null}
             </div>
             <div className="chat-pane__actions">

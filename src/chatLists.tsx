@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { getAvatarView, getDirectTitle, UserAvatar, type AvatarProfilesByAddress } from './accountDisplay';
 import { formatTimeAgo, formatTimestamp } from './chatText';
 import { type GroupConversationSummary } from './conversationModel';
+import { getConversationInitials } from './conversationPresentation';
 import { isGeneralChatGroup } from './generalChat';
 import { CloseIcon, LockIcon } from './icons';
 import { type TranslateFunction } from './i18n';
@@ -47,44 +48,52 @@ export const GroupList = memo(function GroupList({
               onClick={() => onSelect(conversation)}
               type="button"
             >
-              <span className="group-row__top">
-                <span className="group-row__heading">
-                  {unread ? (
-                    <span
-                      aria-label={t('label.unread')}
-                      className="group-row__unread"
-                      role="img"
-                      title={t('label.unread')}
-                    />
-                  ) : null}
-                  <span className="group-row__name">{title}</span>
-                </span>
-                {activityAt ? (
-                  <span className="group-row__time" title={formatTimestamp(activityAt, t.locale)}>
-                    {formatTimeAgo(activityAt, now, t.locale)}
-                  </span>
-                ) : null}
+              <span aria-hidden="true" className="group-row__avatar">
+                {getConversationInitials(title)}
               </span>
-              {visiblePreview ? <span className="group-row__preview">{visiblePreview}</span> : null}
-              <span className="group-row__footer">
-                <span className="group-row__protocol">{protocol.toUpperCase()}</span>
-                {!isGeneralChatGroup(group) && group.isOpen === false ? (
-                  <span
-                    aria-label={t('label.group.closed')}
-                    className="group-row__lock"
-                    role="img"
-                    title={t('label.group.closed')}
-                  >
-                    <LockIcon />
+              <span className="group-row__content">
+                <span className="group-row__top">
+                  <span className="group-row__heading">
+                    {unread ? (
+                      <span
+                        aria-label={t('label.unread')}
+                        className="group-row__unread"
+                        role="img"
+                        title={t('label.unread')}
+                      />
+                    ) : null}
+                    <span className="group-row__name">{title}</span>
                   </span>
-                ) : null}
-                {typeof memberCount === 'number' ? (
-                  <span className="group-row__members">
-                    {isGeneralChatGroup(group)
-                      ? t('group.meta.activeCount', { count: memberCount.toLocaleString(t.locale) })
-                      : t('group.meta.memberCount', { count: memberCount.toLocaleString(t.locale) })}
-                  </span>
-                ) : null}
+                  {activityAt ? (
+                    <span className="group-row__time" title={formatTimestamp(activityAt, t.locale)}>
+                      {formatTimeAgo(activityAt, now, t.locale)}
+                    </span>
+                  ) : null}
+                </span>
+                {visiblePreview ? <span className="group-row__preview">{visiblePreview}</span> : null}
+                <span className="group-row__footer">
+                  <span className="group-row__protocol">{protocol.toUpperCase()}</span>
+                  {membership === 'preview' ? (
+                    <span className="group-row__membership">{t('label.group.preview')}</span>
+                  ) : null}
+                  {!isGeneralChatGroup(group) && group.isOpen === false ? (
+                    <span
+                      aria-label={t('label.group.closed')}
+                      className="group-row__lock"
+                      role="img"
+                      title={t('label.group.closed')}
+                    >
+                      <LockIcon />
+                    </span>
+                  ) : null}
+                  {typeof memberCount === 'number' ? (
+                    <span className="group-row__members">
+                      {isGeneralChatGroup(group)
+                        ? t('group.meta.activeCount', { count: memberCount.toLocaleString(t.locale) })
+                        : t('group.meta.memberCount', { count: memberCount.toLocaleString(t.locale) })}
+                    </span>
+                  ) : null}
+                </span>
               </span>
             </button>
           </li>

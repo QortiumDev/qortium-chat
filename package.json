@@ -14,7 +14,8 @@
     "smoke:new-user": "node scripts/smoke-new-user.mjs",
     "smoke:gateway": "node scripts/smoke-gateway-readonly.mjs",
     "smoke:scroll": "node scripts/smoke-scroll-behavior.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "wireframe:capture": "node scripts/capture-network-first-wireframes.mjs"
   },
   "dependencies": {
     "@fontsource/comic-neue": "^5.3.0",
