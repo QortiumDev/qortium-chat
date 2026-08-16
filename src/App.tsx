@@ -116,6 +116,13 @@ import {
 import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
 import { AccountInfoDialog, ConfirmDeleteMessageDialog, GroupApprovalDialog } from './dialogs';
 import { DirectList, GroupList } from './chatLists';
+import {
+  createGroupConversationSummary,
+  getConversationKey,
+  qualifyPublicGroupDiscoveries,
+  type GroupConversationSummary,
+  type PublicGroupDiscovery,
+} from './conversationModel';
 import { GroupMemberList } from './GroupMemberList';
 import { MessageList } from './MessageList';
 import {
@@ -231,11 +238,6 @@ const emptyApprovalVotes: GroupApprovalVote[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
 const emptyInvites: GroupInvite[] = [];
 const emptyPendingSends: PendingSend[] = [];
-// Chat 2.0 slice 2: the Qortal groups list has no unread tracking in this
-// slice (see the slice-2 report) — GroupList always gets this stable empty
-// set rather than computing one.
-const emptyUnreadGroupIds: ReadonlySet<number> = new Set();
-
 // The 30s sidebar activity sweeps only need the latest real (non-reaction)
 // message timestamp per chat, not a full transcript page — a small window cuts
 // each probe's payload ~10x. Deep enough that a burst of reactions rarely
@@ -1032,14 +1034,13 @@ export default function App() {
   const [adminJoinRequests, setAdminJoinRequests] =
     useState<AsyncState<GroupWithJoinRequests[]>>(createState(emptyAdminJoinRequests));
   const [memberGroups, setMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
+  const [groupDiscoveries, setGroupDiscoveries] =
+    useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
-  // --- Chat 2.0 slice 2: Qortal section state -------------------------------
-  // Kept as its own parallel, minimal set of state rather than threading a
-  // network dimension through every existing Qortium map/effect above — that
-  // keeps every pre-slice-2 Qortium code path untouched (byte-identical) and
-  // makes the whole Qortal section a structurally separate addition that is
-  // trivially "not shown" when window.qortalRequest is absent (see
-  // qortalAvailable below).
+  // Qortal keeps its chain-specific bridge/account state separate, while the
+  // rendered group rows are normalized later into the same source-qualified
+  // conversation model as Qortium. Older hosts still omit the entire section
+  // when window.qortalRequest is unavailable (see qortalAvailable below).
   const [qortalAvailable, setQortalAvailable] = useState(false);
   const [qortalBridge, setQortalBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
@@ -1056,6 +1057,8 @@ export default function App() {
   // below), and there is no JOIN_GROUP bridge action for Qortal in this slice to
   // fix that from inside the app, so this only gates the composer.
   const [qortalMemberGroups, setQortalMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
+  const [qortalGroupDiscoveries, setQortalGroupDiscoveries] =
+    useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
   const [qortalSearch, setQortalSearch] = useState('');
   const [isQortalGroupSearchOpen, setQortalGroupSearchOpen] = useState(false);
   const [isQortalGroupsCollapsed, setQortalGroupsCollapsed] = useState(false);
@@ -1160,6 +1163,8 @@ export default function App() {
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const pendingApprovalsRequestRef = useRef(0);
   const qortalAccountRefreshGuardRef = useRef(new LatestRequestGuard());
+  const groupDiscoveryRequestRef = useRef(0);
+  const qortalGroupDiscoveryRequestRef = useRef(0);
   const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
   const selectedAccountRefreshCallbackRef = useRef<() => void>(() => undefined);
   const [directAddress, setDirectAddress] = useState('');
@@ -1289,6 +1294,10 @@ export default function App() {
     () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
     [memberGroups.value],
   );
+  const qortalJoinedIds = useMemo(
+    () => new Set(qortalMemberGroups.value.map((group) => group.groupId)),
+    [qortalMemberGroups.value],
+  );
   // Invitations worth showing: unexpired, not already a member, and without a
   // join transaction already in flight (Core keeps the invite listed until
   // the join confirms).
@@ -1311,6 +1320,15 @@ export default function App() {
   const selectedGroupId = selectedGroup?.groupId ?? null;
   const selectedDirectAddress = selectedDirect?.address ?? null;
   const selectedChatKey = getSelectedChatKey(selectedChat);
+  const selectedGroupConversationKey =
+    selectedChat?.kind === 'group'
+      ? getConversationKey({
+          id: selectedChat.group.groupId,
+          kind: 'group',
+          network: selectedChat.network ?? 'qortium',
+          protocol: 'chat',
+        })
+      : null;
   const selectedGroupIdRef = useRef<number | null>(selectedGroupId);
   const selectedDirectAddressRef = useRef<string | null>(selectedDirectAddress);
   // Live mirror of the selected chat key so async loads can drop results that
@@ -1424,7 +1442,7 @@ export default function App() {
     const ids = new Set<number>();
 
     for (const [groupId, timestamp] of groupActivityById) {
-      if (groupId === selectedGroupId) {
+      if (selectedChat?.network !== 'qortal' && groupId === selectedGroupId) {
         continue;
       }
 
@@ -1436,7 +1454,7 @@ export default function App() {
     }
 
     return ids;
-  }, [groupActivityById, lastReadByGroupId, selectedGroupId]);
+  }, [groupActivityById, lastReadByGroupId, selectedChat?.network, selectedGroupId]);
   const unreadDirectAddresses = useMemo(() => {
     const addresses = new Set<string>();
 
@@ -1570,6 +1588,80 @@ export default function App() {
 
     return previews;
   }, [activeChats.value.groups, loadedGroupPreviewById, t]);
+  const groupConversations = useMemo(
+    () =>
+      sortedGroups.map((group) =>
+        createGroupConversationSummary({
+          access: 'interactive',
+          activityAt: groupActivityById.get(group.groupId) ?? null,
+          group,
+          memberCount:
+            syntheticMemberCountsByGroupId.get(group.groupId) ??
+            (isGeneralChatGroup(group) ? null : group.memberCount ?? null),
+          membership: isGeneralChatGroup(group) ? 'public' : 'joined',
+          network: 'qortium',
+          preview: groupPreviewByGroupId.get(group.groupId) ?? null,
+          title: getGroupTitle(group, t),
+          unread: unreadGroupIds.has(group.groupId),
+        }),
+      ),
+    [
+      groupActivityById,
+      groupPreviewByGroupId,
+      sortedGroups,
+      syntheticMemberCountsByGroupId,
+      t,
+      unreadGroupIds,
+    ],
+  );
+  const groupDiscoveryConversations = useMemo(
+    () =>
+      groupDiscoveries.value
+        .filter(({ group }) => !joinedIds.has(group.groupId))
+        .map(({ activityAt, group, latestMessage }) =>
+          createGroupConversationSummary({
+            access: 'read-only',
+            activityAt,
+            group,
+            membership: 'preview',
+            network: 'qortium',
+            preview: getMessageSnippet(latestMessage, t, 80),
+            title: getGroupTitle(group, t),
+          }),
+        ),
+    [groupDiscoveries.value, joinedIds, t],
+  );
+  const qortalGroupConversations = useMemo(
+    () =>
+      sortGroups(qortalGroups.value, t, qortalGroupActivityByIdDisplay).map((group) =>
+        createGroupConversationSummary({
+          access: 'interactive',
+          activityAt: qortalGroupActivityByIdDisplay.get(group.groupId) ?? null,
+          group,
+          membership: 'joined',
+          network: 'qortal',
+          title: getGroupTitle(group, t),
+        }),
+      ),
+    [qortalGroupActivityByIdDisplay, qortalGroups.value, t],
+  );
+  const qortalGroupDiscoveryConversations = useMemo(
+    () =>
+      qortalGroupDiscoveries.value
+        .filter(({ group }) => !qortalJoinedIds.has(group.groupId))
+        .map(({ activityAt, group, latestMessage }) =>
+          createGroupConversationSummary({
+            access: 'read-only',
+            activityAt,
+            group,
+            membership: 'preview',
+            network: 'qortal',
+            preview: getMessageSnippet(latestMessage, t, 80),
+            title: getGroupTitle(group, t),
+          }),
+        ),
+    [qortalGroupDiscoveries.value, qortalJoinedIds, t],
+  );
   // Direct entries come from the decrypted private list when Home provides it;
   // anything still encrypted stays preview-less rather than showing a stub.
   const directPreviewByAddress = useMemo(() => {
@@ -1657,8 +1749,12 @@ export default function App() {
   // render). With these, the shared 30s clock is the only prop that should
   // invalidate the lists on a quiet tick. The wrapped functions are declared
   // later in this component; function declarations hoist.
-  const handleSelectGroup = useStableCallback(selectGroup);
-  const handleSelectQortalGroup = useStableCallback(selectQortalGroup);
+  const handleSelectGroup = useStableCallback((conversation: GroupConversationSummary) =>
+    selectGroup(conversation.group),
+  );
+  const handleSelectQortalGroup = useStableCallback((conversation: GroupConversationSummary) =>
+    selectQortalGroup(conversation.group),
+  );
   const handleSelectDirect = useStableCallback(selectDirect);
   const handleRemoveDirect = useStableCallback(removeDirect);
   const handleStartReply = useStableCallback(startReply);
@@ -2175,61 +2271,72 @@ export default function App() {
           ? startMintingTitle
           : '';
 
-  async function loadGroups(nextSearch = search, actionList = actions) {
-    setGroups({ phase: 'loading', value: groups.value });
+  async function loadGroupDiscoveries(nextSearch = search, actionList = actions) {
+    const requestId = ++groupDiscoveryRequestRef.current;
+
+    setGroupDiscoveries((current) => ({ phase: 'loading', value: current.value }));
 
     try {
-      const nextGroups = withGeneralChatGroup(await searchGroups('qortium', nextSearch, actionList), nextSearch, t);
+      const catalogue = await searchGroups('qortium', nextSearch, actionList);
+      const discoveries = await qualifyPublicGroupDiscoveries({
+        groups: catalogue,
+        loadMessages: (group) =>
+          getGroupMessages('qortium', group, actionList, {
+            decryptPrivate: false,
+            limit: ACTIVITY_SWEEP_MESSAGE_LIMIT,
+          }),
+        memberGroupIds: new Set(memberGroups.value.map((group) => group.groupId)),
+      });
 
-      setGroups({ phase: 'ready', value: nextGroups });
-      if (!hasSelectedChatRef.current && !pendingDeepLinkRef.current && nextGroups.length > 0) {
-        selectGroup(nextGroups[0], {
-          historyMode: 'replace',
-          remember: false,
-          showConversation: false,
-          userInitiated: false,
-        });
+      if (groupDiscoveryRequestRef.current === requestId) {
+        setGroupDiscoveries({ phase: 'ready', value: discoveries });
       }
     } catch (error) {
-      const fallbackGroups = withGeneralChatGroup(emptyGroups, nextSearch, t);
-
-      setGroups({
-        error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
-        phase: 'error',
-        value: fallbackGroups,
-      });
-      if (!hasSelectedChatRef.current && !pendingDeepLinkRef.current && fallbackGroups.length > 0) {
-        selectGroup(fallbackGroups[0], {
-          historyMode: 'replace',
-          remember: false,
-          showConversation: false,
-          userInitiated: false,
+      if (groupDiscoveryRequestRef.current === requestId) {
+        setGroupDiscoveries({
+          error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
+          phase: 'error',
+          value: [],
         });
       }
     }
   }
 
   // --- Chat 2.0 slice 2: Qortal groups --------------------------------------
-  // Deliberately does not auto-select a group the way loadGroups above does
-  // for Qortium — opening the Qortal section is opt-in (a user click), so a
-  // background refresh must never jump the user's active chat away from
-  // whatever they had open.
-  async function loadQortalGroups(nextSearch = qortalSearch, actionList = qortalBridge.value.actions) {
-    setQortalGroups({ phase: 'loading', value: qortalGroups.value });
+  // Discovery is always explicit: neither network loads the public catalogue
+  // during startup or account refresh. That keeps joined chats stable while a
+  // user is composing and bounds the extra public-node reads to this surface.
+  async function loadQortalGroupDiscoveries(
+    nextSearch = qortalSearch,
+    actionList = qortalBridge.value.actions,
+  ) {
+    const requestId = ++qortalGroupDiscoveryRequestRef.current;
+
+    setQortalGroupDiscoveries((current) => ({ phase: 'loading', value: current.value }));
 
     try {
-      const nextGroups = await searchGroups('qortal', nextSearch, actionList);
+      const catalogue = await searchGroups('qortal', nextSearch, actionList);
+      const discoveries = await qualifyPublicGroupDiscoveries({
+        groups: catalogue,
+        loadMessages: (group) =>
+          getGroupMessages('qortal', group, actionList, {
+            decryptPrivate: false,
+            limit: ACTIVITY_SWEEP_MESSAGE_LIMIT,
+          }),
+        memberGroupIds: new Set(qortalMemberGroups.value.map((group) => group.groupId)),
+      });
 
-      // Qortal has no general/open group at id 0 (txGroupId 0 is Qortium-only —
-      // see sendChatMessage's guard in coreApi.ts); defensively exclude it in
-      // case a host ever returns one.
-      setQortalGroups({ phase: 'ready', value: nextGroups.filter((group) => group.groupId !== 0) });
+      if (qortalGroupDiscoveryRequestRef.current === requestId) {
+        setQortalGroupDiscoveries({ phase: 'ready', value: discoveries });
+      }
     } catch (error) {
-      setQortalGroups((current) => ({
-        error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
-        phase: 'error',
-        value: current.value,
-      }));
+      if (qortalGroupDiscoveryRequestRef.current === requestId) {
+        setQortalGroupDiscoveries({
+          error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
+          phase: 'error',
+          value: [],
+        });
+      }
     }
   }
 
@@ -2242,6 +2349,9 @@ export default function App() {
     setQortalAccount(null);
     setQortalAccountError('');
     setQortalMemberGroups({ phase: 'loading', value: emptyGroups });
+    setQortalGroups({ phase: 'loading', value: emptyGroups });
+    qortalGroupDiscoveryRequestRef.current += 1;
+    setQortalGroupDiscoveries(createState([]));
 
     try {
       const snapshot = await loadQortalAccountSnapshot(actionList);
@@ -2257,6 +2367,11 @@ export default function App() {
           phase: 'error',
           value: emptyGroups,
         });
+        setQortalGroups({
+          error: getBridgeErrorMessage(snapshot.error, t('status.loadingError.joinedGroups'), t),
+          phase: 'error',
+          value: emptyGroups,
+        });
         return;
       }
 
@@ -2265,6 +2380,10 @@ export default function App() {
       setQortalAccount(snapshot.account);
       setQortalAccountError('');
       setQortalMemberGroups({ phase: 'ready', value: snapshot.memberGroups });
+      setQortalGroups({
+        phase: 'ready',
+        value: snapshot.memberGroups.filter((group) => group.groupId !== GENERAL_CHAT_GROUP_ID),
+      });
     } catch (error) {
       if (!qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
         return;
@@ -2273,6 +2392,7 @@ export default function App() {
       setQortalAccount(null);
       setQortalAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       setQortalMemberGroups({ phase: 'ready', value: emptyGroups });
+      setQortalGroups({ phase: 'ready', value: emptyGroups });
     }
   }
 
@@ -2283,7 +2403,6 @@ export default function App() {
       const nextBridge = await getNetworkBridgeState('qortal');
 
       setQortalBridge({ phase: 'ready', value: nextBridge });
-      void loadQortalGroups(qortalSearch, nextBridge.actions);
       return nextBridge.actions;
     } catch (error) {
       setQortalBridge({
@@ -2466,16 +2585,28 @@ export default function App() {
   }
 
   async function loadAccountData(selectedAccount: QdnSelectedAccount, actionList = actions) {
-    setMemberGroups({ phase: 'loading', value: memberGroups.value });
+    const generalOnly = withGeneralChatGroup(emptyGroups, '', t);
+
+    setMemberGroups((current) => ({ phase: 'loading', value: current.value }));
+    setGroups((current) => ({
+      phase: 'loading',
+      value: current.value.length > 0 ? current.value : generalOnly,
+    }));
 
     try {
-      setMemberGroups({ phase: 'ready', value: await getMemberGroups('qortium', selectedAccount.address, actionList) });
+      const nextMemberGroups = await getMemberGroups('qortium', selectedAccount.address, actionList);
+
+      setMemberGroups({ phase: 'ready', value: nextMemberGroups });
+      setGroups({ phase: 'ready', value: withGeneralChatGroup(nextMemberGroups, '', t) });
     } catch (error) {
-      setMemberGroups({
-        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
+      const message = getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t);
+
+      setMemberGroups((current) => ({
+        error: message,
         phase: 'error',
-        value: memberGroups.value,
-      });
+        value: current.value,
+      }));
+      setGroups((current) => ({ error: message, phase: 'error', value: current.value }));
     }
 
     await loadActiveChats(selectedAccount, actionList);
@@ -4018,15 +4149,13 @@ export default function App() {
 
   // The toggles must always respond visibly: while the field has text, the
   // form stays visible regardless of the open flag, so "close" also clears the
-  // query (and restores the unfiltered group list) instead of doing nothing.
+  // query (and clears its discovery results) instead of doing nothing.
   function toggleGroupSearch() {
     if (isGroupSearchVisible) {
       setGroupSearchOpen(false);
-
-      if (search.trim().length > 0) {
-        setSearch('');
-        void loadGroups('');
-      }
+      setSearch('');
+      groupDiscoveryRequestRef.current += 1;
+      setGroupDiscoveries(createState([]));
 
       return;
     }
@@ -4034,6 +4163,19 @@ export default function App() {
     // Opening search must reveal the form, so expand a collapsed section.
     setGroupsCollapsed(false);
     setGroupSearchOpen(true);
+  }
+
+  function toggleQortalGroupSearch() {
+    if (isQortalGroupSearchOpen) {
+      setQortalGroupSearchOpen(false);
+      setQortalSearch('');
+      qortalGroupDiscoveryRequestRef.current += 1;
+      setQortalGroupDiscoveries(createState([]));
+      return;
+    }
+
+    setQortalGroupsCollapsed(false);
+    setQortalGroupSearchOpen(true);
   }
 
   function toggleDirectSearch() {
@@ -4124,6 +4266,13 @@ export default function App() {
   }
 
   async function connectSelectedAccount(actionList = actions) {
+    const generalOnly = withGeneralChatGroup(emptyGroups, '', t);
+
+    groupDiscoveryRequestRef.current += 1;
+    setGroupDiscoveries(createState([]));
+    setMemberGroups({ phase: 'loading', value: emptyGroups });
+    setGroups({ phase: 'loading', value: generalOnly });
+
     try {
       const selectedAccount = normalizeSelectedAccount(
         await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' }),
@@ -4136,6 +4285,7 @@ export default function App() {
       setAccount(null);
       setAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       setMemberGroups({ phase: 'ready', value: emptyGroups });
+      setGroups({ phase: 'ready', value: generalOnly });
       setAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
       setAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
       setActiveChats({ phase: 'ready', value: emptyActiveChats });
@@ -4248,7 +4398,21 @@ export default function App() {
       });
     }
 
-    void loadGroups(search, nextActions);
+    const initialGroups = withGeneralChatGroup(emptyGroups, '', t);
+
+    setGroups({ phase: 'ready', value: initialGroups });
+    if (
+      !hasSelectedChatRef.current &&
+      !pendingDeepLinkRef.current?.target &&
+      initialGroups.length > 0
+    ) {
+      selectGroup(initialGroups[0], {
+        historyMode: 'replace',
+        remember: false,
+        showConversation: false,
+        userInitiated: false,
+      });
+    }
 
     // Chat 2.0 slice 2: the Qortal section is only ever shown when the host
     // actually injected window.qortalRequest — an older Home build (or a
@@ -4263,8 +4427,6 @@ export default function App() {
   }
 
   async function refreshAfterTrackedTransaction(transaction: TrackedTransaction) {
-    await loadGroups(search);
-
     if (account) {
       await loadAccountData(account);
     }
@@ -4432,6 +4594,12 @@ export default function App() {
       groupSearchInputRef.current?.focus();
     }
   }, [isGroupSearchVisible]);
+
+  useEffect(() => {
+    if (isQortalGroupSearchOpen) {
+      qortalGroupSearchInputRef.current?.focus();
+    }
+  }, [isQortalGroupSearchOpen]);
 
   useEffect(() => {
     if (isDirectFormVisible) {
@@ -6021,7 +6189,7 @@ export default function App() {
                 className="search"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void loadGroups(search);
+                  void loadGroupDiscoveries(search);
                 }}
               >
                 <input
@@ -6035,6 +6203,28 @@ export default function App() {
                   {t('button.search')}
                 </button>
               </form>
+            ) : null}
+            {!isGroupsCollapsed && isGroupSearchVisible && groupDiscoveries.phase !== 'idle' ? (
+              <div className="group-discovery">
+                <div className="group-discovery__header">
+                  <h3>{t('label.searchGroups')}</h3>
+                  {groupDiscoveries.phase === 'ready' ? (
+                    <span className="panel__count">{groupDiscoveryConversations.length}</span>
+                  ) : null}
+                </div>
+                {groupDiscoveries.phase === 'error' ? <p className="error">{groupDiscoveries.error}</p> : null}
+                {groupDiscoveries.phase === 'loading' ? (
+                  <LoadingRows count={3} label={t('label.loading')} />
+                ) : groupDiscoveries.phase === 'ready' ? (
+                  <GroupList
+                    conversations={groupDiscoveryConversations}
+                    onSelect={handleSelectGroup}
+                    selectedConversationKey={selectedGroupConversationKey}
+                    t={t}
+                    now={now}
+                  />
+                ) : null}
+              </div>
             ) : null}
             {!isGroupsCollapsed && showGroupOnboarding ? (
               <div className="panel__intro">
@@ -6051,19 +6241,15 @@ export default function App() {
               </div>
             ) : null}
             {!isGroupsCollapsed && groups.phase === 'error' ? <p className="error">{groups.error}</p> : null}
-            {groups.phase === 'loading' && !isGroupsCollapsed ? (
+            {groups.phase === 'loading' && groups.value.length === 0 && !isGroupsCollapsed ? (
               <LoadingRows count={5} label={t('label.loading')} />
             ) : (
               <GroupList
-                activityByGroupId={groupActivityById}
                 collapsed={isGroupsCollapsed}
-                groups={sortedGroups}
-                memberCountsByGroupId={syntheticMemberCountsByGroupId}
+                conversations={groupConversations}
                 onSelect={handleSelectGroup}
-                previewByGroupId={groupPreviewByGroupId}
-                selectedGroupId={selectedGroupId}
+                selectedConversationKey={selectedGroupConversationKey}
                 t={t}
-                unreadGroupIds={unreadGroupIds}
                 now={now}
               />
             )}
@@ -6090,18 +6276,7 @@ export default function App() {
                       aria-expanded={isQortalGroupSearchOpen}
                       aria-label={t('label.searchGroups')}
                       className="icon-button"
-                      onClick={() => {
-                        setQortalGroupSearchOpen((open) => {
-                          const next = !open;
-
-                          if (!next && qortalSearch) {
-                            setQortalSearch('');
-                            void loadQortalGroups('');
-                          }
-
-                          return next;
-                        });
-                      }}
+                      onClick={toggleQortalGroupSearch}
                       title={t('label.searchGroups')}
                       type="button"
                     >
@@ -6114,7 +6289,7 @@ export default function App() {
                     className="search"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      void loadQortalGroups(qortalSearch);
+                      void loadQortalGroupDiscoveries(qortalSearch);
                     }}
                   >
                     <input
@@ -6129,6 +6304,32 @@ export default function App() {
                     </button>
                   </form>
                 ) : null}
+                {!isQortalGroupsCollapsed &&
+                isQortalGroupSearchOpen &&
+                qortalGroupDiscoveries.phase !== 'idle' ? (
+                  <div className="group-discovery">
+                    <div className="group-discovery__header">
+                      <h3>{t('label.searchGroups')}</h3>
+                      {qortalGroupDiscoveries.phase === 'ready' ? (
+                        <span className="panel__count">{qortalGroupDiscoveryConversations.length}</span>
+                      ) : null}
+                    </div>
+                    {qortalGroupDiscoveries.phase === 'error' ? (
+                      <p className="error">{qortalGroupDiscoveries.error}</p>
+                    ) : null}
+                    {qortalGroupDiscoveries.phase === 'loading' ? (
+                      <LoadingRows count={3} label={t('label.loading')} />
+                    ) : qortalGroupDiscoveries.phase === 'ready' ? (
+                      <GroupList
+                        conversations={qortalGroupDiscoveryConversations}
+                        onSelect={handleSelectQortalGroup}
+                        selectedConversationKey={selectedGroupConversationKey}
+                        t={t}
+                        now={now}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
                 {!isQortalGroupsCollapsed && qortalGroups.phase === 'error' ? (
                   <p className="error">{qortalGroups.error}</p>
                 ) : null}
@@ -6136,13 +6337,11 @@ export default function App() {
                   <LoadingRows count={5} label={t('label.loading')} />
                 ) : (
                   <GroupList
-                    activityByGroupId={qortalGroupActivityByIdDisplay}
                     collapsed={isQortalGroupsCollapsed}
-                    groups={qortalGroups.value}
+                    conversations={qortalGroupConversations}
                     onSelect={handleSelectQortalGroup}
-                    selectedGroupId={isSelectedQortalGroup ? selectedGroupId : null}
+                    selectedConversationKey={selectedGroupConversationKey}
                     t={t}
-                    unreadGroupIds={emptyUnreadGroupIds}
                     now={now}
                   />
                 )}
