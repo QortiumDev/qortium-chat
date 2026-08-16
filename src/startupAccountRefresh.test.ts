@@ -38,7 +38,7 @@ describe('StartupAccountRefreshCoordinator', () => {
     });
 
     expect(refreshCount).toBe(1);
-    expect(scheduled.size).toBe(0);
+    expect(scheduled.size).toBe(1);
   });
 
   it('cancels the fallback when the initial host notification arrives', () => {
@@ -56,20 +56,24 @@ describe('StartupAccountRefreshCoordinator', () => {
     expect(refreshCount).toBe(1);
   });
 
-  it('preserves every notification after the initial refresh', () => {
-    const { coordinator } = createHarness();
+  it('preserves notifications after the bounded startup grace period', () => {
+    const { coordinator, runFallbacks } = createHarness();
     let refreshCount = 0;
 
     coordinator.notify();
     coordinator.markReady(() => {
       refreshCount += 1;
     });
+    coordinator.notify();
+    expect(refreshCount).toBe(1);
+
+    runFallbacks();
     coordinator.notify();
 
     expect(refreshCount).toBe(2);
   });
 
-  it('preserves additional notifications queued before readiness', () => {
+  it('coalesces notifications queued before readiness into one current-account refresh', () => {
     const { coordinator } = createHarness();
     let refreshCount = 0;
 
@@ -79,6 +83,76 @@ describe('StartupAccountRefreshCoordinator', () => {
       refreshCount += 1;
     });
 
+    expect(refreshCount).toBe(1);
+  });
+
+  it('coalesces a manual pre-ready request with the delayed startup notification burst', () => {
+    const { coordinator, runFallbacks } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.request();
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+    coordinator.notify();
+
+    expect(refreshCount).toBe(1);
+
+    coordinator.notify();
+    coordinator.notify();
+    expect(refreshCount).toBe(1);
+
+    runFallbacks();
+    coordinator.notify();
+    expect(refreshCount).toBe(2);
+  });
+
+  it('still forwards later changes when the host signal was already queued', () => {
+    const { coordinator, runFallbacks } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.notify();
+    coordinator.request();
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+    coordinator.notify();
+    expect(refreshCount).toBe(1);
+
+    runFallbacks();
+    coordinator.notify();
+
+    expect(refreshCount).toBe(2);
+  });
+
+  it('expires manual startup coalescing when no delayed host signal arrives', () => {
+    const { coordinator, runFallbacks } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.request();
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+    runFallbacks();
+    coordinator.notify();
+
+    expect(refreshCount).toBe(2);
+  });
+
+  it('coalesces a manual retry made while the initial startup refresh is settling', () => {
+    const { coordinator, runFallbacks } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+    coordinator.notify();
+    coordinator.request();
+
+    expect(refreshCount).toBe(1);
+
+    runFallbacks();
+    coordinator.request();
     expect(refreshCount).toBe(2);
   });
 
@@ -89,6 +163,7 @@ describe('StartupAccountRefreshCoordinator', () => {
     coordinator.markReady(() => {
       refreshCount += 1;
     });
+    runFallbacks();
     runFallbacks();
 
     expect(refreshCount).toBe(1);
@@ -106,6 +181,7 @@ describe('StartupAccountRefreshCoordinator', () => {
     });
     coordinator.dispose();
     coordinator.notify();
+    coordinator.request();
     runFallbacks();
 
     expect(refreshCount).toBe(0);
