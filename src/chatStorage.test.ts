@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  initializeQortalUiStorage,
   lastChatStorageKey,
   lastChatNetworkStorageKey,
   mergePersistedDirect,
@@ -17,6 +18,7 @@ import {
   qortalLegacyOwnerStorageKey,
   qortalReadWatermarksStorageKey,
   qortalScrollBookmarksStorageKey,
+  qortalUiMigrationStorageKey,
   scrollBookmarksStorageKey,
   setChatStorageMode,
   toStoredSelectedChat,
@@ -290,6 +292,123 @@ describe('storage round-trips', () => {
     expect(readQortalScrollBookmarks('Qortal-one', 'Qortium-two')).toEqual(
       new Map([['qortal:group:42', { atBottom: true }]]),
     );
+  });
+
+  it('defers a Qortal-first initialization and merges legacy UI state when Qortium resolves', () => {
+    window.localStorage.setItem(
+      `qortium-chat:read:${ADDRESS}`,
+      JSON.stringify({ qortalGroups: { 42: 3000, 43: 2500 } }),
+    );
+    window.localStorage.setItem(
+      `qortium-chat:scroll:${ADDRESS}`,
+      JSON.stringify({
+        'qortal:group:42': { anchorKey: 'legacy-message', anchorOffset: 12, anchorTimestamp: 3000, atBottom: false },
+        'qortal:group:43': { atBottom: true },
+      }),
+    );
+
+    // Parallel startup race: Qortal resolves first, while the Qortium account
+    // lookup is still pending. No empty v2 records may become authoritative.
+    const qortalFirst = initializeQortalUiStorage('Qortal-one', {
+      legacyLookupComplete: false,
+    });
+
+    expect(qortalFirst).toEqual({
+      legacyMigrationPending: true,
+      scrollBookmarks: new Map(),
+      watermarks: new Map(),
+    });
+    expect(window.localStorage.getItem(qortalReadWatermarksStorageKey('Qortal-one'))).toBeNull();
+    expect(window.localStorage.getItem(qortalScrollBookmarksStorageKey('Qortal-one'))).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(qortalUiMigrationStorageKey('Qortal-one')) ?? '{}')).toEqual({
+      state: 'pending',
+      version: 1,
+    });
+
+    // Even if interim empty records are written after the pending marker (for
+    // example after a denied Qortium share releases independent persistence),
+    // they remain repairable rather than becoming authoritative by accident.
+    writeQortalReadWatermarks('Qortal-one', new Map());
+    writeQortalScrollBookmarks('Qortal-one', new Map());
+
+    // Qortium resolves second. Values accumulated by the current Qortal
+    // session win on collisions, while missing legacy values are recovered.
+    const completed = initializeQortalUiStorage('Qortal-one', {
+      currentScrollBookmarks: new Map([
+        ['qortal:group:42', { atBottom: true }],
+        ['qortal:group:99', { atBottom: true }],
+      ]),
+      currentWatermarks: new Map([[42, 4000], [99, 4000]]),
+      legacyLookupComplete: true,
+      legacyQortiumAccountAddress: ADDRESS,
+    });
+
+    expect(completed.legacyMigrationPending).toBe(false);
+    expect(completed.watermarks).toEqual(new Map([[42, 4000], [43, 2500], [99, 4000]]));
+    expect(completed.scrollBookmarks).toEqual(new Map([
+      ['qortal:group:42', { atBottom: true }],
+      ['qortal:group:43', { atBottom: true }],
+      ['qortal:group:99', { atBottom: true }],
+    ]));
+    expect(readQortalReadWatermarks('Qortal-one')).toEqual(completed.watermarks);
+    expect(readQortalScrollBookmarks('Qortal-one')).toEqual(completed.scrollBookmarks);
+    expect(JSON.parse(window.localStorage.getItem(qortalUiMigrationStorageKey('Qortal-one')) ?? '{}')).toEqual({
+      legacyQortiumAccountAddress: ADDRESS,
+      state: 'complete',
+      version: 1,
+    });
+    expect(JSON.parse(window.localStorage.getItem(qortalLegacyOwnerStorageKey(ADDRESS)) ?? '{}')).toEqual({
+      qortalAccountAddress: 'Qortal-one',
+      version: 1,
+    });
+  });
+
+  it('never migrates over an unmarked existing v2 Qortal record', () => {
+    window.localStorage.setItem(
+      `qortium-chat:read:${ADDRESS}`,
+      JSON.stringify({ qortalGroups: { 42: 3000 } }),
+    );
+    writeQortalReadWatermarks('Qortal-one', new Map());
+
+    const initialized = initializeQortalUiStorage('Qortal-one', {
+      legacyLookupComplete: true,
+      legacyQortiumAccountAddress: ADDRESS,
+    });
+
+    expect(initialized.legacyMigrationPending).toBe(false);
+    expect(initialized.watermarks).toEqual(new Map());
+    expect(window.localStorage.getItem(qortalLegacyOwnerStorageKey(ADDRESS))).toBeNull();
+  });
+
+  it('keeps a pending migration bound to its first Qortium identity', () => {
+    window.localStorage.setItem(
+      `qortium-chat:read:${ADDRESS}`,
+      JSON.stringify({ qortalGroups: { 42: 3000 } }),
+    );
+    window.localStorage.setItem(
+      'qortium-chat:read:Qortium-two',
+      JSON.stringify({ qortalGroups: { 77: 7000 } }),
+    );
+    window.localStorage.setItem(
+      qortalUiMigrationStorageKey('Qortal-one'),
+      JSON.stringify({
+        legacyQortiumAccountAddress: ADDRESS,
+        state: 'pending',
+        version: 1,
+      }),
+    );
+
+    const completed = initializeQortalUiStorage('Qortal-one', {
+      legacyLookupComplete: true,
+      legacyQortiumAccountAddress: 'Qortium-two',
+    });
+
+    expect(completed.watermarks).toEqual(new Map([[42, 3000]]));
+    expect(window.localStorage.getItem(qortalLegacyOwnerStorageKey('Qortium-two'))).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(qortalLegacyOwnerStorageKey(ADDRESS)) ?? '{}')).toEqual({
+      qortalAccountAddress: 'Qortal-one',
+      version: 1,
+    });
   });
 
   it('filters cross-network bookmark keys on every versioned write', () => {

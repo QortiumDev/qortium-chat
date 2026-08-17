@@ -184,12 +184,11 @@ import { loadQortalAccountSnapshot } from './qortalAccountSession';
 import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
 import {
   mergePersistedDirect,
+  initializeQortalUiStorage,
   readLastChat,
   readLastChatNetwork,
   readPersistedDirects,
   readQortalLastChat,
-  readQortalReadWatermarks,
-  readQortalScrollBookmarks,
   readReadWatermarks,
   readScrollBookmarks,
   readSidebarCollapse,
@@ -1434,6 +1433,12 @@ export default function App() {
   // new account's key. The load effect raises this; the persist effect clears it.
   const skipQortiumWatermarkPersistRef = useRef(true);
   const skipQortalWatermarkPersistRef = useRef(true);
+  // Qortal can resolve before the parallel initial Qortium account lookup.
+  // Track the unfinished migration independently from the shorter write block:
+  // a denied Qortium share releases new Qortal persistence while retaining the
+  // pending marker for a later safe legacy merge.
+  const qortalUiMigrationPendingAddressRef = useRef<string | null>(null);
+  const qortalUiPersistenceBlockedAddressRef = useRef<string | null>(null);
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
   const scrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
@@ -2170,6 +2175,10 @@ export default function App() {
       return;
     }
 
+    if (network === 'qortal' && qortalUiPersistenceBlockedAddressRef.current === address) {
+      return;
+    }
+
     const pendingTarget = scrollPersistTargetRef.current;
 
     // One debounce timer serves both chains. Land the prior chain/account's
@@ -2862,11 +2871,24 @@ export default function App() {
       return next.size === current.size ? current : next;
     });
     const currentQortiumAddress = currentAccountAddressRef.current;
-    const restoredQortalWatermarks = nextAccountAddress
-      ? readQortalReadWatermarks(nextAccountAddress, currentQortiumAddress)
-      : new Map<number, number>();
+    const restoredQortalUi = nextAccountAddress
+      ? initializeQortalUiStorage(nextAccountAddress, {
+          legacyLookupComplete: !!currentQortiumAddress || !accountRefreshPendingRef.current,
+          legacyQortiumAccountAddress: currentQortiumAddress,
+        })
+      : null;
+    const restoredQortalWatermarks = restoredQortalUi?.watermarks ?? new Map<number, number>();
+
+    qortalUiMigrationPendingAddressRef.current = restoredQortalUi?.legacyMigrationPending
+      ? nextAccountAddress
+      : null;
+    qortalUiPersistenceBlockedAddressRef.current =
+      restoredQortalUi?.legacyMigrationPending && accountRefreshPendingRef.current
+        ? nextAccountAddress
+        : null;
 
     skipQortalWatermarkPersistRef.current = true;
+    lastReadByQortalGroupIdRef.current = restoredQortalWatermarks;
     setLastReadByQortalGroupId(restoredQortalWatermarks);
     setQortalGroupActivityById(new Map());
 
@@ -2888,8 +2910,8 @@ export default function App() {
         scrollPositionsRef.current.delete(key);
       }
     }
-    if (nextAccountAddress) {
-      for (const [key, position] of readQortalScrollBookmarks(nextAccountAddress, currentQortiumAddress)) {
+    if (restoredQortalUi) {
+      for (const [key, position] of restoredQortalUi.scrollBookmarks) {
         scrollPositionsRef.current.set(key, position);
       }
     }
@@ -2918,6 +2940,55 @@ export default function App() {
     if (loadedChatKeyRef.current.startsWith('qortal:')) {
       loadedChatKeyRef.current = '';
     }
+  }
+
+  function completeDeferredQortalUiStorage(legacyQortiumAccountAddress: string | null) {
+    const qortalAccountAddress = qortalUiMigrationPendingAddressRef.current;
+
+    if (!qortalAccountAddress || currentQortalAccountAddressRef.current !== qortalAccountAddress) {
+      return;
+    }
+
+    const currentQortalScrollBookmarks = new Map(
+      [...scrollPositionsRef.current].filter(([chatKey]) => chatKey.startsWith('qortal:')),
+    );
+    const restored = initializeQortalUiStorage(qortalAccountAddress, {
+      currentScrollBookmarks: currentQortalScrollBookmarks,
+      currentWatermarks: lastReadByQortalGroupIdRef.current,
+      legacyLookupComplete: true,
+      legacyQortiumAccountAddress,
+    });
+
+    if (restored.legacyMigrationPending) {
+      return;
+    }
+
+    qortalUiMigrationPendingAddressRef.current = null;
+    qortalUiPersistenceBlockedAddressRef.current = null;
+    skipQortalWatermarkPersistRef.current = true;
+    lastReadByQortalGroupIdRef.current = restored.watermarks;
+    setLastReadByQortalGroupId(restored.watermarks);
+
+    for (const chatKey of scrollPositionsRef.current.keys()) {
+      if (chatKey.startsWith('qortal:')) {
+        scrollPositionsRef.current.delete(chatKey);
+      }
+    }
+    for (const [chatKey, position] of restored.scrollBookmarks) {
+      scrollPositionsRef.current.set(chatKey, position);
+    }
+  }
+
+  function releaseDeferredQortalUiPersistence() {
+    const qortalAccountAddress = qortalUiPersistenceBlockedAddressRef.current;
+
+    if (!qortalAccountAddress || currentQortalAccountAddressRef.current !== qortalAccountAddress) {
+      return;
+    }
+
+    qortalUiPersistenceBlockedAddressRef.current = null;
+    writeQortalReadWatermarks(qortalAccountAddress, lastReadByQortalGroupIdRef.current);
+    writeQortalScrollBookmarks(qortalAccountAddress, scrollPositionsRef.current);
   }
 
   async function refreshQortalSelectedAccount(actionList = qortalBridge.value.actions) {
@@ -5340,6 +5411,7 @@ export default function App() {
       }
 
       currentAccountAddressRef.current = selectedAccount.address;
+      completeDeferredQortalUiStorage(selectedAccount.address);
       setAccount(selectedAccount);
       setAccountError('');
       void loadAccountData(selectedAccount, actionList, {
@@ -5352,6 +5424,11 @@ export default function App() {
       }
 
       currentAccountAddressRef.current = null;
+      // A failed/denied Qortium lookup supplies no safe legacy owner hint. Let
+      // the independent Qortal identity persist new UI state, but keep its
+      // migration marker pending so a later successful Qortium share can merge
+      // legacy state rather than treating these interim records as authoritative.
+      releaseDeferredQortalUiPersistence();
       setAccount(null);
       setAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       setMemberGroups({ phase: 'ready', value: emptyGroups });
@@ -5832,7 +5909,10 @@ export default function App() {
         }
       }
 
-      return next ?? current;
+      const result = next ?? current;
+
+      lastReadByQortalGroupIdRef.current = result;
+      return result;
     });
   }, [qortalGroupActivityByIdDisplay]);
 
@@ -5996,11 +6076,20 @@ export default function App() {
         : groupActivityById.get(groupId);
 
       if (typeof timestamp === 'number') {
-        const setLastRead = isQortal ? setLastReadByQortalGroupId : setLastReadByGroupId;
+        if (isQortal) {
+          setLastReadByQortalGroupId((current) => {
+            const next = (current.get(groupId) ?? -1) >= timestamp
+              ? current
+              : new Map(current).set(groupId, timestamp);
 
-        setLastRead((current) =>
-          (current.get(groupId) ?? -1) >= timestamp ? current : new Map(current).set(groupId, timestamp),
-        );
+            lastReadByQortalGroupIdRef.current = next;
+            return next;
+          });
+        } else {
+          setLastReadByGroupId((current) =>
+            (current.get(groupId) ?? -1) >= timestamp ? current : new Map(current).set(groupId, timestamp),
+          );
+        }
       }
     } else {
       const address = selectedChat.direct.address;
@@ -6314,6 +6403,10 @@ export default function App() {
 
     if (skipQortalWatermarkPersistRef.current) {
       skipQortalWatermarkPersistRef.current = false;
+      return;
+    }
+
+    if (qortalUiPersistenceBlockedAddressRef.current === qortalAccount.address) {
       return;
     }
 

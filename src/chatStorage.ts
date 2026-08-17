@@ -165,6 +165,10 @@ export function qortalLegacyOwnerStorageKey(qortiumAccountAddress: string) {
   return `${PREFIX}:v2:legacy-qortal-owner:${qortiumAccountAddress}`;
 }
 
+export function qortalUiMigrationStorageKey(qortalAccountAddress: string) {
+  return `${PREFIX}:v2:legacy-qortal-ui:${qortalAccountAddress}`;
+}
+
 export function lastChatNetworkStorageKey() {
   return `${PREFIX}:v2:last-network`;
 }
@@ -608,4 +612,190 @@ export function writeQortalScrollBookmarks(
     qortalScrollBookmarksStorageKey(accountAddress),
     Object.fromEntries([...bookmarks].filter(([chatKey]) => chatKey.startsWith('qortal:'))),
   );
+}
+
+type QortalUiMigrationStatus = {
+  legacyQortiumAccountAddress?: string;
+  state: 'complete' | 'pending';
+  version: 1;
+};
+
+export type QortalUiStorageInitialization = {
+  legacyMigrationPending: boolean;
+  scrollBookmarks: Map<string, StoredScrollBookmark>;
+  watermarks: Map<number, number>;
+};
+
+export type QortalUiStorageInitializationOptions = {
+  currentScrollBookmarks?: ReadonlyMap<string, StoredScrollBookmark>;
+  currentWatermarks?: ReadonlyMap<number, number>;
+  legacyLookupComplete: boolean;
+  legacyQortiumAccountAddress?: string | null;
+};
+
+function readQortalUiMigrationStatus(qortalAccountAddress: string): QortalUiMigrationStatus | null {
+  const value = readJson<Partial<QortalUiMigrationStatus>>(qortalUiMigrationStorageKey(qortalAccountAddress));
+
+  return value?.version === 1 && (value.state === 'pending' || value.state === 'complete')
+    ? {
+        ...(typeof value.legacyQortiumAccountAddress === 'string'
+          ? { legacyQortiumAccountAddress: value.legacyQortiumAccountAddress }
+          : {}),
+        state: value.state,
+        version: 1,
+      }
+    : null;
+}
+
+function mergeQortalWatermarks(
+  ...sources: Array<ReadonlyMap<number, number> | undefined>
+): Map<number, number> {
+  const merged = new Map<number, number>();
+
+  for (const source of sources) {
+    for (const [groupId, timestamp] of source ?? []) {
+      if ((merged.get(groupId) ?? -1) < timestamp) {
+        merged.set(groupId, timestamp);
+      }
+    }
+  }
+
+  return merged;
+}
+
+function mergeQortalScrollBookmarks(
+  ...sources: Array<ReadonlyMap<string, StoredScrollBookmark> | undefined>
+): Map<string, StoredScrollBookmark> {
+  const merged = new Map<string, StoredScrollBookmark>();
+
+  for (const source of sources) {
+    for (const [chatKey, bookmark] of source ?? []) {
+      if (chatKey.startsWith('qortal:')) {
+        merged.set(chatKey, bookmark);
+      }
+    }
+  }
+
+  return merged;
+}
+
+/** Coordinates the one-time legacy split while Qortal and Qortium accounts are
+ * fetched in parallel. A pending marker is written before the app may persist
+ * new Qortal UI state. Once a Qortium identity becomes available, legacy
+ * values are merged beneath any newer in-session values and the marker becomes complete.
+ * Existing unmarked v2 records are authoritative and are never migrated over. */
+export function initializeQortalUiStorage(
+  qortalAccountAddress: string,
+  options: QortalUiStorageInitializationOptions,
+): QortalUiStorageInitialization {
+  const watermarkValue = readJson<{ groups?: unknown }>(qortalReadWatermarksStorageKey(qortalAccountAddress));
+  const scrollValue = readJson<Record<string, unknown>>(qortalScrollBookmarksStorageKey(qortalAccountAddress));
+  const storedWatermarks = toGroupTimestampMap(watermarkValue?.groups);
+  const storedScrollBookmarks = parseScrollBookmarks(
+    scrollValue,
+    (chatKey) => chatKey.startsWith('qortal:'),
+  );
+  const status = readQortalUiMigrationStatus(qortalAccountAddress);
+
+  if (status?.state === 'complete') {
+    return {
+      legacyMigrationPending: false,
+      scrollBookmarks: storedScrollBookmarks,
+      watermarks: storedWatermarks,
+    };
+  }
+
+  // Records created before this coordinator existed are real user state. Do
+  // not infer that an empty object was produced by the race and overwrite it.
+  if (!status && (watermarkValue !== null || scrollValue !== null)) {
+    writeJson(qortalUiMigrationStorageKey(qortalAccountAddress), { state: 'complete', version: 1 });
+    return {
+      legacyMigrationPending: false,
+      scrollBookmarks: storedScrollBookmarks,
+      watermarks: storedWatermarks,
+    };
+  }
+
+  if (!options.legacyLookupComplete || !options.legacyQortiumAccountAddress) {
+    if (!status) {
+      writeJson(qortalUiMigrationStorageKey(qortalAccountAddress), { state: 'pending', version: 1 });
+    }
+    return {
+      legacyMigrationPending: true,
+      scrollBookmarks: storedScrollBookmarks,
+      watermarks: storedWatermarks,
+    };
+  }
+
+  let legacyWatermarks = new Map<number, number>();
+  let legacyScrollBookmarks = new Map<string, StoredScrollBookmark>();
+  const legacyQortiumAccountAddress =
+    status?.legacyQortiumAccountAddress ?? options.legacyQortiumAccountAddress;
+
+  // Bind the pending migration to the first usable Qortium identity before
+  // reading any legacy state. If persistence fails here, do not risk merging
+  // from a different Qortium identity on a later retry.
+  if (!status?.legacyQortiumAccountAddress) {
+    const bound = writeJson(qortalUiMigrationStorageKey(qortalAccountAddress), {
+      legacyQortiumAccountAddress,
+      state: 'pending',
+      version: 1,
+    });
+    const confirmed = readQortalUiMigrationStatus(qortalAccountAddress);
+
+    if (!bound || confirmed?.legacyQortiumAccountAddress !== legacyQortiumAccountAddress) {
+      return {
+        legacyMigrationPending: true,
+        scrollBookmarks: storedScrollBookmarks,
+        watermarks: storedWatermarks,
+      };
+    }
+  }
+
+  if (claimLegacyQortalStorage(qortalAccountAddress, legacyQortiumAccountAddress)) {
+    const legacyRead = readJson<{ qortalGroups?: unknown }>(
+      legacyReadWatermarksStorageKey(legacyQortiumAccountAddress),
+    );
+    const legacyScroll = readJson<Record<string, unknown>>(
+      legacyScrollBookmarksStorageKey(legacyQortiumAccountAddress),
+    );
+
+    legacyWatermarks = toGroupTimestampMap(legacyRead?.qortalGroups);
+    legacyScrollBookmarks = parseScrollBookmarks(
+      legacyScroll,
+      (chatKey) => chatKey.startsWith('qortal:'),
+    );
+  }
+
+  const watermarks = mergeQortalWatermarks(
+    legacyWatermarks,
+    storedWatermarks,
+    options.currentWatermarks,
+  );
+  const scrollBookmarks = mergeQortalScrollBookmarks(
+    legacyScrollBookmarks,
+    storedScrollBookmarks,
+    options.currentScrollBookmarks,
+  );
+  const wroteWatermarks = writeJson(qortalReadWatermarksStorageKey(qortalAccountAddress), {
+    groups: Object.fromEntries(watermarks),
+  });
+  const wroteScroll = writeJson(
+    qortalScrollBookmarksStorageKey(qortalAccountAddress),
+    Object.fromEntries(scrollBookmarks),
+  );
+
+  if (wroteWatermarks && wroteScroll) {
+    writeJson(qortalUiMigrationStorageKey(qortalAccountAddress), {
+      legacyQortiumAccountAddress,
+      state: 'complete',
+      version: 1,
+    });
+  }
+
+  return {
+    legacyMigrationPending: !(wroteWatermarks && wroteScroll),
+    scrollBookmarks,
+    watermarks,
+  };
 }
