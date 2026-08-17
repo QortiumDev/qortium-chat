@@ -175,13 +175,13 @@ function MessageImagePreviews({
 function MessageReactionPicker({
   onReact,
   original,
-  pendingReactionKey,
+  pendingReactionKeys,
   reactions,
   t,
 }: {
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   original: ChatMessage;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   reactions: MessageReactionSummary[];
   t: TranslateFunction;
 }) {
@@ -209,7 +209,7 @@ function MessageReactionPicker({
             <button
               aria-label={contentState ? t('action.addReaction') : t('action.removeReaction')}
               aria-pressed={existingReaction?.reactedBySelf ?? false}
-              disabled={pendingReactionKey === pendingKey}
+              disabled={pendingReactionKeys.has(pendingKey)}
               key={reaction}
               onClick={() => selectReaction(reaction)}
               title={contentState ? t('action.addReaction') : t('action.removeReaction')}
@@ -261,7 +261,7 @@ function MessageReactionDetails({
   onClose,
   onReact,
   original,
-  pendingReactionKey,
+  pendingReactionKeys,
   reaction,
   t,
 }: {
@@ -271,7 +271,7 @@ function MessageReactionDetails({
   onClose: () => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   original: ChatMessage;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   reaction: MessageReactionSummary;
   t: TranslateFunction;
 }) {
@@ -322,7 +322,7 @@ function MessageReactionDetails({
       </ol>
       <button
         className="button button--secondary message__reaction-details-action"
-        disabled={!canReact || pendingReactionKey === pendingKey}
+        disabled={!canReact || pendingReactionKeys.has(pendingKey)}
         onClick={() => {
           onClose();
           onReact(original, reaction.content, contentState);
@@ -444,14 +444,14 @@ function MessageReactionChips({
   onToggleReactionDetails,
   openReactionDetailsKey,
   original,
-  pendingReactionKey,
+  pendingReactionKeys,
   reactions,
   t,
 }: {
   onToggleReactionDetails: (detailsKey: string, anchor: HTMLElement) => void;
   openReactionDetailsKey: string;
   original: ChatMessage;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   reactions: MessageReactionSummary[];
   t: TranslateFunction;
 }) {
@@ -473,7 +473,7 @@ function MessageReactionChips({
               aria-label={label}
               aria-haspopup="dialog"
               className={`message__reaction-chip${reaction.reactedBySelf ? ' message__reaction-chip--active' : ''}`}
-              disabled={pendingReactionKey === pendingKey}
+              disabled={pendingReactionKeys.has(pendingKey)}
               key={reaction.content}
               onClick={(event) => onToggleReactionDetails(pendingKey, event.currentTarget)}
               title={label}
@@ -497,6 +497,8 @@ function getMessageDeliveryLabel(phase: SendDeliveryPhase, t: TranslateFunction)
       return t('status.transaction.confirmed');
     case 'expired':
       return t('message.sendStatus.failed');
+    case 'ambiguous':
+      return t('message.sendStatus.failed');
     case 'rejected':
       return t('message.sendStatus.failed');
     default:
@@ -513,6 +515,8 @@ function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunctio
         return t('status.transaction.confirmed');
       case 'expired':
         return t('message.editStatus.failed');
+      case 'ambiguous':
+        return t('message.editStatus.failed');
       case 'rejected':
         return t('message.editStatus.failed');
       default:
@@ -526,6 +530,8 @@ function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunctio
     case 'confirmed':
       return t('status.transaction.confirmed');
     case 'expired':
+      return t('message.deleteStatus.failed');
+    case 'ambiguous':
       return t('message.deleteStatus.failed');
     case 'rejected':
       return t('message.deleteStatus.failed');
@@ -558,7 +564,7 @@ export const MessageList = memo(function MessageList({
   onRetryMessage,
   onRetryRevision,
   onScrollPositionChange,
-  pendingReactionKey,
+  pendingReactionKeys,
   pendingRevisionBySignature,
   pendingSendByLocalId,
   qortalResourceActions,
@@ -596,7 +602,7 @@ export const MessageList = memo(function MessageList({
   onRetryMessage: (localId: string) => void;
   onRetryRevision: (localId: string) => void;
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
   pendingSendByLocalId: ReadonlyMap<string, PendingSend>;
   qortalResourceActions: QdnAction[];
@@ -1929,7 +1935,7 @@ export const MessageList = memo(function MessageList({
                   onToggleReactionDetails={toggleReactionDetails}
                   openReactionDetailsKey={openReactionDetailsKey}
                   original={original}
-                  pendingReactionKey={pendingReactionKey}
+                  pendingReactionKeys={pendingReactionKeys}
                   reactions={reactions}
                   t={t}
                 />
@@ -1971,11 +1977,11 @@ export const MessageList = memo(function MessageList({
                 {pendingRevision ? (
                   <p
                     className={`message__send-status message__send-status--${pendingRevision.delivery.phase}`}
-                    role={pendingRevision.delivery.phase === 'rejected' || pendingRevision.delivery.phase === 'expired' ? 'alert' : 'status'}
+                    role={pendingRevision.status === 'failed' ? 'alert' : 'status'}
                   >
                     <span>{getRevisionDeliveryLabel(pendingRevision, t)}</span>
                     {pendingRevision.error ? <span className="message__send-error">{pendingRevision.error}</span> : null}
-                    {pendingRevision.delivery.phase === 'rejected' || pendingRevision.delivery.phase === 'expired' ? (
+                    {pendingRevision.status === 'failed' ? (
                       <>
                         {canRetryPendingDelivery(pendingRevision.delivery) ? (
                           <button onClick={() => onRetryRevision(pendingRevision.localId)} type="button">
@@ -2037,7 +2043,7 @@ export const MessageList = memo(function MessageList({
             onReact(message, reaction, contentState);
           }}
           original={pickerThread.original}
-          pendingReactionKey={pendingReactionKey}
+          pendingReactionKeys={pendingReactionKeys}
           reactions={pickerReactions}
           t={t}
         />
@@ -2057,7 +2063,7 @@ export const MessageList = memo(function MessageList({
           onClose={closeReactionPopover}
           onReact={onReact}
           original={detailsThread.original}
-          pendingReactionKey={pendingReactionKey}
+          pendingReactionKeys={pendingReactionKeys}
           reaction={detailsReaction}
           t={t}
         />

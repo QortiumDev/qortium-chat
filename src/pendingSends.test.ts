@@ -7,7 +7,9 @@ import {
   confirmPendingSend,
   expirePendingRevisions,
   expirePendingSends,
+  failPendingRevisionAmbiguously,
   failPendingRevision,
+  failPendingSendAmbiguously,
   failPendingSend,
   getPendingSignatureIdentity,
   hasActiveDuplicateSend,
@@ -121,6 +123,17 @@ describe('resolvePendingSend / failPendingSend / retryPendingSend', () => {
     expect(retryPendingSend(expired, 2_000)).toBe(expired);
   });
 
+  it('keeps a transport-ambiguous failure visible and duplicate-blocking without allowing retry', () => {
+    const candidate = pendingMessage();
+    const ambiguous = failPendingSendAmbiguously(candidate, 'Request timed out.', 200);
+
+    expect(ambiguous.delivery).toEqual({ phase: 'ambiguous', updatedAt: 200 });
+    expect(ambiguous.status).toBe('failed');
+    expect(ambiguous.message.sendState).toBe('failed');
+    expect(canRetryPendingDelivery(ambiguous.delivery)).toBe(false);
+    expect(hasActiveDuplicateSend([ambiguous], candidate)).toBe(true);
+  });
+
   it('models confirmation and expiry as explicit terminal delivery phases', () => {
     const broadcast = resolvePendingSend(pendingMessage(), { signature: 'real-sig' }, 200);
     const confirmed = confirmPendingSend(broadcast, 300);
@@ -161,6 +174,23 @@ describe('duplicate prevention', () => {
 
     expect(hasActiveDuplicateSend([qortium], qortal)).toBe(false);
     expect(hasActiveDuplicateSend([qortium], reply)).toBe(false);
+  });
+
+  it('blocks an identical reaction dispatch while allowing a different reaction on the same message', () => {
+    const thumbsUp = pendingMessage({
+      chatReference: 'message-sig',
+      kind: 'reaction',
+      text: '{"type":"reaction","content":"👍","contentState":true}',
+    });
+    const heart = pendingMessage({
+      chatReference: 'message-sig',
+      kind: 'reaction',
+      localId: 'pending-2',
+      text: '{"type":"reaction","content":"❤️","contentState":true}',
+    });
+
+    expect(hasActiveDuplicateSend([thumbsUp], thumbsUp)).toBe(true);
+    expect(hasActiveDuplicateSend([thumbsUp], heart)).toBe(false);
   });
 
   it('does not treat another account session as a duplicate send', () => {
@@ -207,6 +237,25 @@ describe('network account invalidation', () => {
         (entry) => entry.localId,
       ),
     ).toEqual(['qortium']);
+  });
+
+  it('drops stale Qortium work without touching Qortal work', () => {
+    const currentQortium = pendingMessage({ accountAddress: 'Qortium-current', localId: 'qortium-current' });
+    const staleQortium = pendingMessage({ accountAddress: 'Qortium-stale', localId: 'qortium-stale' });
+    const qortal = pendingMessage({
+      accountAddress: 'Qortal',
+      chatKey: 'qortal:group:7',
+      localId: 'qortal',
+      target: { groupId: 7, kind: 'group', network: 'qortal' },
+    });
+
+    expect(
+      retainPendingForNetworkAccount(
+        [currentQortium, staleQortium, qortal],
+        'qortium',
+        'Qortium-current',
+      ).map((entry) => entry.localId),
+    ).toEqual(['qortium-current', 'qortal']);
   });
 });
 
@@ -336,6 +385,14 @@ describe('pending revisions (edit/delete side channel)', () => {
 
     expect(failed.status).toBe('failed');
     expect(failed.error).toBe("Couldn't save edit.");
+  });
+
+  it('marks an ambiguous revision failure non-retryable', () => {
+    const failed = failPendingRevisionAmbiguously(pendingRevision(), 'Request timed out.', 200);
+
+    expect(failed.delivery).toEqual({ phase: 'ambiguous', updatedAt: 200 });
+    expect(failed.status).toBe('failed');
+    expect(canRetryPendingDelivery(failed.delivery)).toBe(false);
   });
 
   it('retryPendingRevision re-arms a failed revision to sending', () => {

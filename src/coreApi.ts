@@ -785,9 +785,40 @@ export async function approveGroupJoinRequest(groupId: number, joiner: string) {
 // to a `result`-wrapped or `transactionSignature` shape) so a caller on an
 // older/legacy bridge still gets a usable signature instead of `undefined`
 // silently breaking optimistic reconciliation.
+export class ChatSendRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChatSendRejectedError';
+  }
+}
+
+export function isChatSendRejectedError(error: unknown): error is ChatSendRejectedError {
+  return error instanceof ChatSendRejectedError;
+}
+
 function normalizeChatSendResult(value: unknown): ChatSendResult {
   const record = (value ?? {}) as Record<string, unknown>;
   const nestedResult = (record.result ?? {}) as Record<string, unknown>;
+  const errorType =
+    (typeof record.errorType === 'string' && record.errorType) ||
+    (typeof nestedResult.errorType === 'string' && nestedResult.errorType) ||
+    '';
+
+  // Home can return the signed transaction's signature alongside an explicit
+  // broadcast rejection. A signature alone therefore does not prove the node
+  // accepted it. Preserve this structured rejection as a distinct error type:
+  // callers may offer a retry only for this known-not-broadcast outcome, while
+  // timeouts/transport/normalization failures remain ambiguous.
+  if (record.accepted === false || nestedResult.accepted === false || errorType) {
+    const detail =
+      (typeof record.error === 'string' && record.error) ||
+      (typeof nestedResult.error === 'string' && nestedResult.error) ||
+      errorType ||
+      'Chat send was rejected before broadcast.';
+
+    throw new ChatSendRejectedError(detail.slice(0, 200));
+  }
+
   const signature =
     (typeof record.signature === 'string' && record.signature) ||
     (typeof record.transactionSignature === 'string' && record.transactionSignature) ||

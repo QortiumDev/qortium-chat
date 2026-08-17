@@ -43,6 +43,7 @@ import {
   getPendingGroupApprovals,
   getTransactionStatus,
   getPrivateDirectActiveChats,
+  isChatSendRejectedError,
   leaveGroup,
   joinGroup,
   publishQdnAttachment,
@@ -80,7 +81,9 @@ import {
   expirePendingRevisions,
   expirePendingSends,
   failPendingRevision,
+  failPendingRevisionAmbiguously,
   failPendingSend,
+  failPendingSendAmbiguously,
   getPendingSignatureIdentity,
   hasActiveDuplicateSend,
   indexPendingRevisionsByTarget,
@@ -1296,6 +1299,7 @@ export default function App() {
   const restoredForAccountRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<AsyncState<ChatMessage[]>>(createState(emptyMessages));
   const [messagesChatKey, setMessagesChatKey] = useState('');
+  const messagesChatKeyRef = useRef(messagesChatKey);
   // Screen-reader announcement for newly-arrived chat messages. The visible feed
   // is not a live region (announcing the whole transcript on load/switch would be
   // unusable), so a dedicated polite live region mirrors only genuinely new
@@ -1389,6 +1393,8 @@ export default function App() {
   const qortiumAccountRefreshGuardRef = useRef(new LatestRequestGuard());
   const qortiumActiveChatsRequestGuardRef = useRef(new LatestRequestGuard());
   const qortalAccountRefreshGuardRef = useRef(new LatestRequestGuard());
+  const qortalAccountRefreshPendingRef = useRef(false);
+  const refreshingQortalAccountAddressRef = useRef<string | null>(null);
   const qortalActiveChatsRequestGuardRef = useRef(new LatestRequestGuard());
   const groupDiscoveryRequestRef = useRef(0);
   const qortalGroupDiscoveryRequestRef = useRef(0);
@@ -1446,6 +1452,7 @@ export default function App() {
   const [sendPending, setSendPending] = useState(false);
   const [accountRefreshPending, setAccountRefreshPending] = useState(false);
   const accountRefreshPendingRef = useRef(false);
+  const accountRefreshGenerationRef = useRef(0);
   const [isComposerEmojiOpen, setComposerEmojiOpen] = useState(false);
   // One attachment per message (Qortal Hub's model): staged, encoded, and
   // size-checked up front; published on Send and then linked in the text.
@@ -1458,7 +1465,13 @@ export default function App() {
   // from nested re-entries so the drop overlay does not flicker.
   const attachmentDragDepthRef = useRef(0);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const [reactionPendingKey, setReactionPendingKey] = useState('');
+  // More than one message may have a reaction in flight. Scope each guard to
+  // its chat as well as signature+emoji so same-signature values on Qortium
+  // and Qortal cannot clear or disable one another.
+  const [reactionPendingOperations, setReactionPendingOperations] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const reactionPendingOperationsRef = useRef<ReadonlySet<string>>(reactionPendingOperations);
   // Optimistic pending -> confirmed -> failed send state (Chat 2.0 slice 1).
   // New messages and reactions live in `pendingSends` and are merged straight
   // into the rendered feed (see displayMessages below); edits/deletes target
@@ -1467,6 +1480,9 @@ export default function App() {
   // injected bubble (see pendingSends.ts's module doc for why). Both are
   // mirrored into refs so the detached async send/retry runners below always
   // see the current value, not one captured at dispatch time.
+  // Intentionally session-only: persisting these envelopes would store unsent
+  // plaintext. Close/reopen durability remains deferred until an encrypted
+  // persistence design exists.
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
   const pendingSendsRef = useRef<PendingSend[]>(pendingSends);
   const [pendingRevisions, setPendingRevisions] = useState<PendingRevision[]>([]);
@@ -1603,6 +1619,7 @@ export default function App() {
   selectedGroupIdRef.current = selectedGroupId;
   selectedDirectAddressRef.current = selectedDirectAddress;
   selectedChatKeyRef.current = selectedChatKey;
+  messagesChatKeyRef.current = messagesChatKey;
   hasSelectedChatRef.current = selectedChat !== null;
   currentAccountAddressRef.current = account?.address ?? null;
   currentQortalAccountAddressRef.current = qortalAccount?.address ?? null;
@@ -2028,6 +2045,18 @@ export default function App() {
     () => new Map(pendingSendsForSelectedChat.map((entry) => [entry.localId, entry])),
     [pendingSendsForSelectedChat],
   );
+  const selectedReactionPendingKeys = useMemo(() => {
+    const prefix = `${selectedChatKey}\0`;
+    const keys = new Set<string>();
+
+    for (const operationKey of reactionPendingOperations) {
+      if (operationKey.startsWith(prefix)) {
+        keys.add(operationKey.slice(prefix.length));
+      }
+    }
+
+    return keys;
+  }, [reactionPendingOperations, selectedChatKey]);
   const displayMessages = useMemo(
     () => mergeOptimisticMessages(combinedMessages, pendingSendsForSelectedChat),
     [combinedMessages, pendingSendsForSelectedChat],
@@ -2053,7 +2082,14 @@ export default function App() {
     // prunePendingSends/prunePendingRevisions run over the FULL pending list
     // (every chat, both networks), so the identity here is (network,
     // signature) — see getPendingSignatureIdentity — not a bare signature.
-    const confirmedNetwork = selectedChat?.network ?? 'qortium';
+    // During a switch, React can render the new selectedChat one frame before
+    // the previous transcript is replaced. Never label that old transcript as
+    // belonging to the new chat/network when pruning the global pending lists.
+    if (!selectedChat || !selectedChatKey || messagesChatKey !== selectedChatKey) {
+      return;
+    }
+
+    const confirmedNetwork = selectedChat.network ?? 'qortium';
     const confirmedSignatures = new Set<string>();
 
     for (const entry of messages.value) {
@@ -2068,7 +2104,7 @@ export default function App() {
 
     updatePendingSends((current) => prunePendingSends(current, confirmedSignatures));
     updatePendingRevisions((current) => prunePendingRevisions(current, confirmedSignatures));
-  }, [messages.value, selectedChat?.network]);
+  }, [messages.value, messagesChatKey, selectedChat, selectedChatKey]);
   // Stable identities for every handler passed to the memoized GroupList /
   // DirectList / MessageList (the handlers themselves are re-declared each
   // render). With these, the shared 30s clock is the only prop that should
@@ -2779,14 +2815,85 @@ export default function App() {
     }
   }
 
+  function clearQortalAccountSessionState(
+    nextAccountAddress: string | null,
+    options: { restorePersistedReadState?: boolean } = {},
+  ) {
+    updatePendingSends((current) =>
+      retainPendingForNetworkAccount(current, 'qortal', nextAccountAddress),
+    );
+    updatePendingRevisions((current) =>
+      retainPendingForNetworkAccount(current, 'qortal', nextAccountAddress),
+    );
+    updateReactionPendingOperations((current) => {
+      const next = new Set([...current].filter((key) => !key.startsWith('qortal:')));
+
+      return next.size === current.size ? current : next;
+    });
+    const currentQortiumAddress = currentAccountAddressRef.current;
+    const restoredQortalWatermarks =
+      options.restorePersistedReadState && currentQortiumAddress
+        ? readReadWatermarks(currentQortiumAddress).qortalGroups
+        : new Map<number, number>();
+
+    setLastReadByQortalGroupId(restoredQortalWatermarks);
+    setQortalGroupActivityById(new Map());
+
+    for (const key of draftsByChatKeyRef.current.keys()) {
+      if (key.startsWith('qortal:')) {
+        draftsByChatKeyRef.current.delete(key);
+      }
+    }
+
+    for (const key of chatViewCacheRef.current.keys()) {
+      if (key.startsWith('qortal:')) {
+        chatViewCacheRef.current.delete(key);
+      }
+    }
+
+    if (!options.restorePersistedReadState) {
+      for (const key of scrollPositionsRef.current.keys()) {
+        if (key.startsWith('qortal:')) {
+          scrollPositionsRef.current.delete(key);
+        }
+      }
+    }
+
+    if (messagesChatKeyRef.current.startsWith('qortal:')) {
+      messagesChatKeyRef.current = '';
+      setMessagesChatKey('');
+      setMessages({ phase: 'ready', value: emptyMessages });
+      setOlderMessages(emptyMessages);
+      setOlderMessagesState({ error: '', loading: false, reachedStart: true });
+      loadingOlderRef.current = false;
+    }
+
+    if (selectedChatKeyRef.current.startsWith('qortal:')) {
+      draftChatKeyRef.current = selectedChatKeyRef.current;
+      setDraft('');
+      setComposeContext(null);
+      setLiveAnnouncement('');
+      lastAnnouncedRef.current = { chatKey: '', signature: '' };
+      setUnreadDividerTimestamp(null);
+      setUnreadDividerCeiling(null);
+      setWriteError('');
+    }
+
+    if (loadedChatKeyRef.current.startsWith('qortal:')) {
+      loadedChatKeyRef.current = '';
+    }
+  }
+
   async function refreshQortalSelectedAccount(actionList = qortalBridge.value.actions) {
     const requestId = qortalAccountRefreshGuardRef.current.begin();
+    const previousAccountAddress = qortalAccountRefreshPendingRef.current
+      ? refreshingQortalAccountAddressRef.current
+      : currentQortalAccountAddressRef.current;
 
+    qortalAccountRefreshPendingRef.current = true;
+    refreshingQortalAccountAddressRef.current = previousAccountAddress;
     qortalActiveChatsRequestGuardRef.current.begin();
     currentQortalAccountAddressRef.current = null;
-    updatePendingSends((current) => retainPendingForNetworkAccount(current, 'qortal', null));
-    updatePendingRevisions((current) => retainPendingForNetworkAccount(current, 'qortal', null));
-    setReactionPendingKey('');
 
     // A selected-account event means the old chain identity is no longer safe
     // to use. Clear it synchronously so the composer cannot send with the old
@@ -2804,6 +2911,15 @@ export default function App() {
 
       if (!qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
         return;
+      }
+
+      const nextAccountAddress = snapshot.account.address;
+
+      currentQortalAccountAddressRef.current = nextAccountAddress;
+      if (previousAccountAddress !== nextAccountAddress) {
+        clearQortalAccountSessionState(nextAccountAddress, {
+          restorePersistedReadState: previousAccountAddress === null,
+        });
       }
 
       if (snapshot.phase === 'membership-error') {
@@ -2837,11 +2953,18 @@ export default function App() {
         return;
       }
 
+      currentQortalAccountAddressRef.current = null;
+      clearQortalAccountSessionState(null);
       setQortalAccount(null);
       setQortalAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       setQortalMemberGroups({ phase: 'ready', value: emptyGroups });
       setQortalGroups({ phase: 'ready', value: emptyGroups });
       setQortalActiveChats({ phase: 'ready', value: emptyActiveChats });
+    } finally {
+      if (qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
+        qortalAccountRefreshPendingRef.current = false;
+        refreshingQortalAccountAddressRef.current = null;
+      }
     }
   }
 
@@ -3126,7 +3249,13 @@ export default function App() {
       return;
     }
 
-    const sessionAccountAddress = account?.address ?? null;
+    const sessionAccountAddress = chat.network === 'qortal'
+      ? currentQortalAccountAddressRef.current
+      : currentAccountAddressRef.current;
+
+    if (!sessionAccountAddress) {
+      return;
+    }
 
     // Qortal groups take a small, self-contained path (below): no direct-chat
     // branch (Qortal DM is deferred), no private-group decrypt/key-recovery
@@ -3267,12 +3396,12 @@ export default function App() {
     options: { quiet?: boolean; sessionAccountAddress?: string | null } = {},
   ) {
     const chatKey = getSelectedChatKey(chat);
-    const sessionAccountAddress = options.sessionAccountAddress ?? account?.address ?? null;
+    const sessionAccountAddress = options.sessionAccountAddress ?? currentQortalAccountAddressRef.current;
     const isStale = () =>
       selectedChatKeyRef.current !== chatKey ||
-      currentAccountAddressRef.current !== sessionAccountAddress;
+      currentQortalAccountAddressRef.current !== sessionAccountAddress;
 
-    if (isStale()) {
+    if (!sessionAccountAddress || isStale()) {
       return;
     }
 
@@ -3338,10 +3467,18 @@ export default function App() {
     // chat the user has since left (the switch effect re-seeds older history
     // for the new chat, and a late result would overwrite that seed).
     const chatKey = getSelectedChatKey(chat);
-    const sessionAccountAddress = account?.address ?? null;
+    const sessionAccountAddress = chat.network === 'qortal'
+      ? currentQortalAccountAddressRef.current
+      : currentAccountAddressRef.current;
     const isStale = () =>
       selectedChatKeyRef.current !== chatKey ||
-      currentAccountAddressRef.current !== sessionAccountAddress;
+      (chat.network === 'qortal'
+        ? currentQortalAccountAddressRef.current
+        : currentAccountAddressRef.current) !== sessionAccountAddress;
+
+    if (!sessionAccountAddress || isStale()) {
+      return;
+    }
 
     const shouldDecryptPrivateGroup =
       chat.kind === 'group' &&
@@ -3519,18 +3656,35 @@ export default function App() {
     }
 
     setWriteError('');
+    const requestedAccountAddress = account.address;
+    const refreshGeneration = accountRefreshGenerationRef.current;
 
     try {
       const selectedAccount = normalizeSelectedAccount(
         await qdnRequest<QdnSelectedAccount>({ action: 'UNLOCK_SELECTED_ACCOUNT' }),
       );
 
+      if (
+        accountRefreshGenerationRef.current !== refreshGeneration ||
+        accountRefreshPendingRef.current ||
+        currentAccountAddressRef.current !== requestedAccountAddress ||
+        selectedAccount.address !== requestedAccountAddress
+      ) {
+        return null;
+      }
+
       setAccount(selectedAccount);
       setAccountError('');
 
       return selectedAccount.isUnlocked ? selectedAccount : null;
     } catch (error) {
-      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
+      if (
+        accountRefreshGenerationRef.current === refreshGeneration &&
+        !accountRefreshPendingRef.current &&
+        currentAccountAddressRef.current === requestedAccountAddress
+      ) {
+        setWriteError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
+      }
       return null;
     }
   }
@@ -3622,6 +3776,32 @@ export default function App() {
     setPendingRevisions(updatePendingStateRef(pendingRevisionsRef, updater));
   }
 
+  function updateReactionPendingOperations(
+    updater: (current: ReadonlySet<string>) => ReadonlySet<string>,
+  ) {
+    const next = updater(reactionPendingOperationsRef.current);
+
+    reactionPendingOperationsRef.current = next;
+    setReactionPendingOperations(next);
+  }
+
+  function getReactionOperationKey(chatKey: string, pendingKey: string) {
+    return `${chatKey}\0${pendingKey}`;
+  }
+
+  function clearReactionPendingOperation(operationKey: string) {
+    updateReactionPendingOperations((current) => {
+      if (!current.has(operationKey)) {
+        return current;
+      }
+
+      const next = new Set(current);
+
+      next.delete(operationKey);
+      return next;
+    });
+  }
+
   function pendingSendTargetFor(chat: SelectedChat): PendingSendTarget {
     return chat.kind === 'group'
       ? { groupId: chat.group.groupId, kind: 'group', network: chat.network }
@@ -3646,6 +3826,15 @@ export default function App() {
     );
   }
 
+  function isCurrentQortiumGroupActionContext(accountAddress: string, chatKey: string, groupId: number) {
+    return (
+      !chatKey.startsWith('qortal:') &&
+      selectedChatKeyRef.current === chatKey &&
+      selectedGroupIdRef.current === groupId &&
+      isCurrentWritableAccount(accountAddress)
+    );
+  }
+
   function getCurrentPendingOwnerAddress(target: PendingSendTarget) {
     return (target.network ?? 'qortium') === 'qortal'
       ? currentQortalAccountAddressRef.current
@@ -3654,8 +3843,21 @@ export default function App() {
 
   function isCurrentWritablePendingTarget(target: PendingSendTarget, accountAddress: string) {
     return (target.network ?? 'qortium') === 'qortal'
-      ? currentQortalAccountAddressRef.current === accountAddress
+      ? !qortalAccountRefreshPendingRef.current &&
+          currentQortalAccountAddressRef.current === accountAddress
       : isCurrentWritableAccount(accountAddress);
+  }
+
+  function isCurrentOrRefreshingPendingOwner(target: PendingSendTarget, accountAddress: string) {
+    if ((target.network ?? 'qortium') !== 'qortal') {
+      return currentAccountAddressRef.current === accountAddress;
+    }
+
+    return (
+      currentQortalAccountAddressRef.current === accountAddress ||
+      (qortalAccountRefreshPendingRef.current &&
+        refreshingQortalAccountAddressRef.current === accountAddress)
+    );
   }
 
   // The actual network round trip (local MemoryPoW + broadcast — several
@@ -3687,7 +3889,7 @@ export default function App() {
     try {
       const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
 
-      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
+      if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3701,7 +3903,7 @@ export default function App() {
         ),
       );
 
-      if (chat.kind === 'direct') {
+      if (chat.kind === 'direct' && isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         void loadActiveChats(selectedAccount, actions, { quiet: true });
       }
 
@@ -3710,11 +3912,14 @@ export default function App() {
       // (loadMessages already guards on isStale()) and unnecessary work at
       // worst. If the user has moved on, the normal poll/websocket for that
       // chat picks up the confirmed message whenever they return to it.
-      if (selectedChatKeyRef.current === entry.chatKey) {
+      if (
+        selectedChatKeyRef.current === entry.chatKey &&
+        isCurrentWritablePendingTarget(entry.target, entry.accountAddress)
+      ) {
         void loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
       }
     } catch (error) {
-      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
+      if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3726,7 +3931,9 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? failPendingSend(candidate, message)
+            ? isChatSendRejectedError(error)
+              ? failPendingSend(candidate, message)
+              : failPendingSendAmbiguously(candidate, message)
             : candidate,
         ),
       );
@@ -3761,7 +3968,7 @@ export default function App() {
     try {
       const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
 
-      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
+      if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3775,15 +3982,18 @@ export default function App() {
         ),
       );
 
-      if (chat.kind === 'direct') {
+      if (chat.kind === 'direct' && isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         void loadActiveChats(selectedAccount, actions, { quiet: true });
       }
 
-      if (selectedChatKeyRef.current === entry.chatKey) {
+      if (
+        selectedChatKeyRef.current === entry.chatKey &&
+        isCurrentWritablePendingTarget(entry.target, entry.accountAddress)
+      ) {
         void loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
       }
     } catch (error) {
-      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
+      if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3794,7 +4004,9 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? failPendingRevision(candidate, message)
+            ? isChatSendRejectedError(error)
+              ? failPendingRevision(candidate, message)
+              : failPendingRevisionAmbiguously(candidate, message)
             : candidate,
         ),
       );
@@ -3939,27 +4151,34 @@ export default function App() {
       return;
     }
 
+    const group = selectedGroup;
+    const chatKey = selectedChatKey;
+
     setLeavePending(true);
     setWriteError('');
 
     try {
       const selectedAccount = await ensureSelectedAccountUnlocked();
 
-      if (!selectedAccount) {
+      if (!selectedAccount || !isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
         return;
       }
 
-      const result = await leaveGroup(selectedGroup.groupId);
+      const result = await leaveGroup(group.groupId);
+
+      if (!isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
+        return;
+      }
 
       trackTransaction({
         action: 'leave',
-        group: selectedGroup,
+        group,
         message: t('status.leave.submitted'),
         result,
       });
 
       await loadAccountData(selectedAccount);
-      await loadGroupMembers(selectedGroup);
+      await loadGroupMembers(group);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.leave'), t));
     } finally {
@@ -3972,22 +4191,29 @@ export default function App() {
       return;
     }
 
+    const group = selectedGroup;
+    const chatKey = selectedChatKey;
+
     setStartMintingPending(true);
     setWriteError('');
 
     try {
       const selectedAccount = await ensureSelectedAccountUnlocked();
 
-      if (!selectedAccount) {
+      if (!selectedAccount || !isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
         return;
       }
 
       const result = await startMinting();
 
+      if (!isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
+        return;
+      }
+
       if (result.rewardSharePending) {
         trackTransaction({
           action: 'rewardshare',
-          group: selectedGroup,
+          group,
           message: t('status.minting.authorization.submitted'),
           result,
         });
@@ -3996,7 +4222,9 @@ export default function App() {
       await loadMintingStatus(selectedAccount);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.startMinting'), t));
-      void loadMintingStatus(account, actions, { quiet: true });
+      if (isCurrentWritableAccount(account.address)) {
+        void loadMintingStatus(account, actions, { quiet: true });
+      }
     } finally {
       setStartMintingPending(false);
     }
@@ -4074,17 +4302,24 @@ export default function App() {
       return;
     }
 
+    const group = selectedGroup;
+    const chatKey = selectedChatKey;
+
     setApprovalActionSignature(pendingSignature);
     setWriteError('');
 
     try {
       const selectedAccount = await ensureSelectedAccountUnlocked();
 
-      if (!selectedAccount) {
+      if (!selectedAccount || !isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
         return;
       }
 
-      const result = await submitGroupApproval(pendingSignature, approval, selectedGroup.groupId);
+      const result = await submitGroupApproval(pendingSignature, approval, group.groupId);
+
+      if (!isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
+        return;
+      }
 
       // Optimistic: reflect the just-cast vote until the next reload sees it
       // confirmed on-chain (the tx stays pending until the threshold is met).
@@ -4092,12 +4327,12 @@ export default function App() {
 
       trackTransaction({
         action: 'groupApproval',
-        group: selectedGroup,
+        group,
         message: approval ? t('status.approval.vote.submitted') : t('status.approval.oppose.submitted'),
         result,
       });
 
-      await loadPendingApprovals(selectedGroup.groupId);
+      await loadPendingApprovals(group.groupId);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.submitError.groupApproval'), t));
     } finally {
@@ -4110,21 +4345,32 @@ export default function App() {
       return;
     }
 
+    const group = selectedGroup;
+    const chatKey = selectedChatKey;
+
+    if (request.groupId !== group.groupId) {
+      return;
+    }
+
     setApprovePendingJoiner(request.joiner);
     setWriteError('');
 
     try {
       const selectedAccount = await ensureSelectedAccountUnlocked();
 
-      if (!selectedAccount) {
+      if (!selectedAccount || !isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
         return;
       }
 
       const result = await approveGroupJoinRequest(request.groupId, request.joiner);
 
+      if (!isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
+        return;
+      }
+
       trackTransaction({
         action: 'approve',
-        group: selectedGroup,
+        group,
         joiner: request.joiner,
         message: t('status.approval.submitted'),
         result,
@@ -4390,14 +4636,16 @@ export default function App() {
     }
 
     const chat = selectedChat;
+    const chatKey = getSelectedChatKey(chat);
     const targetSignature = message.signature;
     const pendingKey = getReactionPendingKey(targetSignature, reaction);
+    const operationKey = getReactionOperationKey(chatKey, pendingKey);
 
-    // Kept disabled for the whole round trip (not just the dispatch below) —
-    // same debounce this already did, now driven by the background runner's
-    // onSettled instead of an outer await, so a rapid double-click on the
-    // same chip cannot race two toggles of the same reaction.
-    setReactionPendingKey(pendingKey);
+    if (reactionPendingOperationsRef.current.has(operationKey)) {
+      return;
+    }
+
+    updateReactionPendingOperations((current) => new Set(current).add(operationKey));
     setWriteError('');
 
     try {
@@ -4410,7 +4658,7 @@ export default function App() {
         !pendingOwnerAddress ||
         !isCurrentWritablePendingTarget(target, pendingOwnerAddress)
       ) {
-        setReactionPendingKey('');
+        clearReactionPendingOperation(operationKey);
         return;
       }
 
@@ -4419,32 +4667,38 @@ export default function App() {
       const senderAddress = pendingOwnerAddress;
       const senderName = chat.network === 'qortal' ? (qortalAccount?.name ?? null) : selectedAccount.name;
 
+      const pendingSend = createPendingSend({
+        accountAddress: pendingOwnerAddress,
+        chatKey,
+        chatReference: targetSignature,
+        kind: 'reaction',
+        localId,
+        recipient: chat.kind === 'direct' ? chat.direct.address : null,
+        recipientName: chat.kind === 'direct' ? (chat.direct.name ?? null) : null,
+        sender: senderAddress,
+        senderName,
+        target,
+        text: reactionMessage,
+        timestamp: Date.now(),
+        txGroupId: chat.kind === 'group' ? chat.group.groupId : 0,
+      });
+
+      if (hasActiveDuplicateSend(pendingSendsRef.current, pendingSend)) {
+        clearReactionPendingOperation(operationKey);
+        return;
+      }
+
       // Merged straight into the feed (see mergeOptimisticMessages): the
       // reaction chip flips the instant this is dispatched, well before the
       // broadcast round trip completes.
-      updatePendingSends((current) => [
-        ...current,
-        createPendingSend({
-          accountAddress: pendingOwnerAddress,
-          chatKey: getSelectedChatKey(chat),
-          chatReference: targetSignature,
-          kind: 'reaction',
-          localId,
-          recipient: chat.kind === 'direct' ? chat.direct.address : null,
-          recipientName: chat.kind === 'direct' ? (chat.direct.name ?? null) : null,
-          sender: senderAddress,
-          senderName,
-          target,
-          text: reactionMessage,
-          timestamp: Date.now(),
-          txGroupId: chat.kind === 'group' ? chat.group.groupId : 0,
-        }),
-      ]);
+      updatePendingSends((current) => [...current, pendingSend]);
 
-      void runPendingSend(localId, chat, selectedAccount, { onSettled: () => setReactionPendingKey('') });
+      void runPendingSend(localId, chat, selectedAccount, {
+        onSettled: () => clearReactionPendingOperation(operationKey),
+      });
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendReaction'), t));
-      setReactionPendingKey('');
+      clearReactionPendingOperation(operationKey);
     }
   }
 
@@ -4934,6 +5188,7 @@ export default function App() {
     // Selected-account notifications are a write boundary. Disable composers
     // immediately while Home resolves the new tab account, and invalidate any
     // active-chat request that still belongs to the previous account.
+    accountRefreshGenerationRef.current += 1;
     accountRefreshPendingRef.current = true;
     setAccountRefreshPending(true);
     qortiumActiveChatsRequestGuardRef.current.begin();
@@ -4951,6 +5206,7 @@ export default function App() {
         return null;
       }
 
+      currentAccountAddressRef.current = selectedAccount.address;
       setAccount(selectedAccount);
       setAccountError('');
       void loadAccountData(selectedAccount, actionList, {
@@ -4962,6 +5218,7 @@ export default function App() {
         return null;
       }
 
+      currentAccountAddressRef.current = null;
       setAccount(null);
       setAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       setMemberGroups({ phase: 'ready', value: emptyGroups });
@@ -5808,23 +6065,38 @@ export default function App() {
   }, [activeChats.value.groups]);
 
   useEffect(() => {
-    // Everything below the selected identity is account-scoped. A chat key is
-    // intentionally stable across accounts for bookmarks, so it cannot by
-    // itself protect decrypted transcripts or optimistic writes when two
-    // accounts open the same conversation. Clear those volatile surfaces
-    // before the new account can compose or restore its saved selection.
-    setMessagesChatKey('');
-    setMessages({ phase: 'ready', value: emptyMessages });
-    setOlderMessages(emptyMessages);
-    setOlderMessagesState({ error: '', loading: false, reachedStart: true });
-    loadingOlderRef.current = false;
-    updatePendingSends(() => []);
-    updatePendingRevisions(() => []);
-    setReactionPendingKey('');
-    setLiveAnnouncement('');
-    lastAnnouncedRef.current = { chatKey: '', signature: '' };
-    setUnreadDividerTimestamp(null);
-    setUnreadDividerCeiling(null);
+    // Qortium and Qortal identities can refresh independently. Reset only the
+    // Qortium side here; refreshQortalSelectedAccount compares and owns the
+    // Qortal reset. That lets an unchanged Qortal session survive a Qortium-
+    // only identity change without exposing either account's Qortium data.
+    const selectedChatIsQortal = selectedChatKeyRef.current.startsWith('qortal:');
+    const accountAddress = account?.address ?? null;
+
+    if (!selectedChatIsQortal) {
+      messagesChatKeyRef.current = '';
+      setMessagesChatKey('');
+      setMessages({ phase: 'ready', value: emptyMessages });
+      setOlderMessages(emptyMessages);
+      setOlderMessagesState({ error: '', loading: false, reachedStart: true });
+      loadingOlderRef.current = false;
+      setLiveAnnouncement('');
+      lastAnnouncedRef.current = { chatKey: '', signature: '' };
+      setUnreadDividerTimestamp(null);
+      setUnreadDividerCeiling(null);
+      setWriteError('');
+    }
+
+    updatePendingSends((current) =>
+      retainPendingForNetworkAccount(current, 'qortium', accountAddress),
+    );
+    updatePendingRevisions((current) =>
+      retainPendingForNetworkAccount(current, 'qortium', accountAddress),
+    );
+    updateReactionPendingOperations((current) => {
+      const next = new Set([...current].filter((key) => key.startsWith('qortal:')));
+
+      return next.size === current.size ? current : next;
+    });
     setActiveChats(createState(emptyActiveChats));
     setAccountJoinRequests(createState(emptyJoinRequests));
     setAdminJoinRequests(createState(emptyAdminJoinRequests));
@@ -5832,14 +6104,12 @@ export default function App() {
     setPendingApprovals(createState(emptyPendingApprovals));
     setApprovalVotes(createState(emptyApprovalVotes));
     setTrackedTransactions({});
-    setWriteError('');
     setLoadedDirectActivityByAddress(new Map());
     // Restore this account's read watermarks so unread state survives reloads;
     // unseen groups/directs still get baselined to "read" by the effects below.
     const watermarks = account ? readReadWatermarks(account.address) : null;
     skipWatermarkPersistRef.current = true;
     setLastReadByGroupId(watermarks?.groups ?? new Map());
-    setLastReadByQortalGroupId(watermarks?.qortalGroups ?? new Map());
     setLastReadByAddress(watermarks?.directs ?? new Map());
     // Land any debounced bookmark write for the previous account before its map
     // is replaced below (the flush writes under the address captured when the
@@ -5847,38 +6117,44 @@ export default function App() {
     flushScrollBookmarks();
     // Restore this account's saved scroll bookmarks so reading positions survive
     // restarts; the in-memory view cache is per-session and starts empty.
-    scrollPositionsRef.current = account ? readScrollBookmarks(account.address) : new Map();
-    chatViewCacheRef.current.clear();
-    loadedChatKeyRef.current = '';
+    const nextScrollPositions = account ? readScrollBookmarks(account.address) : new Map<string, ChatScrollPosition>();
+
+    for (const [key, position] of scrollPositionsRef.current) {
+      if (key.startsWith('qortal:')) {
+        nextScrollPositions.set(key, position);
+      }
+    }
+
+    scrollPositionsRef.current = nextScrollPositions;
+    for (const key of chatViewCacheRef.current.keys()) {
+      if (!key.startsWith('qortal:')) {
+        chatViewCacheRef.current.delete(key);
+      }
+    }
+    if (!loadedChatKeyRef.current.startsWith('qortal:')) {
+      loadedChatKeyRef.current = '';
+    }
     requestedPrivateGroupKeysRef.current.clear();
     resolvedPrivateGroupKeyRequestsRef.current.clear();
-    // Drafts are per-account session state: never carry one account's unsent
-    // text (or a reply/edit context) into another account's composer. The now-
-    // empty draft belongs to whichever chat is still selected.
-    draftsByChatKeyRef.current.clear();
-    draftChatKeyRef.current = selectedChatKeyRef.current;
-    setDraft('');
-    setComposeContext(null);
-    setStagedAttachment(null);
-    setAttachmentError('');
+    for (const key of draftsByChatKeyRef.current.keys()) {
+      if (!key.startsWith('qortal:')) {
+        draftsByChatKeyRef.current.delete(key);
+      }
+    }
+    if (!selectedChatIsQortal) {
+      draftChatKeyRef.current = selectedChatKeyRef.current;
+      setDraft('');
+      setComposeContext(null);
+      setStagedAttachment(null);
+      setAttachmentError('');
+    }
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
-    // A new account restores its own last chat, regardless of the prior choice.
-    userSelectedChatRef.current = false;
+    // Preserve an active Qortal selection; otherwise restore the new Qortium
+    // account's saved chat in the normal effect below.
+    userSelectedChatRef.current = selectedChatIsQortal;
   }, [account?.address]);
-
-  useEffect(() => {
-    const accountAddress = qortalAccount?.address ?? null;
-
-    updatePendingSends((current) =>
-      retainPendingForNetworkAccount(current, 'qortal', accountAddress),
-    );
-    updatePendingRevisions((current) =>
-      retainPendingForNetworkAccount(current, 'qortal', accountAddress),
-    );
-    setReactionPendingKey('');
-  }, [qortalAccount?.address]);
 
   // Persist read watermarks as they advance. Runs after the load effect above, so
   // on an account switch it skips the transitional render (stale maps) once and
@@ -6551,6 +6827,7 @@ export default function App() {
   }, [
     selectedChatKey,
     account?.address,
+    qortalAccount?.address,
     actionsKey,
     qortalBridge.value.actions.join('\n'),
     isAccountUnlocked,
@@ -7482,7 +7759,7 @@ export default function App() {
                 onRetryRevision={handleRetryRevision}
                 onScrollPositionChange={handleScrollPositionChange}
                 now={now}
-                pendingReactionKey={reactionPendingKey}
+                pendingReactionKeys={selectedReactionPendingKeys}
                 pendingRevisionBySignature={pendingRevisionBySignature}
                 pendingSendByLocalId={pendingSendByLocalId}
                 qortalResourceActions={qortalBridge.value.actions}

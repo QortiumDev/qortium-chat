@@ -2448,6 +2448,7 @@ button.message__reply-preview:focus-visible {
   color: var(--qc-color-transaction-confirmed);
 }
 
+.message__send-status--ambiguous,
 .message__send-status--expired {
   color: var(--qc-color-warning);
 }

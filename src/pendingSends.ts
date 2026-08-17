@@ -27,7 +27,7 @@ import { encodeBase64 } from './chatText';
 import type { ChatMessage, ChatNetwork } from './types';
 
 export type PendingSendStatus = 'failed' | 'sending';
-export type SendDeliveryPhase = 'broadcast' | 'confirmed' | 'expired' | 'pending' | 'rejected';
+export type SendDeliveryPhase = 'ambiguous' | 'broadcast' | 'confirmed' | 'expired' | 'pending' | 'rejected';
 
 export type SendDeliveryState = {
   readonly phase: SendDeliveryPhase;
@@ -219,6 +219,23 @@ export function failPendingSend(pending: PendingSend, error: string, timestamp: 
   return {
     ...pending,
     delivery: { phase: 'rejected', updatedAt: timestamp },
+    error,
+    message: { ...pending.message, sendState: 'failed' },
+    status: 'failed',
+  };
+}
+
+/** A transport/timeout/normalization failure after dispatch does not prove the
+ * transaction was rejected: it may already have reached the node. Keep the
+ * local echo visible and duplicate-blocking, but never offer an unsafe retry. */
+export function failPendingSendAmbiguously(
+  pending: PendingSend,
+  error: string,
+  timestamp: number = Date.now(),
+): PendingSend {
+  return {
+    ...pending,
+    delivery: { phase: 'ambiguous', updatedAt: timestamp },
     error,
     message: { ...pending.message, sendState: 'failed' },
     status: 'failed',
@@ -431,6 +448,14 @@ export function failPendingRevision(
   timestamp: number = Date.now(),
 ): PendingRevision {
   return { ...pending, delivery: { phase: 'rejected', updatedAt: timestamp }, error, status: 'failed' };
+}
+
+export function failPendingRevisionAmbiguously(
+  pending: PendingRevision,
+  error: string,
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return { ...pending, delivery: { phase: 'ambiguous', updatedAt: timestamp }, error, status: 'failed' };
 }
 
 export function retryPendingRevision(pending: PendingRevision, timestamp: number = Date.now()): PendingRevision {

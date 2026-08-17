@@ -758,6 +758,32 @@ describe('Core API path builders', () => {
     });
   });
 
+  it('rejects an explicit Home broadcast failure even when it includes a signed transaction signature', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      accepted: false,
+      error: 'Node rejected the chat transaction.',
+      errorType: 'BROADCAST_REJECTED',
+      signature: 'signed-but-not-broadcast',
+    });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toMatchObject({
+      message: 'Node rejected the chat transaction.',
+      name: 'ChatSendRejectedError',
+    });
+  });
+
+  it('rejects an errorType result even if a legacy host omits accepted', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      errorType: 'BROADCAST_REJECTED',
+      signature: 'signed-but-not-broadcast',
+    });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toMatchObject({
+      message: 'BROADCAST_REJECTED',
+      name: 'ChatSendRejectedError',
+    });
+  });
+
   it('passes the edited message reference through to the bridge', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({ signature: 'edit-sig', timestamp: 1700000000010 })
