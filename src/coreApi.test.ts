@@ -24,6 +24,7 @@ import {
   submitGroupApproval,
   getActiveChats,
   getAccountNames,
+  getAccountNamesForNetwork,
   getCurrentBlockHeight,
   getAccountGroupJoinRequests,
   getAdminGroupJoinRequests,
@@ -319,6 +320,16 @@ describe('Core API path builders', () => {
       action: 'GET_ACCOUNT_NAMES',
       address: 'Qabc',
     });
+  });
+
+  it('keeps Qortal account-name resolution on the Qortal bridge', async () => {
+    qortalRequestMock.mockResolvedValueOnce([{ name: 'alice', owner: 'Qabc' }]);
+
+    await expect(getAccountNamesForNetwork('qortal', 'Qabc', ['GET_ACCOUNT_NAMES'])).resolves.toEqual([
+      { name: 'alice', owner: 'Qabc' },
+    ]);
+    expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'GET_ACCOUNT_NAMES', address: 'Qabc' });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
   });
 
   it('falls back to FETCH_NODE_API for account names', async () => {

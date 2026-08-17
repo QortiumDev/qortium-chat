@@ -128,6 +128,7 @@ import {
   type GroupConversationSummary,
   type PublicGroupDiscovery,
 } from './conversationModel';
+import { getConversationInitials } from './conversationPresentation';
 import { GroupMemberList } from './GroupMemberList';
 import { MessageList } from './MessageList';
 import {
@@ -138,8 +139,9 @@ import {
   getShortAddress,
   UserAvatar,
   type AccountInfoTarget,
-  type AvatarProfilesByAddress,
+  type AvatarProfilesByIdentity,
   type CachedAvatarProfile,
+  selectAvatarProfilesForNetwork,
 } from './accountDisplay';
 import {
   BackIcon,
@@ -199,6 +201,9 @@ import {
 } from './groupAccess';
 import {
   fetchAccountAvatar,
+  fetchGroupAvatar,
+  getAvatarProfileKey,
+  getGroupAvatarProfileKey,
   getNextAvatarPendingRetry,
   loadAvatarProfile,
   normalizeRegisteredName,
@@ -206,6 +211,7 @@ import {
   resolveAvatarIdentities,
   type AvatarProfile,
   type AvatarPendingRetryState,
+  type GroupAvatarProfile,
 } from './avatarProfiles';
 import { AvatarTaskQueue } from './avatarQueue';
 import type {
@@ -546,20 +552,22 @@ function normalizeSelectedAccount(account: QdnSelectedAccount): QdnSelectedAccou
 
 
 
-function getAvatarRequestKey(address: string, preferredName: string | null | undefined, actionsKey: string) {
-  return JSON.stringify([address, normalizeRegisteredName(preferredName) ?? '', actionsKey]);
+type AvatarTarget = { address: string; network: ChatNetwork };
+
+function getAvatarRequestKey(target: AvatarTarget, preferredName: string | null | undefined, actionsKey: string) {
+  return JSON.stringify([target.network, target.address, normalizeRegisteredName(preferredName) ?? '', actionsKey]);
 }
 
 const AVATAR_REQUEST_CONCURRENCY = 6;
 
 function useAvatarProfiles(
-  addresses: string[],
-  knownNamesByAddress: ReadonlyMap<string, string>,
-  actions: QdnAction[],
-  actionsKey: string,
+  targets: AvatarTarget[],
+  knownNamesByIdentity: ReadonlyMap<string, string>,
+  actionsByNetwork: Readonly<Record<ChatNetwork, QdnAction[]>>,
+  actionsKeysByNetwork: Readonly<Record<ChatNetwork, string>>,
   protectedObjectUrl: string | null,
 ) {
-  const [profiles, setProfiles] = useState<AvatarProfilesByAddress>(() => new Map());
+  const [profiles, setProfiles] = useState<AvatarProfilesByIdentity>(() => new Map());
   const latestRequestKeysRef = useRef(new Map<string, string>());
   const avatarTaskQueueRef = useRef<AvatarTaskQueue | null>(null);
 
@@ -596,8 +604,8 @@ function useAvatarProfiles(
       revokeAvatarObjectUrl(objectUrl);
     }
   }, []);
-  const addressKey = JSON.stringify(addresses);
-  const knownNamesKey = JSON.stringify(Array.from(knownNamesByAddress.entries()));
+  const targetKey = JSON.stringify(targets);
+  const knownNamesKey = JSON.stringify(Array.from(knownNamesByIdentity.entries()));
 
   useEffect(() => {
     const releaseObjectUrl = (objectUrl: string) => {
@@ -617,7 +625,8 @@ function useAvatarProfiles(
       }
     }
 
-    const visibleAddresses = new Set(addresses);
+    const targetByKey = new Map(targets.map((target) => [getAvatarProfileKey(target.network, target.address), target]));
+    const visibleAddresses = new Set(targetByKey.keys());
     const departedAddresses: string[] = [];
 
     for (const address of latestRequestKeysRef.current.keys()) {
@@ -658,9 +667,9 @@ function useAvatarProfiles(
     const requestKeyByAddress = new Map<string, string>();
     const needed: string[] = [];
 
-    for (const address of addresses) {
-      const preferredName = knownNamesByAddress.get(address) ?? null;
-      const requestKey = getAvatarRequestKey(address, preferredName, actionsKey);
+    for (const [address, target] of targetByKey) {
+      const preferredName = knownNamesByIdentity.get(address) ?? null;
+      const requestKey = getAvatarRequestKey(target, preferredName, actionsKeysByNetwork[target.network]);
 
       latestRequestKeysRef.current.set(address, requestKey);
       requestKeyByAddress.set(address, requestKey);
@@ -718,29 +727,30 @@ function useAvatarProfiles(
     };
 
     const commit = (profile: AvatarProfile) => {
-      settlePending(profile.address);
-      clearRetry(profile.address);
+      const profileKey = getAvatarProfileKey(profile.network, profile.address);
+      settlePending(profileKey);
+      clearRetry(profileKey);
 
-      if (!isCurrent(profile.address)) {
+      if (!isCurrent(profileKey)) {
         revokeAvatarObjectUrl(profile.avatarSrc);
         return;
       }
 
-      const previousObjectUrl = profileAvatarObjectUrlsRef.current.get(profile.address);
+      const previousObjectUrl = profileAvatarObjectUrlsRef.current.get(profileKey);
 
       if (previousObjectUrl && previousObjectUrl !== profile.avatarSrc) {
-        profileAvatarObjectUrlsRef.current.delete(profile.address);
+        profileAvatarObjectUrlsRef.current.delete(profileKey);
         releaseObjectUrl(previousObjectUrl);
       }
 
       if (profile.avatarSrc) {
-        profileAvatarObjectUrlsRef.current.set(profile.address, profile.avatarSrc);
+        profileAvatarObjectUrlsRef.current.set(profileKey, profile.avatarSrc);
         avatarObjectUrlsRef.current.add(profile.avatarSrc);
       }
 
       setProfiles((current) => {
         const next = new Map(current);
-        next.set(profile.address, { ...profile, requestKey: requestKeyByAddress.get(profile.address) as string });
+        next.set(profileKey, { ...profile, requestKey: requestKeyByAddress.get(profileKey) as string });
         return next;
       });
     };
@@ -754,7 +764,8 @@ function useAvatarProfiles(
         let next: Map<string, CachedAvatarProfile> | null = null;
 
         for (const profile of batch) {
-          if (!isCurrent(profile.address)) {
+          const profileKey = getAvatarProfileKey(profile.network, profile.address);
+          if (!isCurrent(profileKey)) {
             continue;
           }
 
@@ -762,11 +773,11 @@ function useAvatarProfiles(
           // Keep a current address-scoped image during the small interval while
           // its refreshed pointer request is pending. A final unavailable
           // result clears it through commit(), and a ready result replaces it.
-          const existing = current.get(profile.address);
-          next.set(profile.address, {
+          const existing = current.get(profileKey);
+          next.set(profileKey, {
             ...profile,
             avatarSrc: existing?.avatarSrc ?? profile.avatarSrc,
-            requestKey: requestKeyByAddress.get(profile.address) as string,
+            requestKey: requestKeyByAddress.get(profileKey) as string,
           });
         }
 
@@ -775,19 +786,20 @@ function useAvatarProfiles(
     };
 
     function scheduleAvatarRetry(profile: AvatarProfile, retryAfterSeconds: number) {
-      if (!isCurrent(profile.address)) {
-        settlePending(profile.address);
+      const profileKey = getAvatarProfileKey(profile.network, profile.address);
+      if (!isCurrent(profileKey)) {
+        settlePending(profileKey);
         return;
       }
 
-      const requestKey = requestKeyByAddress.get(profile.address) as string;
-      const existing = retryTimersRef.current.get(profile.address);
+      const requestKey = requestKeyByAddress.get(profileKey) as string;
+      const existing = retryTimersRef.current.get(profileKey);
 
       if (existing?.requestKey === requestKey) {
         return;
       }
 
-      const previousRetry = retryStatesRef.current.get(profile.address);
+      const previousRetry = retryStatesRef.current.get(profileKey);
       const retry = getNextAvatarPendingRetry(
         previousRetry?.requestKey === requestKey ? previousRetry.state : undefined,
         retryAfterSeconds,
@@ -798,33 +810,35 @@ function useAvatarProfiles(
         return;
       }
 
-      retryStatesRef.current.set(profile.address, {
+      retryStatesRef.current.set(profileKey, {
         requestKey,
         state: retry.state,
       });
       const timer = window.setTimeout(() => {
-        retryTimersRef.current.delete(profile.address);
+        retryTimersRef.current.delete(profileKey);
 
-        if (isCurrent(profile.address)) {
+        if (isCurrent(profileKey)) {
           enqueueAccountAvatar(profile);
         } else {
-          settlePending(profile.address);
+          settlePending(profileKey);
         }
       }, retry.delayMs);
 
-      retryTimersRef.current.set(profile.address, { requestKey, timer });
+      retryTimersRef.current.set(profileKey, { requestKey, timer });
     }
 
     async function loadAccountAvatar(profile: AvatarProfile) {
-      if (!isCurrent(profile.address)) {
-        settlePending(profile.address);
+      const profileKey = getAvatarProfileKey(profile.network, profile.address);
+      if (!isCurrent(profileKey)) {
+        settlePending(profileKey);
         return;
       }
 
       try {
         const avatar = await fetchAccountAvatar(
+          profile.network,
           profile.address,
-          actions,
+          actionsByNetwork[profile.network],
           profile.name,
         );
 
@@ -843,7 +857,7 @@ function useAvatarProfiles(
     }
 
     function enqueueAvatarTask(address: string, task: () => Promise<void>) {
-      const priority = addresses.indexOf(address);
+      const priority = Array.from(targetByKey.keys()).indexOf(address);
 
       void avatarTaskQueueRef.current
         ?.enqueue(async () => {
@@ -853,23 +867,30 @@ function useAvatarProfiles(
           }
 
           await task();
-        }, priority < 0 ? addresses.length : priority)
+        }, priority < 0 ? targets.length : priority)
         .catch(() => {
           settlePending(address);
         });
     }
 
     function enqueueAccountAvatar(profile: AvatarProfile) {
-      enqueueAvatarTask(profile.address, () => loadAccountAvatar(profile));
+      enqueueAvatarTask(getAvatarProfileKey(profile.network, profile.address), () => loadAccountAvatar(profile));
     }
 
     const loadIndividually = (targets: string[]) => {
       for (const address of targets) {
-        const preferredName = knownNamesByAddress.get(address) ?? null;
+        const target = targetByKey.get(address);
+        if (!target) continue;
+        const preferredName = knownNamesByIdentity.get(address) ?? null;
 
         enqueueAvatarTask(address, async () => {
           try {
-            const profile = await loadAvatarProfile({ actions, address, preferredName });
+            const profile = await loadAvatarProfile({
+              actions: actionsByNetwork[target.network],
+              address: target.address,
+              network: target.network,
+              preferredName,
+            });
 
             commitMany([profile]);
             await loadAccountAvatar(profile);
@@ -884,16 +905,22 @@ function useAvatarProfiles(
     };
 
     if (needed.length > 0) {
-      if (hasAction(actions, 'RESOLVE_IDENTITIES')) {
+      const qortiumNeeded = needed.filter((key) => targetByKey.get(key)?.network === 'qortium');
+      const otherNeeded = needed.filter((key) => targetByKey.get(key)?.network !== 'qortium');
+
+      if (qortiumNeeded.length > 0 && hasAction(actionsByNetwork.qortium, 'RESOLVE_IDENTITIES')) {
         // Batch only display-name resolution. RESOLVE_IDENTITIES.avatarSrc is
         // a legacy named-thumbnail hint, not evidence of a current pointer.
-        void resolveAvatarIdentities({ actions, addresses: needed, knownNamesByAddress })
+        const qortiumAddresses = qortiumNeeded.map((key) => targetByKey.get(key)?.address as string);
+        const knownQortiumNames = new Map(qortiumNeeded.map((key) => [targetByKey.get(key)?.address as string, knownNamesByIdentity.get(key) ?? '']));
+        void resolveAvatarIdentities({ actions: actionsByNetwork.qortium, addresses: qortiumAddresses, knownNamesByAddress: knownQortiumNames })
           .then((resolved) => {
             // Commit names first in a single update so labels are not gated on images.
-            const profiles = needed.map((address) => ({
+            const profiles = qortiumAddresses.map((address) => ({
               address,
               avatarSrc: null,
               name: resolved.get(address)?.name ?? null,
+              network: 'qortium' as const,
             }));
 
             commitMany(profiles);
@@ -906,13 +933,129 @@ function useAvatarProfiles(
           })
           .catch(() => {
             // Batch resolution failed unexpectedly — fall back to per-address loads.
-            loadIndividually(needed);
+            loadIndividually(qortiumNeeded);
           });
       } else {
-        loadIndividually(needed);
+        loadIndividually(qortiumNeeded);
+      }
+
+      loadIndividually(otherNeeded);
+    }
+  }, [actionsKeysByNetwork.qortal, actionsKeysByNetwork.qortium, knownNamesKey, protectedObjectUrl, targetKey]);
+
+  return profiles;
+}
+
+type GroupAvatarTarget = { group: GroupData; network: ChatNetwork };
+type CachedGroupAvatarProfile = GroupAvatarProfile & { requestKey: string };
+
+function useGroupAvatarProfiles(
+  targets: GroupAvatarTarget[],
+  actionsByNetwork: Readonly<Record<ChatNetwork, QdnAction[]>>,
+  actionsKeysByNetwork: Readonly<Record<ChatNetwork, string>>,
+  protectedObjectUrl: string | null,
+) {
+  const [profiles, setProfiles] = useState<ReadonlyMap<string, CachedGroupAvatarProfile>>(() => new Map());
+  const objectUrlsRef = useRef(new Map<string, string>());
+  const latestKeysRef = useRef(new Map<string, string>());
+  const timersRef = useRef(new Map<string, number>());
+  const queueRef = useRef<AvatarTaskQueue | null>(null);
+  const mountedRef = useRef(true);
+  queueRef.current ??= new AvatarTaskQueue(AVATAR_REQUEST_CONCURRENCY);
+  const targetsKey = JSON.stringify(targets.map(({ group, network }) => [
+    network,
+    group.groupId,
+    group.owner ?? '',
+    group.ownerPrimaryName ?? '',
+  ]));
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    for (const timer of timersRef.current.values()) window.clearTimeout(timer);
+    for (const src of objectUrlsRef.current.values()) revokeAvatarObjectUrl(src);
+  }, []);
+
+  useEffect(() => {
+    const targetByKey = new Map(targets.map((target) => [
+      getGroupAvatarProfileKey(target.network, target.group.groupId),
+      target,
+    ]));
+    const wanted = new Set(targetByKey.keys());
+
+    for (const key of latestKeysRef.current.keys()) {
+      if (wanted.has(key)) continue;
+      latestKeysRef.current.delete(key);
+      const timer = timersRef.current.get(key);
+      if (typeof timer === 'number') window.clearTimeout(timer);
+      timersRef.current.delete(key);
+      const src = objectUrlsRef.current.get(key);
+      if (src && src !== protectedObjectUrl) {
+        revokeAvatarObjectUrl(src);
+        objectUrlsRef.current.delete(key);
       }
     }
-  }, [actionsKey, addressKey, knownNamesKey, protectedObjectUrl]);
+    for (const [key, src] of objectUrlsRef.current) {
+      if (!wanted.has(key) && src !== protectedObjectUrl) {
+        revokeAvatarObjectUrl(src);
+        objectUrlsRef.current.delete(key);
+      }
+    }
+    setProfiles((current) => {
+      const next = new Map(current);
+      for (const key of current.keys()) if (!wanted.has(key)) next.delete(key);
+      return next.size === current.size ? current : next;
+    });
+
+    for (const [key, target] of targetByKey) {
+      const requestKey = JSON.stringify([
+        key,
+        target.group.owner ?? '',
+        target.group.ownerPrimaryName ?? '',
+        actionsKeysByNetwork[target.network],
+      ]);
+      if (latestKeysRef.current.get(key) === requestKey) continue;
+      latestKeysRef.current.set(key, requestKey);
+
+      const load = async (retryState?: AvatarPendingRetryState): Promise<void> => {
+        if (!mountedRef.current || latestKeysRef.current.get(key) !== requestKey) return;
+        const result = await fetchGroupAvatar(target.network, target.group, actionsByNetwork[target.network]);
+        if (!mountedRef.current || latestKeysRef.current.get(key) !== requestKey) {
+          if (result.kind === 'ready') revokeAvatarObjectUrl(result.src);
+          return;
+        }
+        if (result.kind === 'pending') {
+          const retry = getNextAvatarPendingRetry(retryState, result.retryAfterSeconds);
+          if (retry) {
+            const timer = window.setTimeout(() => {
+              timersRef.current.delete(key);
+              void load(retry.state);
+            }, retry.delayMs);
+            timersRef.current.set(key, timer);
+          }
+          return;
+        }
+
+        const previous = objectUrlsRef.current.get(key);
+        if (previous && previous !== protectedObjectUrl && (result.kind !== 'ready' || previous !== result.src)) {
+          revokeAvatarObjectUrl(previous);
+          objectUrlsRef.current.delete(key);
+        }
+        if (result.kind === 'ready') objectUrlsRef.current.set(key, result.src);
+        setProfiles((current) => {
+          const next = new Map(current);
+          next.set(key, {
+            avatarSrc: result.kind === 'ready' ? result.src : null,
+            groupId: target.group.groupId,
+            network: target.network,
+            requestKey,
+          });
+          return next;
+        });
+      };
+
+      void queueRef.current?.enqueue(load, Array.from(targetByKey.keys()).indexOf(key)).catch(() => undefined);
+    }
+  }, [actionsKeysByNetwork.qortal, actionsKeysByNetwork.qortium, protectedObjectUrl, targetsKey]);
 
   return profiles;
 }
@@ -1283,7 +1426,7 @@ export default function App() {
   // until joined, so an invite has no other surface in the app).
   const [groupInvites, setGroupInvites] = useState<AsyncState<GroupInvite[]>>(createState(emptyInvites));
   const [inviteActionGroupId, setInviteActionGroupId] = useState<number | null>(null);
-  const [accountInfoTarget, setAccountInfoTarget] = useState<AccountInfoTarget | null>(null);
+  const [accountInfoTarget, setAccountInfoTarget] = useState<(AccountInfoTarget & { network: ChatNetwork }) | null>(null);
   const [avatarLightboxImage, setAvatarLightboxImage] = useState<AvatarLightboxImage | null>(null);
   // Message thread awaiting delete confirmation (the dialog is the commit).
   const [deleteTarget, setDeleteTarget] = useState<MessageThread | null>(null);
@@ -1292,6 +1435,15 @@ export default function App() {
   const [now, setNow] = useState(() => Date.now());
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
+  const qortalActionsKey = qortalBridge.value.actions.join('\n');
+  const avatarActionsByNetwork = useMemo(
+    () => ({ qortal: qortalBridge.value.actions, qortium: actions }),
+    [actionsKey, qortalActionsKey],
+  );
+  const avatarActionKeysByNetwork = useMemo(
+    () => ({ qortal: qortalActionsKey, qortium: actionsKey }),
+    [actionsKey, qortalActionsKey],
+  );
   const selectedAccountRefreshActionsRef = useRef({
     qortal: qortalBridge.value.actions,
     qortium: actions,
@@ -1874,13 +2026,21 @@ export default function App() {
     const accountName = normalizeRegisteredName(account?.name);
 
     if (account?.address && accountName) {
-      namesByAddress.set(account.address, accountName);
+      namesByAddress.set(getAvatarProfileKey('qortium', account.address), accountName);
+    }
+
+    const qortalAccountName = normalizeRegisteredName(qortalAccount?.name);
+    if (qortalAccount?.address && qortalAccountName) {
+      namesByAddress.set(getAvatarProfileKey('qortal', qortalAccount.address), qortalAccountName);
     }
 
     const accountInfoName = normalizeRegisteredName(accountInfoTarget?.senderName);
 
     if (accountInfoTarget?.sender && accountInfoName) {
-      namesByAddress.set(accountInfoTarget.sender, accountInfoName);
+      namesByAddress.set(
+        getAvatarProfileKey(accountInfoTarget.network, accountInfoTarget.sender),
+        accountInfoName,
+      );
     }
 
     for (const direct of mergedDirects) {
@@ -1889,66 +2049,81 @@ export default function App() {
       // counterpart's address would poison name display everywhere.
       const directName = normalizeRegisteredName(getDirectCounterpartName(direct));
 
-      if (directName && !namesByAddress.has(direct.address)) {
-        namesByAddress.set(direct.address, directName);
+      const key = getAvatarProfileKey('qortium', direct.address);
+      if (directName && !namesByAddress.has(key)) {
+        namesByAddress.set(key, directName);
       }
     }
 
+    const selectedNetwork = selectedChat?.network ?? 'qortium';
     for (const message of messages.value) {
       const senderName = normalizeRegisteredName(message.senderName);
+      const key = getAvatarProfileKey(selectedNetwork, message.sender);
 
-      if (senderName && !namesByAddress.has(message.sender)) {
-        namesByAddress.set(message.sender, senderName);
+      if (senderName && !namesByAddress.has(key)) {
+        namesByAddress.set(key, senderName);
       }
     }
 
-    for (const member of groupMembers.value) {
+    for (const member of selectedGroupMembers) {
       const address = getGroupMemberAddress(member);
       const memberName = getGroupMemberRegisteredName(member);
+      const key = address ? getAvatarProfileKey(selectedNetwork, address) : '';
 
-      if (address && memberName && !namesByAddress.has(address)) {
-        namesByAddress.set(address, memberName);
+      if (address && memberName && !namesByAddress.has(key)) {
+        namesByAddress.set(key, memberName);
       }
     }
 
     if (selectedGroup?.owner && selectedGroup.ownerPrimaryName) {
-      namesByAddress.set(selectedGroup.owner, selectedGroup.ownerPrimaryName);
+      namesByAddress.set(
+        getAvatarProfileKey(selectedNetwork, selectedGroup.owner),
+        selectedGroup.ownerPrimaryName,
+      );
     }
 
     return namesByAddress;
   }, [
     account?.address,
     account?.name,
+    qortalAccount?.address,
+    qortalAccount?.name,
     accountInfoTarget?.sender,
     accountInfoTarget?.senderName,
-    groupMembers.value,
+    accountInfoTarget?.network,
     mergedDirects,
     messages.value,
+    selectedChat?.network,
     selectedGroup?.owner,
     selectedGroup?.ownerPrimaryName,
+    selectedGroupMembers,
   ]);
-  const avatarAddresses = useMemo(() => {
-    const addresses = new Set<string>();
+  const avatarTargets = useMemo(() => {
+    const targets = new Map<string, AvatarTarget>();
+    const add = (network: ChatNetwork, address: string | null | undefined) => {
+      if (address && targets.size < 96) targets.set(getAvatarProfileKey(network, address), { address, network });
+    };
 
-    if (account?.address) {
-      addresses.add(account.address);
-    }
+    add('qortium', account?.address);
+    add('qortal', qortalAccount?.address);
 
     if (accountInfoTarget?.sender) {
-      addresses.add(accountInfoTarget.sender);
+      add(accountInfoTarget.network, accountInfoTarget.sender);
     }
 
-    // MessageList mounts the selected conversation, so these are the message
-    // identities actually visible in the current chat pane.
-    for (const message of combinedMessages) {
-      addresses.add(message.sender);
+    const selectedNetwork = selectedChat?.network ?? 'qortium';
+    // Prefer the newest senders and keep the cache bounded even after a long
+    // history page-in. The selected feed and currently rendered row surfaces
+    // are the only identities that should trigger avatar traffic.
+    for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
+      add(selectedNetwork, combinedMessages[index]?.sender);
     }
 
     for (const direct of mergedDirects) {
       // A collapsed direct list renders only unread rows plus the selected
       // chat. Do not download an image just because a direct is stored.
       if (!isDirectCollapsed || unreadDirectAddresses.has(direct.address) || direct.address === selectedDirectAddress) {
-        addresses.add(direct.address);
+        add('qortium', direct.address);
       }
     }
 
@@ -1957,7 +2132,7 @@ export default function App() {
         const address = getGroupMemberAddress(member);
 
         if (address) {
-          addresses.add(address);
+          add(selectedNetwork, address);
         }
       }
     }
@@ -1965,15 +2140,17 @@ export default function App() {
     if (approvalModalOpen) {
       for (const transaction of pendingApprovals.value) {
         if (transaction.creatorAddress) {
-          addresses.add(transaction.creatorAddress);
+          add('qortium', transaction.creatorAddress);
         }
       }
     }
 
-    return Array.from(addresses);
+    return Array.from(targets.values());
   }, [
     account?.address,
+    qortalAccount?.address,
     accountInfoTarget?.sender,
+    accountInfoTarget?.network,
     approvalModalOpen,
     combinedMessages,
     isDirectCollapsed,
@@ -1981,17 +2158,73 @@ export default function App() {
     mergedDirects,
     pendingApprovals.value,
     selectedDirectAddress,
+    selectedChat?.network,
     selectedGroupMembers,
     showGroupMembers,
     unreadDirectAddresses,
   ]);
   const avatarProfiles = useAvatarProfiles(
-    avatarAddresses,
+    avatarTargets,
     knownAvatarNames,
-    actions,
-    actionsKey,
+    avatarActionsByNetwork,
+    avatarActionKeysByNetwork,
     avatarLightboxImage?.src ?? null,
   );
+  const qortiumAvatarProfiles = useMemo(
+    () => selectAvatarProfilesForNetwork(avatarProfiles, 'qortium'),
+    [avatarProfiles],
+  );
+  const qortalAvatarProfiles = useMemo(
+    () => selectAvatarProfilesForNetwork(avatarProfiles, 'qortal'),
+    [avatarProfiles],
+  );
+  const selectedAvatarProfiles = selectedChat?.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles;
+  const qortiumKnownAvatarNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const [key, name] of knownAvatarNames) {
+      if (key.startsWith('qortium:')) names.set(key.slice('qortium:'.length), name);
+    }
+    return names;
+  }, [knownAvatarNames]);
+  const groupAvatarTargets = useMemo(() => {
+    const targets = new Map<string, GroupAvatarTarget>();
+    const counts: Record<ChatNetwork, number> = { qortal: 0, qortium: 0 };
+    const add = (target: GroupAvatarTarget) => {
+      if (target.group.groupId < 1) return;
+      const key = getGroupAvatarProfileKey(target.network, target.group.groupId);
+      if (targets.has(key) || counts[target.network] >= 48) return;
+      targets.set(key, target);
+      counts[target.network] += 1;
+    };
+
+    if (selectedGroup && selectedChat?.network) add({ group: selectedGroup, network: selectedChat.network });
+    if (!isGroupsCollapsed) for (const conversation of groupConversations) add(conversation);
+    if (isGroupSearchVisible) for (const conversation of groupDiscoveryConversations) add(conversation);
+    if (!isQortalGroupsCollapsed) for (const conversation of qortalGroupConversations) add(conversation);
+    if (isQortalGroupSearchOpen) for (const conversation of qortalGroupDiscoveryConversations) add(conversation);
+
+    return Array.from(targets.values());
+  }, [
+    groupConversations,
+    groupDiscoveryConversations,
+    isGroupSearchVisible,
+    isGroupsCollapsed,
+    isQortalGroupSearchOpen,
+    isQortalGroupsCollapsed,
+    qortalGroupConversations,
+    qortalGroupDiscoveryConversations,
+    selectedChat?.network,
+    selectedGroup,
+  ]);
+  const groupAvatarProfiles = useGroupAvatarProfiles(
+    groupAvatarTargets,
+    avatarActionsByNetwork,
+    avatarActionKeysByNetwork,
+    avatarLightboxImage?.src ?? null,
+  );
+  const selectedGroupAvatar = selectedGroup && selectedChat?.network
+    ? groupAvatarProfiles.get(getGroupAvatarProfileKey(selectedChat.network, selectedGroup.groupId))
+    : undefined;
 
   useEffect(() => {
     if (isSelectedGeneralChat && hasSelectedMessages && messages.phase === 'ready') {
@@ -4338,8 +4571,9 @@ export default function App() {
     setDirectSearchOpen(true);
   }
 
-  function mentionAccount(target: AccountInfoTarget) {
-    const label = getMessageSenderLabel(target, avatarProfiles.get(target.sender));
+  function mentionAccount(target: AccountInfoTarget & { network: ChatNetwork }) {
+    const scopedProfiles = target.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles;
+    const label = getMessageSenderLabel(target, scopedProfiles.get(target.sender));
     const mention = `@${label} `;
 
     setAccountInfoTarget(null);
@@ -6276,7 +6510,7 @@ export default function App() {
             isGateway={bridge.value.transport === 'gateway'}
             onConnect={requestSelectedAccountRefresh}
             onOpenAvatar={setAvatarLightboxImage}
-            profile={account ? avatarProfiles.get(account.address) : undefined}
+            profile={account ? qortiumAvatarProfiles.get(account.address) : undefined}
             t={t}
           />
         </div>
@@ -6404,7 +6638,7 @@ export default function App() {
             ) : (
               <DirectList
                 activityByAddress={directActivityByAddress}
-                avatarProfiles={avatarProfiles}
+                avatarProfiles={qortiumAvatarProfiles}
                 canOpen={canOpenDirectChat}
                 collapsed={isDirectCollapsed}
                 directs={mergedDirects}
@@ -6487,6 +6721,7 @@ export default function App() {
                 ) : groupDiscoveries.phase === 'ready' ? (
                   <GroupList
                     conversations={groupDiscoveryConversations}
+                    groupAvatarProfiles={groupAvatarProfiles}
                     onSelect={handleSelectGroup}
                     selectedConversationKey={selectedGroupConversationKey}
                     t={t}
@@ -6516,6 +6751,7 @@ export default function App() {
               <GroupList
                 collapsed={isGroupsCollapsed}
                 conversations={groupConversations}
+                groupAvatarProfiles={groupAvatarProfiles}
                 onSelect={handleSelectGroup}
                 selectedConversationKey={selectedGroupConversationKey}
                 t={t}
@@ -6602,6 +6838,7 @@ export default function App() {
                     ) : qortalGroupDiscoveries.phase === 'ready' ? (
                       <GroupList
                         conversations={qortalGroupDiscoveryConversations}
+                        groupAvatarProfiles={groupAvatarProfiles}
                         onSelect={handleSelectQortalGroup}
                         selectedConversationKey={selectedGroupConversationKey}
                         t={t}
@@ -6622,6 +6859,7 @@ export default function App() {
                   <GroupList
                     collapsed={isQortalGroupsCollapsed}
                     conversations={qortalGroupConversations}
+                    groupAvatarProfiles={groupAvatarProfiles}
                     onSelect={handleSelectQortalGroup}
                     selectedConversationKey={selectedGroupConversationKey}
                     t={t}
@@ -6657,6 +6895,14 @@ export default function App() {
             >
               <BackIcon />
             </button>
+            {selectedGroup ? (
+              <UserAvatar
+                className="chat-pane__group-avatar"
+                fallback={getConversationInitials(getGroupTitle(selectedGroup, t))}
+                name={getGroupTitle(selectedGroup, t)}
+                src={selectedGroupAvatar?.avatarSrc ?? null}
+              />
+            ) : null}
             <div className="chat-pane__heading">
               <h2 className="chat-pane__title">
                 {selectedChat?.kind === 'group' &&
@@ -6847,7 +7093,7 @@ export default function App() {
               <LoadingRows count={4} label={t('label.loading')} />
             ) : (
               <MessageList
-                avatarProfiles={avatarProfiles}
+                avatarProfiles={selectedAvatarProfiles}
                 canCompose={canComposeMessage}
                 canRevise={canComposeMessage && selectedChat?.network !== 'qortal'}
                 canOpenDocumentViewer={canOpenDocumentViewer}
@@ -6864,7 +7110,7 @@ export default function App() {
                 onDiscardRevision={handleDiscardRevision}
                 onEdit={handleStartEdit}
                 onLoadOlder={handleLoadOlderMessages}
-                onOpenAccount={setAccountInfoTarget}
+                onOpenAccount={(target) => setAccountInfoTarget({ ...target, network: selectedChat?.network ?? 'qortium' })}
                 onOpenAvatar={setAvatarLightboxImage}
                 onOpenImage={setAvatarLightboxImage}
                 onReact={handleReactToMessage}
@@ -6970,7 +7216,7 @@ export default function App() {
                         : t('label.composer.replyingTo', {
                             name: getMessageSenderLabel(
                               composeContext.message,
-                              avatarProfiles.get(composeContext.message.sender),
+                              selectedAvatarProfiles.get(composeContext.message.sender),
                             ),
                           })}
                     </strong>
@@ -7105,10 +7351,10 @@ export default function App() {
               <LoadingRows count={5} label={t('label.loading')} />
             ) : (
               <GroupMemberList
-                avatarProfiles={avatarProfiles}
+                avatarProfiles={selectedAvatarProfiles}
                 group={isSelectedGeneralChat ? null : selectedGroup}
                 members={selectedGroupMembers}
-                onOpenAccount={setAccountInfoTarget}
+                onOpenAccount={(target) => setAccountInfoTarget({ ...target, network: selectedChat?.network ?? 'qortium' })}
                 onOpenAvatar={setAvatarLightboxImage}
                 t={t}
               />
@@ -7150,16 +7396,16 @@ export default function App() {
       {accountInfoTarget ? (
         <AccountInfoDialog
           canMention={canComposeMessage}
-          canOpenDirect={canOpenDirectChat}
+          canOpenDirect={accountInfoTarget.network === 'qortium' && canOpenDirectChat}
           directUnavailableLabel={directAccessUnavailableLabel}
           onClose={() => setAccountInfoTarget(null)}
-          onMention={mentionAccount}
+          onMention={() => mentionAccount(accountInfoTarget)}
           onOpenAvatar={(image) => {
             setAccountInfoTarget(null);
             setAvatarLightboxImage(image);
           }}
           onOpenDirect={openDirectFromAccount}
-          profile={avatarProfiles.get(accountInfoTarget.sender)}
+          profile={(accountInfoTarget.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles).get(accountInfoTarget.sender)}
           target={accountInfoTarget}
           t={t}
         />
@@ -7182,11 +7428,11 @@ export default function App() {
       {approvalModalOpen ? (
         <GroupApprovalDialog
           actionSignature={approvalActionSignature}
-          avatarProfiles={avatarProfiles}
+          avatarProfiles={qortiumAvatarProfiles}
           canVote={canSubmitGroupApproval}
           currentHeight={currentBlockHeight}
           group={selectedGroup}
-          knownNames={knownAvatarNames}
+          knownNames={qortiumKnownAvatarNames}
           onApprove={(signature) => void handleGroupApproval(signature, true)}
           onClose={() => setApprovalModalOpen(false)}
           onOppose={(signature) => void handleGroupApproval(signature, false)}

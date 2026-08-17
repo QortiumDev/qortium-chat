@@ -1706,6 +1706,19 @@ samp,
   min-width: 0;
 }
 
+.chat-pane__group-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  color: var(--qc-color-avatar-text);
+  font-size: var(--qc-text-small);
+  font-weight: 750;
+  background: var(--qc-color-avatar);
+  border-radius: 12px;
+}
+
 .chat-pane__context {
   display: flex;
   flex-wrap: wrap;

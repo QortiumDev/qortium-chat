@@ -1,12 +1,12 @@
-import { getAccountNames, resolveIdentities } from './coreApi';
+import { bridgeRequest } from './chatNetwork';
+import { getAccountNamesForNetwork, resolveIdentities } from './coreApi';
 import { hasAction, qdnRequest } from './qdnRequest';
-import type { NameSummary, QdnAction } from './types';
+import type { ChatNetwork, GroupData, NameSummary, QdnAction } from './types';
 
 export const AVATAR_MAX_BYTES = 500 * 1024;
 export const AVATAR_PENDING_MAX_ATTEMPTS = 10;
 export const AVATAR_PENDING_MAX_ELAPSED_MS = 5 * 60 * 1000;
 
-const SAFE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/bmp', 'image/webp']);
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const BASE64_ASCII_WHITESPACE_PATTERN = /[\t\n\f\r ]/g;
 const LEGACY_AVATAR_IDENTIFIERS = ['avatar', 'qortal_avatar'] as const;
@@ -15,7 +15,22 @@ export type AvatarProfile = {
   address: string;
   avatarSrc: string | null;
   name: string | null;
+  network: ChatNetwork;
 };
+
+export type GroupAvatarProfile = {
+  avatarSrc: string | null;
+  groupId: number;
+  network: ChatNetwork;
+};
+
+export function getAvatarProfileKey(network: ChatNetwork, address: string) {
+  return `${network}:${address}`;
+}
+
+export function getGroupAvatarProfileKey(network: ChatNetwork, groupId: number) {
+  return `${network}:${groupId}`;
+}
 
 type AvatarSource = 'POINTER' | 'LEGACY';
 type AvatarDescriptor = { identifier: string; name: string; service: string };
@@ -89,34 +104,42 @@ function decodeBase64(value: string) {
   }
 }
 
-function getLegacyImageContentType(value: unknown, base64: string) {
-  const declared = typeof value === 'string' ? value.toLowerCase().split(';', 1)[0] : '';
-
-  if (SAFE_IMAGE_MIME_TYPES.has(declared)) {
-    return declared;
-  }
-
-  if (base64.startsWith('iVBORw0KGgo')) {
+function getSafeImageContentType(bytes: Uint8Array) {
+  if (bytes.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((byte, index) => bytes[index] === byte)) {
     return 'image/png';
   }
-
-  if (base64.startsWith('/9j/')) {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return 'image/jpeg';
   }
-
-  if (base64.startsWith('R0lGOD')) {
+  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
     return 'image/gif';
   }
-
-  if (base64.startsWith('UklGR')) {
-    return 'image/webp';
-  }
-
-  if (base64.startsWith('Qk')) {
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
     return 'image/bmp';
   }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
 
-  return '';
+function createAvatarObjectUrl(body: unknown) {
+  if (typeof body !== 'string') {
+    return null;
+  }
+
+  const bytes = decodeBase64(body);
+  const contentType = bytes ? getSafeImageContentType(bytes) : null;
+
+  if (!bytes || !contentType || bytes.byteLength < 1 || bytes.byteLength > AVATAR_MAX_BYTES) {
+    return null;
+  }
+
+  return URL.createObjectURL(new Blob([bytes.buffer], { type: contentType }));
 }
 
 function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAvatarFetch {
@@ -143,11 +166,11 @@ function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAva
     return { kind: 'unavailable' };
   }
 
-  const contentType = value.contentType.toLowerCase().split(';', 1)[0];
   const bytes = decodeBase64(value.body);
+  const contentType = bytes ? getSafeImageContentType(bytes) : null;
 
   if (
-    !SAFE_IMAGE_MIME_TYPES.has(contentType) ||
+    !contentType ||
     !bytes ||
     bytes.byteLength < 1 ||
     bytes.byteLength > AVATAR_MAX_BYTES
@@ -163,19 +186,14 @@ function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAva
 }
 
 async function fetchLegacyNamedThumbnail(
+  network: ChatNetwork,
   address: string,
   name: string,
+  identifiers: readonly string[],
 ): Promise<AccountAvatarFetch> {
-  for (const identifier of LEGACY_AVATAR_IDENTIFIERS) {
+  for (const identifier of identifiers) {
     try {
-      const properties = await qdnRequest<unknown>({
-        action: 'GET_QDN_RESOURCE_PROPERTIES',
-        identifier,
-        name,
-        service: 'THUMBNAIL',
-      });
-      const propertyRecord = isRecord(properties) ? properties : {};
-      const body = await qdnRequest<unknown>({
+      const response = await bridgeRequest<unknown>(network, {
         action: 'FETCH_QDN_RESOURCE',
         encoding: 'base64',
         identifier,
@@ -184,21 +202,9 @@ async function fetchLegacyNamedThumbnail(
         rebuild: true,
         service: 'THUMBNAIL',
       });
-      const parsed = parseAccountAvatar(
-        {
-          address,
-          body,
-          contentLength: propertyRecord.size,
-          contentType:
-            typeof body === 'string'
-              ? getLegacyImageContentType(propertyRecord.mimeType, body)
-              : '',
-          descriptor: null,
-          encoding: 'base64',
-          source: 'LEGACY',
-        },
-        address,
-      );
+      const body = isRecord(response) && response.encoding === 'base64' ? response.body : response;
+      const src = createAvatarObjectUrl(body);
+      const parsed: AccountAvatarFetch = src ? { kind: 'ready', source: 'LEGACY', src } : { kind: 'unavailable' };
 
       if (parsed.kind === 'ready') {
         return parsed;
@@ -218,21 +224,30 @@ async function fetchLegacyNamedThumbnail(
  * generic QDN read actions; the app never constructs a raw node URL.
  */
 export async function fetchAccountAvatar(
+  network: ChatNetwork,
   address: string,
   actions?: QdnAction[],
   preferredName?: string | null,
 ): Promise<AccountAvatarFetch> {
   const actionList = actions ?? [];
 
-  if (!hasAction(actionList, 'FETCH_ACCOUNT_AVATAR')) {
+  if (network === 'qortal') {
     const name = normalizeRegisteredName(preferredName);
     const canFetchLegacy =
       !!name &&
-      hasAction(actionList, 'GET_QDN_RESOURCE_PROPERTIES') &&
       hasAction(actionList, 'FETCH_QDN_RESOURCE');
 
     return canFetchLegacy
-      ? fetchLegacyNamedThumbnail(address, name)
+      ? fetchLegacyNamedThumbnail(network, address, name, ['qortal_avatar'])
+      : { kind: 'unavailable' };
+  }
+
+  if (!hasAction(actionList, 'FETCH_ACCOUNT_AVATAR')) {
+    const name = normalizeRegisteredName(preferredName);
+    const canFetchLegacy = !!name && hasAction(actionList, 'FETCH_QDN_RESOURCE');
+
+    return canFetchLegacy
+      ? fetchLegacyNamedThumbnail(network, address, name, LEGACY_AVATAR_IDENTIFIERS)
       : { kind: 'unavailable' };
   }
 
@@ -241,6 +256,82 @@ export async function fetchAccountAvatar(
       await qdnRequest<unknown>({ action: 'FETCH_ACCOUNT_AVATAR', address, maxBytes: AVATAR_MAX_BYTES }),
       address,
     );
+  } catch {
+    return { kind: 'unavailable' };
+  }
+}
+
+function parseGroupAvatar(value: unknown, expectedGroupId: number): AccountAvatarFetch {
+  if (!isRecord(value) || value.groupId !== expectedGroupId || (value.source !== 'POINTER' && value.source !== 'LEGACY')) {
+    return { kind: 'unavailable' };
+  }
+
+  const source = value.source;
+  if (source === 'POINTER' && !parseDescriptor(value.descriptor)) {
+    return { kind: 'unavailable' };
+  }
+  if (value.status === 'PENDING') {
+    const delay = typeof value.retryAfterSeconds === 'number' && Number.isFinite(value.retryAfterSeconds)
+      ? value.retryAfterSeconds
+      : 5;
+    return { kind: 'pending', retryAfterSeconds: Math.min(Math.max(Math.floor(delay), 1), 30), source };
+  }
+
+  const src = value.encoding === 'base64' ? createAvatarObjectUrl(value.body) : null;
+  return src ? { kind: 'ready', source, src } : { kind: 'unavailable' };
+}
+
+export async function fetchGroupAvatar(
+  network: ChatNetwork,
+  group: Pick<GroupData, 'groupId' | 'owner' | 'ownerPrimaryName'>,
+  actions?: QdnAction[],
+): Promise<AccountAvatarFetch> {
+  const actionList = actions ?? [];
+
+  if (network === 'qortium') {
+    if (!hasAction(actionList, 'FETCH_GROUP_AVATAR')) {
+      return { kind: 'unavailable' };
+    }
+
+    try {
+      return parseGroupAvatar(
+        await qdnRequest<unknown>({ action: 'FETCH_GROUP_AVATAR', groupId: group.groupId, maxBytes: AVATAR_MAX_BYTES }),
+        group.groupId,
+      );
+    } catch {
+      return { kind: 'unavailable' };
+    }
+  }
+
+  if (!hasAction(actionList, 'FETCH_QDN_RESOURCE')) {
+    return { kind: 'unavailable' };
+  }
+
+  let ownerName = normalizeRegisteredName(group.ownerPrimaryName);
+  if (!ownerName && group.owner) {
+    try {
+      ownerName = getFirstRegisteredName(await getAccountNamesForNetwork('qortal', group.owner, actionList));
+    } catch {
+      ownerName = null;
+    }
+  }
+  if (!ownerName) {
+    return { kind: 'unavailable' };
+  }
+
+  try {
+    const response = await bridgeRequest<unknown>('qortal', {
+      action: 'FETCH_QDN_RESOURCE',
+      encoding: 'base64',
+      identifier: `qortal_group_avatar_${group.groupId}`,
+      maxBytes: AVATAR_MAX_BYTES,
+      name: ownerName,
+      rebuild: true,
+      service: 'THUMBNAIL',
+    });
+    const body = isRecord(response) && response.encoding === 'base64' ? response.body : response;
+    const src = createAvatarObjectUrl(body);
+    return src ? { kind: 'ready', source: 'LEGACY', src } : { kind: 'unavailable' };
   } catch {
     return { kind: 'unavailable' };
   }
@@ -274,14 +365,19 @@ export function revokeAvatarObjectUrl(src: string | null | undefined) {
   }
 }
 
-async function resolveRegisteredName(address: string, preferredName: string | null | undefined, actions?: QdnAction[]) {
+async function resolveRegisteredName(
+  network: ChatNetwork,
+  address: string,
+  preferredName: string | null | undefined,
+  actions?: QdnAction[],
+) {
   const normalizedPreferredName = normalizeRegisteredName(preferredName);
 
   if (normalizedPreferredName) {
     return normalizedPreferredName;
   }
 
-  return getFirstRegisteredName(await getAccountNames(address, actions));
+  return getFirstRegisteredName(await getAccountNamesForNetwork(network, address, actions));
 }
 
 // Names are an independent display concern. An account can have a pointer
@@ -290,20 +386,23 @@ async function resolveRegisteredName(address: string, preferredName: string | nu
 export async function loadAvatarProfile({
   actions,
   address,
+  network,
   preferredName,
 }: {
   actions?: QdnAction[];
   address: string;
+  network: ChatNetwork;
   preferredName?: string | null;
 }): Promise<AvatarProfile> {
   try {
     return {
       address,
       avatarSrc: null,
-      name: await resolveRegisteredName(address, preferredName, actions),
+      name: await resolveRegisteredName(network, address, preferredName, actions),
+      network,
     };
   } catch {
-    return { address, avatarSrc: null, name: normalizeRegisteredName(preferredName) };
+    return { address, avatarSrc: null, name: normalizeRegisteredName(preferredName), network };
   }
 }
 

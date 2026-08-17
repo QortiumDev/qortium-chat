@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { getAvatarView, getDirectCounterpartName, getVisibleAvatarSrc } from './accountDisplay';
+import { getAvatarView, getDirectCounterpartName, getVisibleAvatarSrc, selectAvatarProfilesForNetwork } from './accountDisplay';
+
+describe('network-scoped avatar profiles', () => {
+  it('does not let the same address collide across chains', () => {
+    const profiles = new Map([
+      ['qortium:Qabc', { address: 'Qabc', avatarSrc: 'blob:qortium', name: 'alice-qortium', network: 'qortium' as const, requestKey: 'one' }],
+      ['qortal:Qabc', { address: 'Qabc', avatarSrc: 'blob:qortal', name: 'alice-qortal', network: 'qortal' as const, requestKey: 'two' }],
+    ]);
+
+    expect(selectAvatarProfilesForNetwork(profiles, 'qortium').get('Qabc')?.avatarSrc).toBe('blob:qortium');
+    expect(selectAvatarProfilesForNetwork(profiles, 'qortal').get('Qabc')?.avatarSrc).toBe('blob:qortal');
+  });
+});
 
 describe('getDirectCounterpartName', () => {
   it('prefers the registered name of the counterpart address', () => {
@@ -33,15 +45,15 @@ describe('getDirectCounterpartName', () => {
 
 describe('getAvatarView', () => {
   it('keeps an address-keyed Blob avatar when a historical sender name differs', () => {
-    expect(getAvatarView({ address: 'Qabc', avatarSrc: 'blob:avatar', name: 'current-name' }, 'old-name')).toEqual({
+    expect(getAvatarView({ address: 'Qabc', avatarSrc: 'blob:avatar', name: 'current-name', network: 'qortium' }, 'old-name')).toEqual({
       avatarSrc: 'blob:avatar',
       name: 'old-name',
     });
   });
 
   it('does not accept a raw or data URL as an avatar image source', () => {
-    expect(getAvatarView({ address: 'Qabc', avatarSrc: 'https://node/avatar.png', name: 'alice' }, 'alice').avatarSrc).toBeNull();
-    expect(getAvatarView({ address: 'Qabc', avatarSrc: 'data:image/png;base64,abc', name: 'alice' }, 'alice').avatarSrc).toBeNull();
+    expect(getAvatarView({ address: 'Qabc', avatarSrc: 'https://node/avatar.png', name: 'alice', network: 'qortium' }, 'alice').avatarSrc).toBeNull();
+    expect(getAvatarView({ address: 'Qabc', avatarSrc: 'data:image/png;base64,abc', name: 'alice', network: 'qortium' }, 'alice').avatarSrc).toBeNull();
   });
 
   it('falls back after an image error and permits a later replacement URL', () => {

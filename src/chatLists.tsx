@@ -1,5 +1,6 @@
 import { memo, useMemo } from 'react';
 import { getAvatarView, getDirectTitle, UserAvatar, type AvatarProfilesByAddress } from './accountDisplay';
+import { getGroupAvatarProfileKey, type GroupAvatarProfile } from './avatarProfiles';
 import { formatTimeAgo, formatTimestamp } from './chatText';
 import { type GroupConversationSummary } from './conversationModel';
 import { getConversationInitials } from './conversationPresentation';
@@ -11,6 +12,7 @@ import { type ActiveDirectChat } from './types';
 export const GroupList = memo(function GroupList({
   collapsed = false,
   conversations,
+  groupAvatarProfiles,
   onSelect,
   selectedConversationKey,
   t,
@@ -18,6 +20,7 @@ export const GroupList = memo(function GroupList({
 }: {
   collapsed?: boolean;
   conversations: GroupConversationSummary[];
+  groupAvatarProfiles: ReadonlyMap<string, GroupAvatarProfile>;
   onSelect: (conversation: GroupConversationSummary) => void;
   selectedConversationKey: string | null;
   t: TranslateFunction;
@@ -40,6 +43,7 @@ export const GroupList = memo(function GroupList({
         // Closed groups' stream payloads are encrypted — never show those as a
         // decoded "preview"; their rows stay as before.
         const visiblePreview = group.isOpen === false ? null : preview;
+        const groupAvatar = groupAvatarProfiles.get(getGroupAvatarProfileKey(conversation.network, group.groupId));
 
         return (
           <li key={conversation.key}>
@@ -48,9 +52,12 @@ export const GroupList = memo(function GroupList({
               onClick={() => onSelect(conversation)}
               type="button"
             >
-              <span aria-hidden="true" className="group-row__avatar">
-                {getConversationInitials(title)}
-              </span>
+              <UserAvatar
+                className="group-row__avatar"
+                fallback={getConversationInitials(title)}
+                name={title}
+                src={groupAvatar?.avatarSrc ?? null}
+              />
               <span className="group-row__content">
                 <span className="group-row__top">
                   <span className="group-row__heading">

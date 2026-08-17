@@ -282,15 +282,19 @@ export async function getMemberGroups(network: ChatNetwork, address: string, act
   return fetchNodeApiDataFor<GroupData[]>(network, buildMemberGroupsPath(address), 'Member groups');
 }
 
-export async function getAccountNames(address: string, actions?: QdnAction[]) {
+export async function getAccountNamesForNetwork(network: ChatNetwork, address: string, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_ACCOUNT_NAMES')) {
-    return qdnRequest<NameSummary[]>({
+    return bridgeRequest<NameSummary[]>(network, {
       action: 'GET_ACCOUNT_NAMES',
       address,
     });
   }
 
-  return fetchNodeApiData<NameSummary[]>(buildAccountNamesPath(address), 'Account names');
+  return fetchNodeApiDataFor<NameSummary[]>(network, buildAccountNamesPath(address), 'Account names');
+}
+
+export async function getAccountNames(address: string, actions?: QdnAction[]) {
+  return getAccountNamesForNetwork('qortium', address, actions);
 }
 
 // Resolve a registered name to its owner address so a direct chat can be opened
