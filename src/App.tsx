@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   type ClipboardEvent,
   type DragEvent,
   type SubmitEvent,
@@ -9,17 +7,14 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 import {
   buildAttachmentIdentifier,
   buildAttachmentLink,
-  formatAttachmentSize,
   getFirstTransferFile,
   getAttachmentMaxBytes,
   getAttachmentService,
   prepareAttachment,
   ATTACHMENT_FILE_MAX_BYTES,
-  type PreparedAttachment,
 } from './attachments';
 import {
   buildActiveChatsWebSocketUrl,
@@ -130,6 +125,9 @@ import {
 import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
 import { AccountInfoDialog, ConfirmDeleteMessageDialog, GroupApprovalDialog } from './dialogs';
 import { DirectList, GroupList } from './chatLists';
+import { ChatComposer, type ComposerAttachment } from './ChatComposer';
+import { ChatPaneHeader } from './ChatPaneHeader';
+import { ConversationNetworkSection } from './ConversationRail';
 import {
   createGroupConversationSummary,
   getConversationKey,
@@ -153,12 +151,10 @@ import {
   selectAvatarProfilesForNetwork,
 } from './accountDisplay';
 import {
-  BackIcon,
   BellIcon,
   BrandMark,
   CloseIcon,
   DownIcon,
-  LockIcon,
   PlusIcon,
   SearchIcon,
 } from './icons';
@@ -216,6 +212,7 @@ import {
   isPublicNodeSendUnsupported,
   shouldDecryptGroupMessages,
 } from './groupAccess';
+import { isAlreadyGroupMemberError } from './groupJoin';
 import {
   fetchAccountAvatar,
   fetchGroupAvatar,
@@ -274,11 +271,6 @@ const emptyPendingSends: PendingSend[] = [];
 // fills it; when one does, the merge skips rather than guessing (see
 // mergeActivityTimestamp's allowTombstone).
 const ACTIVITY_SWEEP_MESSAGE_LIMIT = 10;
-
-// Loaded on demand, same as the reaction picker in MessageList: the shared
-// emoji-picker-react chunk must not weigh down app startup, so only type-only
-// imports appear at module top and enum values are passed as literals.
-const ComposerEmojiPicker = lazy(() => import('emoji-picker-react'));
 
 // Websocket reconnects back off 5s → 60s while the node stays unreachable
 // (reset by any successful frame) instead of hammering a fixed 5s cadence;
@@ -1475,9 +1467,7 @@ export default function App() {
   const [isComposerEmojiOpen, setComposerEmojiOpen] = useState(false);
   // One attachment per message (Qortal Hub's model): staged, encoded, and
   // size-checked up front; published on Send and then linked in the text.
-  const [stagedAttachment, setStagedAttachment] = useState<
-    { filename: string; phase: 'processing' } | ({ phase: 'ready' } & PreparedAttachment) | null
-  >(null);
+  const [stagedAttachment, setStagedAttachment] = useState<ComposerAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState('');
   const [isDraggingAttachment, setDraggingAttachment] = useState(false);
   // dragenter/dragleave fire per child element; a counter tells actual exits
@@ -3876,28 +3866,46 @@ export default function App() {
       return;
     }
 
+    const requestedChatKey = selectedChatKey;
+    const requestedGroup = selectedGroup;
+    let selectedAccount: QdnSelectedAccount | null = null;
+
     setJoinPending(true);
     setWriteError('');
 
     try {
-      const selectedAccount = await ensureSelectedAccountUnlocked();
+      selectedAccount = await ensureSelectedAccountUnlocked();
 
       if (!selectedAccount || !isCurrentWritableAccount(selectedAccount.address)) {
         return;
       }
 
-      const result = await joinGroup(selectedGroup.groupId);
+      const result = await joinGroup(requestedGroup.groupId);
 
       trackTransaction({
         action: 'join',
-        group: selectedGroup,
-        message: selectedGroup.isOpen === false ? t('status.join.request.submitted') : t('status.join.submitted'),
+        group: requestedGroup,
+        message: requestedGroup.isOpen === false ? t('status.join.request.submitted') : t('status.join.submitted'),
         result,
       });
 
       await loadAccountData(selectedAccount);
-      await loadGroupMembers(selectedGroup);
+      await loadGroupMembers(requestedGroup);
     } catch (error) {
+      const isCurrentRequest = () =>
+        !!selectedAccount &&
+        isCurrentWritableAccount(selectedAccount.address) &&
+        selectedChatKeyRef.current === requestedChatKey;
+
+      if (selectedAccount && isAlreadyGroupMemberError(error) && isCurrentRequest()) {
+        await loadAccountData(selectedAccount, actions, { isCurrent: isCurrentRequest });
+
+        if (isCurrentRequest()) {
+          await loadGroupMembers(requestedGroup);
+        }
+        return;
+      }
+
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.join'), t));
     } finally {
       setJoinPending(false);
@@ -7315,6 +7323,52 @@ export default function App() {
     );
   }
 
+  const selectedChatTitle = selectedChat
+    ? selectedChat.kind === 'group'
+      ? getGroupTitle(selectedChat.group, t)
+      : getDirectTitle(selectedChat.direct)
+    : t('label.chat.select');
+  const selectedChatContextLabel =
+    selectedChat?.kind === 'group'
+      ? isGeneralChatGroup(selectedChat.group)
+        ? t('label.group.global')
+        : selectedChat.network === 'qortal'
+          ? qortalMemberGroups.phase === 'ready'
+            ? qortalJoinedIds.has(selectedChat.group.groupId)
+              ? t('label.group.joined')
+              : t('label.group.preview')
+            : t('label.loading')
+          : memberGroups.phase === 'ready'
+            ? isConfirmedJoinedGroup
+              ? t('label.group.joined')
+              : t('label.group.preview')
+            : t('label.loading')
+      : null;
+  const selectedChatDescription =
+    selectedChat?.kind === 'group'
+      ? selectedChat.group.description?.trim() || null
+      : selectedChat?.kind === 'direct'
+        ? canReadPrivateDirectChat
+          ? t('group.meta.directPrivateRead')
+          : t('group.meta.direct')
+        : null;
+  const selectedDirectAvatar = selectedDirect
+    ? getAvatarView(selectedAvatarProfiles.get(selectedDirect.address), selectedDirect.name)
+    : null;
+  const selectedChatAvatar = selectedGroup
+    ? {
+        fallback: getConversationInitials(selectedChatTitle),
+        name: selectedChatTitle,
+        src: selectedGroupAvatar?.avatarSrc ?? null,
+      }
+    : selectedDirect
+      ? {
+          fallback: getConversationInitials(selectedDirectAvatar?.name ?? selectedChatTitle),
+          name: selectedDirectAvatar?.name ?? selectedChatTitle,
+          src: selectedDirectAvatar?.avatarSrc ?? null,
+        }
+      : null;
+
   return (
     <main className={`app-shell${homeV2AppTab ? ' app-shell--home-v2' : ''}`}>
       <header className="topbar">
@@ -7410,19 +7464,7 @@ export default function App() {
         }`}
       >
         <aside className="sidebar" aria-label={t('aria.navigation')} inert={isMembersOverlay || undefined}>
-          {/* Chat 2.0 slice 2: two-section dual-chain sidebar (owner UX decision,
-              2026-08-13) — Qortium and Qortal side by side, both visible at once,
-              never a network switcher. The Qortium section below is everything
-              this app already rendered before slice 2 (Invites/Direct/Groups),
-              now labelled and wrapped rather than changed. "Qortium"/"Qortal" are
-              brand names, not translated. */}
-          <div className={`network-section network-section--qortium${qortalAvailable ? '' : ' network-section--solo'}`}>
-            {qortalAvailable ? (
-              <div className="network-section__header">
-                <h2 className="network-section__title">Qortium</h2>
-                <span className="network-section__protocol">CHAT</span>
-              </div>
-            ) : null}
+          <ConversationNetworkSection network="qortium" showHeader={qortalAvailable}>
           {pendingGroupInvites.length > 0 || (!!account && groupInvites.phase === 'error') ? (
             <section className="panel">
               <div className="panel__header">
@@ -7647,14 +7689,10 @@ export default function App() {
               />
             )}
           </section>
-          </div>
+          </ConversationNetworkSection>
 
           {qortalAvailable ? (
-            <div className="network-section network-section--qortal">
-              <div className="network-section__header">
-                <h2 className="network-section__title">Qortal</h2>
-                <span className="network-section__protocol">CHAT</span>
-              </div>
+            <ConversationNetworkSection network="qortal">
               <section className={`panel${isQortalGroupsCollapsed ? ' panel--collapsed' : ''}`}>
                 <div className="panel__header">
                   <button
@@ -7755,7 +7793,7 @@ export default function App() {
                   />
                 )}
               </section>
-            </div>
+            </ConversationNetworkSection>
           ) : null}
         </aside>
 
@@ -7773,77 +7811,10 @@ export default function App() {
               <span>{t('label.composer.dropFile')}</span>
             </div>
           ) : null}
-          <div className="chat-pane__header">
-            <button
-              aria-label={t('button.back')}
-              className="chat-pane__back"
-              onClick={showChatList}
-              title={t('button.back')}
-              type="button"
-            >
-              <BackIcon />
-            </button>
-            {selectedGroup ? (
-              <UserAvatar
-                className="chat-pane__group-avatar"
-                fallback={getConversationInitials(getGroupTitle(selectedGroup, t))}
-                name={getGroupTitle(selectedGroup, t)}
-                src={selectedGroupAvatar?.avatarSrc ?? null}
-              />
-            ) : null}
-            <div className="chat-pane__heading">
-              <h2 className="chat-pane__title">
-                {selectedChat?.kind === 'group' &&
-                !isGeneralChatGroup(selectedChat.group) &&
-                selectedChat.group.isOpen === false ? (
-                  <span
-                    aria-label={t('label.group.closed')}
-                    className="chat-pane__title-lock"
-                    role="img"
-                    title={t('label.group.closed')}
-                  >
-                    <LockIcon />
-                  </span>
-                ) : null}
-                <span className="chat-pane__title-text">
-                {selectedChat
-                  ? selectedChat.kind === 'group'
-                    ? getGroupTitle(selectedChat.group, t)
-                    : getDirectTitle(selectedChat.direct)
-                  : t('label.chat.select')}
-                </span>
-              </h2>
-              {selectedChat ? (
-                <div className="chat-pane__context">
-                  <span>{selectedChat.network === 'qortal' ? 'Qortal' : 'Qortium'}</span>
-                  <span>CHAT</span>
-                  {selectedChat.kind === 'group' ? (
-                    <span>
-                      {isGeneralChatGroup(selectedChat.group)
-                        ? t('label.group.global')
-                        : selectedChat.network === 'qortal'
-                          ? qortalMemberGroups.phase === 'ready'
-                            ? qortalJoinedIds.has(selectedChat.group.groupId)
-                              ? t('label.group.joined')
-                              : t('label.group.preview')
-                            : t('label.loading')
-                          : memberGroups.phase === 'ready'
-                            ? isConfirmedJoinedGroup
-                              ? t('label.group.joined')
-                              : t('label.group.preview')
-                            : t('label.loading')}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-              {selectedChat?.kind === 'group' && selectedChat.group.description?.trim() ? (
-                <p>{selectedChat.group.description.trim()}</p>
-              ) : null}
-              {selectedChat?.kind === 'direct' ? (
-                <p>{canReadPrivateDirectChat ? t('group.meta.directPrivateRead') : t('group.meta.direct')}</p>
-              ) : null}
-            </div>
-            <div className="chat-pane__actions">
+          <ChatPaneHeader
+            actionHint={topActionUnavailableLabel}
+            actions={
+              <>
               {selectedChat?.kind === 'group' ? (
                 <button
                   aria-controls="members-drawer"
@@ -7917,9 +7888,22 @@ export default function App() {
                   {t('button.pendingApproval')} ({pendingApprovalCount})
                 </button>
               ) : null}
-            </div>
-            {topActionUnavailableLabel ? <p className="chat-pane__action-hint">{topActionUnavailableLabel}</p> : null}
-          </div>
+              </>
+            }
+            avatar={selectedChatAvatar}
+            backLabel={t('button.back')}
+            closedLabel={t('label.group.closed')}
+            contextLabel={selectedChatContextLabel}
+            description={selectedChatDescription}
+            isClosed={
+              selectedChat?.kind === 'group' &&
+              !isGeneralChatGroup(selectedChat.group) &&
+              selectedChat.group.isOpen === false
+            }
+            network={selectedChat?.network ?? (selectedChat ? 'qortium' : undefined)}
+            onBack={showChatList}
+            title={selectedChatTitle}
+          />
 
           {/* Owns the `1fr` row of the `.chat-pane` grid so the message feed
               always gets the remaining space regardless of how many notices
@@ -8058,147 +8042,67 @@ export default function App() {
               </p>
             </div>
           ) : (
-            <form className="composer" onSubmit={(event) => void handleSendMessage(event)}>
-              {isComposerEmojiOpen ? (
-                <div className="composer__emoji-panel">
-                  <Suspense fallback={<p className="muted">{t('label.loading')}</p>}>
-                    <ComposerEmojiPicker
-                      autoFocusSearch={false}
-                      emojiStyle={'native' as EmojiStyle}
-                      height="min(320px, 50dvh)"
-                      lazyLoadEmojis
-                      onEmojiClick={(emoji: EmojiClickData) => insertComposerEmoji(emoji.emoji)}
-                      previewConfig={{ showPreview: false }}
-                      searchPlaceHolder={t('label.search')}
-                      theme={'auto' as Theme}
-                      width="100%"
-                    />
-                  </Suspense>
-                </div>
-              ) : null}
-              {stagedAttachment ? (
-                <div className="composer__attachment">
-                  <span aria-hidden="true">📎</span>
-                  <span className="composer__attachment-name">{stagedAttachment.filename}</span>
-                  <span className="composer__attachment-size">
-                    {stagedAttachment.phase === 'processing'
-                      ? t('status.attachment.processing')
-                      : formatAttachmentSize(stagedAttachment.size)}
-                  </span>
-                  <button
-                    aria-label={t('label.attachment.remove')}
-                    className="icon-button composer__attachment-remove"
-                    onClick={clearStagedAttachment}
-                    type="button"
-                  >
-                    <CloseIcon />
-                  </button>
-                </div>
-              ) : null}
-              {attachmentError ? <p className="error composer__attachment-error">{attachmentError}</p> : null}
-              {composeContext ? (
-                <div className="composer__context">
-                  <div className="composer__context-text">
-                    <strong>
-                      {composeContext.kind === 'edit'
-                        ? t('label.composer.editing')
-                        : t('label.composer.replyingTo', {
-                            name: getMessageSenderLabel(
-                              composeContext.message,
-                              selectedAvatarProfiles.get(composeContext.message.sender),
-                            ),
-                          })}
-                    </strong>
-                    <span>
-                      {getMessageSnippet(
+            <ChatComposer
+              attachLabel={t('label.composer.attach')}
+              attachTitle={canAttach ? t('label.composer.attach') : t('action.attachUnavailable')}
+              attachment={stagedAttachment}
+              attachmentError={attachmentError}
+              attachmentInputRef={attachmentInputRef}
+              canAttach={canAttach}
+              canCompose={canComposeMessage}
+              canSubmit={canSubmitMessage}
+              cancelLabel={t('button.cancel')}
+              context={
+                composeContext
+                  ? {
+                      label:
+                        composeContext.kind === 'edit'
+                          ? t('label.composer.editing')
+                          : t('label.composer.replyingTo', {
+                              name: getMessageSenderLabel(
+                                composeContext.message,
+                                selectedAvatarProfiles.get(composeContext.message.sender),
+                              ),
+                            }),
+                      snippet: getMessageSnippet(
                         composeContext.kind === 'edit' ? composeContext.thread.latest : composeContext.message,
                         t,
-                      )}
-                    </span>
-                  </div>
-                  <button className="button button--secondary" onClick={cancelComposeContext} type="button">
-                    {t('button.cancel')}
-                  </button>
-                </div>
-              ) : null}
-              <textarea
-                aria-label={t('label.common.message')}
-                // Not disabled during a pending send: disabling the focused
-                // element blurs it (forcing a re-click per message) and blocks
-                // typing the next message while the bridge approval runs.
-                // Double-sends are already guarded by canSubmitMessage.
-                disabled={!canComposeMessage}
-                maxLength={4000}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                onPaste={handleComposerPaste}
-                placeholder={t('placeholder.message')}
-                ref={composerRef}
-                rows={1}
-                value={draft}
-              />
-              {selectedChat?.kind === 'group' ? (
-                <>
-                  <input
-                    hidden
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-
-                      if (file) {
-                        stageAttachment(file);
-                      }
-
-                      // Selecting the same file twice must still re-fire.
-                      event.target.value = '';
-                    }}
-                    ref={attachmentInputRef}
-                    type="file"
-                  />
-                  <button
-                    aria-label={t('label.composer.attach')}
-                    className="icon-button composer__attach"
-                    disabled={!canAttach || sendPending || stagedAttachment?.phase === 'processing'}
-                    onClick={() => attachmentInputRef.current?.click()}
-                    title={canAttach ? t('label.composer.attach') : t('action.attachUnavailable')}
-                    type="button"
-                  >
-                    <span aria-hidden="true">📎</span>
-                  </button>
-                </>
-              ) : null}
-              <button
-                aria-expanded={isComposerEmojiOpen}
-                aria-label={t('label.composer.emoji')}
-                className="icon-button composer__emoji-toggle"
-                disabled={!canComposeMessage}
-                onClick={() => setComposerEmojiOpen((current) => !current)}
-                title={t('label.composer.emoji')}
-                type="button"
-              >
-                <span aria-hidden="true">🙂</span>
-              </button>
-              <button
-                className="button"
-                disabled={!canSubmitMessage}
-                title={
-                  selectedChat?.kind === 'direct'
-                    ? canComposeMessage
-                      ? t('button.sendDirectMessage')
-                      : directSendUnavailableLabel
-                    : canComposeMessage
-                      ? t('button.sendMessage')
-                      : groupSendUnavailableLabel
-                }
-                type="submit"
-              >
-                {sendPending ? t('button.sending') : t('button.send')}
-              </button>
-            </form>
+                      ),
+                    }
+                  : null
+              }
+              draft={draft}
+              emojiLabel={t('label.composer.emoji')}
+              emojiOpen={isComposerEmojiOpen}
+              loadingLabel={t('label.loading')}
+              messageLabel={t('label.common.message')}
+              messagePlaceholder={t('placeholder.message')}
+              onAttachmentSelected={stageAttachment}
+              onCancelContext={cancelComposeContext}
+              onClearAttachment={clearStagedAttachment}
+              onDraftChange={setDraft}
+              onEmojiSelected={insertComposerEmoji}
+              onPaste={handleComposerPaste}
+              onSubmit={(event) => void handleSendMessage(event)}
+              onToggleEmoji={() => setComposerEmojiOpen((current) => !current)}
+              processingLabel={t('status.attachment.processing')}
+              removeAttachmentLabel={t('label.attachment.remove')}
+              searchLabel={t('label.search')}
+              sendLabel={t('button.send')}
+              sendPending={sendPending}
+              sendPendingLabel={t('button.sending')}
+              sendTitle={
+                selectedChat?.kind === 'direct'
+                  ? canComposeMessage
+                    ? t('button.sendDirectMessage')
+                    : directSendUnavailableLabel
+                  : canComposeMessage
+                    ? t('button.sendMessage')
+                    : groupSendUnavailableLabel
+              }
+              showAttachment={selectedChat?.kind === 'group'}
+              textareaRef={composerRef}
+            />
           )}
         </section>
 

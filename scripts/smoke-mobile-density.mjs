@@ -119,7 +119,7 @@ const bootstrap = `
             'GET_ACCOUNT_GROUPS', 'GET_ACCOUNT_GROUP_JOIN_REQUESTS', 'GET_ACTIVE_CHATS',
             'GET_ADMIN_GROUP_JOIN_REQUESTS', 'GET_MINTING_STATUS', 'GET_PRIVATE_DIRECT_ACTIVE_CHATS',
             'GET_SELECTED_ACCOUNT', 'RESOLVE_IDENTITIES', 'SEARCH_CHAT_MESSAGES',
-            'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES'
+            'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES', 'SEND_CHAT_MESSAGE'
           ];
         case 'WHICH_UI': return 'QORTIUM_HOME_ELECTRON';
         case 'IS_USING_PUBLIC_NODE': return false;
@@ -183,11 +183,15 @@ try {
     const message = document.querySelector('.message');
     const list = document.querySelector('.message-list');
     const composer = document.querySelector('.composer');
+    const composerToolbar = document.querySelector('.composer__toolbar');
+    const sendButton = document.querySelector('.composer__send');
     return {
       composerPaddingTop: getComputedStyle(composer).paddingTop,
+      composerToolbarDisplay: getComputedStyle(composerToolbar).display,
       listGap: getComputedStyle(list).gap,
       listPaddingTop: getComputedStyle(list).paddingTop,
-      messagePadding: getComputedStyle(message).padding
+      messagePadding: getComputedStyle(message).padding,
+      sendButtonMinWidth: getComputedStyle(sendButton).minWidth
     };
   })()`);
   const screenshot = await client.send('Page.captureScreenshot', { captureBeyondViewport: false, format: 'png' });
@@ -195,9 +199,11 @@ try {
 
   if (JSON.stringify(metrics) !== JSON.stringify({
     composerPaddingTop: '10px',
+    composerToolbarDisplay: 'flex',
     listGap: '7px',
     listPaddingTop: '10px',
     messagePadding: '9px 11px',
+    sendButtonMinWidth: '82px',
   })) {
     throw new Error(`Unexpected mobile density metrics: ${JSON.stringify(metrics)}`);
   }
