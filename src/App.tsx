@@ -181,6 +181,7 @@ import {
 } from './notifications';
 import { LatestRequestGuard } from './latestRequest';
 import { loadQortalAccountSnapshot } from './qortalAccountSession';
+import { getLegacyQortiumMigrationHint } from './qortalUiMigration';
 import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
 import {
   mergePersistedDirect,
@@ -2871,10 +2872,13 @@ export default function App() {
       return next.size === current.size ? current : next;
     });
     const currentQortiumAddress = currentAccountAddressRef.current;
+    const legacyMigrationHint = getLegacyQortiumMigrationHint(
+      currentQortiumAddress,
+      accountRefreshPendingRef.current,
+    );
     const restoredQortalUi = nextAccountAddress
       ? initializeQortalUiStorage(nextAccountAddress, {
-          legacyLookupComplete: !!currentQortiumAddress || !accountRefreshPendingRef.current,
-          legacyQortiumAccountAddress: currentQortiumAddress,
+          ...legacyMigrationHint,
         })
       : null;
     const restoredQortalWatermarks = restoredQortalUi?.watermarks ?? new Map<number, number>();

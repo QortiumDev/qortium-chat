@@ -33,6 +33,7 @@ import {
   type PersistedDirect,
 } from './chatStorage';
 import type { GroupData } from './types';
+import { getLegacyQortiumMigrationHint } from './qortalUiMigration';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -407,6 +408,37 @@ describe('storage round-trips', () => {
     expect(window.localStorage.getItem(qortalLegacyOwnerStorageKey('Qortium-two'))).toBeNull();
     expect(JSON.parse(window.localStorage.getItem(qortalLegacyOwnerStorageKey(ADDRESS)) ?? '{}')).toEqual({
       qortalAccountAddress: 'Qortal-one',
+      version: 1,
+    });
+  });
+
+  it('does not bind Qortal B to stale Qortium A while the simultaneous switch is pending', () => {
+    window.localStorage.setItem(
+      'qortium-chat:read:Qortium-A',
+      JSON.stringify({ qortalGroups: { 42: 3000 } }),
+    );
+    window.localStorage.setItem(
+      'qortium-chat:read:Qortium-B',
+      JSON.stringify({ qortalGroups: { 77: 7000 } }),
+    );
+
+    const qortalFirst = initializeQortalUiStorage(
+      'Qortal-B',
+      getLegacyQortiumMigrationHint('Qortium-A', true),
+    );
+
+    expect(qortalFirst.legacyMigrationPending).toBe(true);
+    expect(window.localStorage.getItem(qortalLegacyOwnerStorageKey('Qortium-A'))).toBeNull();
+
+    const qortiumSecond = initializeQortalUiStorage(
+      'Qortal-B',
+      getLegacyQortiumMigrationHint('Qortium-B', false),
+    );
+
+    expect(qortiumSecond.watermarks).toEqual(new Map([[77, 7000]]));
+    expect(window.localStorage.getItem(qortalLegacyOwnerStorageKey('Qortium-A'))).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(qortalLegacyOwnerStorageKey('Qortium-B')) ?? '{}')).toEqual({
+      qortalAccountAddress: 'Qortal-B',
       version: 1,
     });
   });
