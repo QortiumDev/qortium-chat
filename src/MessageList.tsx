@@ -56,7 +56,7 @@ import { type AvatarLightboxImage } from './AvatarLightbox';
 import { DownIcon, UpIcon } from './icons';
 import { type TranslateFunction } from './i18n';
 import { type ChatMessage, type ChatNetwork, type ChatScrollPosition, type QdnAction, type TrackedTransaction } from './types';
-import { type PendingRevision } from './pendingSends';
+import { canRetryPendingDelivery, type PendingRevision, type PendingSend, type SendDeliveryPhase } from './pendingSends';
 
 // Loaded on demand: the full picker only mounts after React → '+', and its
 // bundle (~300 KB, a third of the app's JS) must not weigh down every app
@@ -125,7 +125,7 @@ function MessageImagePreview({
   if (state.phase === 'loading') {
     return (
       <div className="message__image-preview message__image-preview--loading">
-        {t('status.loading.imagePreview')}
+        {t('label.resource.public')} · {t('status.loading.imagePreview')}
       </div>
     );
   }
@@ -133,7 +133,7 @@ function MessageImagePreview({
   if (state.phase === 'error') {
     return (
       <div className="message__image-preview message__image-preview--error">
-        {state.message}
+        {t('label.resource.public')} · {state.message}
       </div>
     );
   }
@@ -143,9 +143,9 @@ function MessageImagePreview({
       {state.previews.map((preview) => (
         <figure className="message__image-preview" key={preview.qdnUrl}>
           <button
-            aria-label={`${t('button.viewImagePreview')}: ${preview.alt}`}
+            aria-label={`${t('label.resource.public')}: ${t('button.viewImagePreview')}: ${preview.alt}`}
             className="message__image-preview-button"
-            onClick={() => onOpenImage({ alt: preview.alt, name: preview.alt, src: preview.src })}
+            onClick={() => onOpenImage({ alt: `${t('label.resource.public')}: ${preview.alt}`, name: preview.alt, src: preview.src })}
             title={preview.qdnUrl}
             type="button"
           >
@@ -156,7 +156,7 @@ function MessageImagePreview({
               width={preview.width}
             />
           </button>
-          <figcaption>{preview.alt}</figcaption>
+          <figcaption>{t('label.resource.public')} · {preview.alt}</figcaption>
         </figure>
       ))}
     </>
@@ -498,6 +498,51 @@ function MessageReactionChips({
   );
 }
 
+function getMessageDeliveryLabel(phase: SendDeliveryPhase, t: TranslateFunction) {
+  switch (phase) {
+    case 'broadcast':
+      return t('message.delivery.broadcast');
+    case 'confirmed':
+      return t('status.transaction.confirmed');
+    case 'expired':
+      return t('message.sendStatus.failed');
+    case 'rejected':
+      return t('message.sendStatus.failed');
+    default:
+      return t('message.sendStatus.sending');
+  }
+}
+
+function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunction) {
+  if (revision.kind === 'edit') {
+    switch (revision.delivery.phase) {
+      case 'broadcast':
+        return t('message.delivery.broadcast');
+      case 'confirmed':
+        return t('status.transaction.confirmed');
+      case 'expired':
+        return t('message.editStatus.failed');
+      case 'rejected':
+        return t('message.editStatus.failed');
+      default:
+        return t('message.editStatus.sending');
+    }
+  }
+
+  switch (revision.delivery.phase) {
+    case 'broadcast':
+      return t('message.delivery.broadcast');
+    case 'confirmed':
+      return t('status.transaction.confirmed');
+    case 'expired':
+      return t('message.deleteStatus.failed');
+    case 'rejected':
+      return t('message.deleteStatus.failed');
+    default:
+      return t('message.deleteStatus.sending');
+  }
+}
+
 export const MessageList = memo(function MessageList({
   avatarProfiles,
   canCompose,
@@ -524,6 +569,7 @@ export const MessageList = memo(function MessageList({
   onScrollPositionChange,
   pendingReactionKey,
   pendingRevisionBySignature,
+  pendingSendByLocalId,
   qortalResourceActions,
   qortiumResourceActions,
   scrollChatKey,
@@ -561,6 +607,7 @@ export const MessageList = memo(function MessageList({
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
   pendingReactionKey: string;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
+  pendingSendByLocalId: ReadonlyMap<string, PendingSend>;
   qortalResourceActions: QdnAction[];
   qortiumResourceActions: QdnAction[];
   scrollChatKey: string;
@@ -1721,8 +1768,6 @@ export const MessageList = memo(function MessageList({
             const hasDocumentSaveActions = saveableDocumentResources.length > 0;
             const areImagePreviewsOpen = openImagePreviews.has(threadKey);
             const canReply = canCompose && !!original.signature;
-            const canEditOrDelete = canRevise && !!original.signature;
-            const canReact = canEditOrDelete;
             const isReactionPickerOpen = openReactionPickerKey === threadKey;
             const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
             const senderProfile = avatarProfiles.get(original.sender);
@@ -1730,10 +1775,18 @@ export const MessageList = memo(function MessageList({
             // absent once the real confirmed message takes its place.
             const sendState = original.sendState;
             const sendLocalId = original.sendLocalId;
+            const pendingSend = sendLocalId ? pendingSendByLocalId.get(sendLocalId) : undefined;
+            const sendDeliveryPhase: SendDeliveryPhase =
+              pendingSend?.delivery.phase ?? (sendState === 'failed' ? 'rejected' : 'pending');
             // An edit/delete already in flight for this (confirmed) original,
             // driven from the side channel rather than an injected revision —
             // see pendingSends.ts's module doc for why.
             const pendingRevision = original.signature ? pendingRevisionBySignature.get(original.signature) : undefined;
+            // A revision whose outcome is pending or ambiguous owns this target
+            // until it confirms or the user explicitly discards it. Do not let
+            // the ordinary Edit/Delete buttons silently supersede that record.
+            const canEditOrDelete = canRevise && !!original.signature && !pendingRevision;
+            const canReact = canRevise && !!original.signature;
             const actionButtons =
               canReply ||
               canReact ||
@@ -1873,7 +1926,7 @@ export const MessageList = memo(function MessageList({
                     </span>
                   )}
                 </div>
-                <MessageResourceCards resources={textResources} />
+                <MessageResourceCards resources={textResources} t={t} />
                 {areImagePreviewsOpen ? (
                   <MessageImagePreviews onOpenImage={onOpenImage} resources={imageResources} t={t} />
                 ) : null}
@@ -1902,42 +1955,40 @@ export const MessageList = memo(function MessageList({
                   {isContinuation ? actionButtons : null}
                 </div>
                 {sendState === 'sending' ? (
-                  <p className="message__send-status message__send-status--sending" role="status">
-                    {t('message.sendStatus.sending')}
+                  <p className={`message__send-status message__send-status--${sendDeliveryPhase}`} role="status">
+                    {getMessageDeliveryLabel(sendDeliveryPhase, t)}
                   </p>
                 ) : null}
                 {sendState === 'failed' && sendLocalId ? (
-                  <p className="message__send-status message__send-status--failed" role="alert">
-                    <span>{t('message.sendStatus.failed')}</span>
-                    <button onClick={() => onRetryMessage(sendLocalId)} type="button">
-                      {t('button.retry')}
-                    </button>
+                  <p className={`message__send-status message__send-status--${sendDeliveryPhase}`} role="alert">
+                    <span>{getMessageDeliveryLabel(sendDeliveryPhase, t)}</span>
+                    {pendingSend?.error ? <span className="message__send-error">{pendingSend.error}</span> : null}
+                    {pendingSend && canRetryPendingDelivery(pendingSend.delivery) ? (
+                      <button onClick={() => onRetryMessage(sendLocalId)} type="button">
+                        {t('button.retry')}
+                      </button>
+                    ) : null}
                     <button onClick={() => onDiscardMessage(sendLocalId)} type="button">
-                      {t('button.cancel')}
+                      {t('button.discardLocal')}
                     </button>
                   </p>
                 ) : null}
                 {pendingRevision ? (
                   <p
-                    className={`message__send-status message__send-status--${pendingRevision.status}`}
-                    role={pendingRevision.status === 'failed' ? 'alert' : 'status'}
+                    className={`message__send-status message__send-status--${pendingRevision.delivery.phase}`}
+                    role={pendingRevision.delivery.phase === 'rejected' || pendingRevision.delivery.phase === 'expired' ? 'alert' : 'status'}
                   >
-                    <span>
-                      {pendingRevision.kind === 'edit'
-                        ? pendingRevision.status === 'sending'
-                          ? t('message.editStatus.sending')
-                          : t('message.editStatus.failed')
-                        : pendingRevision.status === 'sending'
-                          ? t('message.deleteStatus.sending')
-                          : t('message.deleteStatus.failed')}
-                    </span>
-                    {pendingRevision.status === 'failed' ? (
+                    <span>{getRevisionDeliveryLabel(pendingRevision, t)}</span>
+                    {pendingRevision.error ? <span className="message__send-error">{pendingRevision.error}</span> : null}
+                    {pendingRevision.delivery.phase === 'rejected' || pendingRevision.delivery.phase === 'expired' ? (
                       <>
-                        <button onClick={() => onRetryRevision(pendingRevision.localId)} type="button">
-                          {t('button.retry')}
-                        </button>
+                        {canRetryPendingDelivery(pendingRevision.delivery) ? (
+                          <button onClick={() => onRetryRevision(pendingRevision.localId)} type="button">
+                            {t('button.retry')}
+                          </button>
+                        ) : null}
                         <button onClick={() => onDiscardRevision(pendingRevision.localId)} type="button">
-                          {t('button.cancel')}
+                          {t('button.discardLocal')}
                         </button>
                       </>
                     ) : null}

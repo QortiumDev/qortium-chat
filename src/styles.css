@@ -2415,11 +2415,10 @@ button.message__reply-preview:focus-visible {
   line-height: var(--qc-line-small);
 }
 
-/* A still-local optimistic echo (see pendingSends.ts) reads as visibly
-   provisional until it is confirmed or fails — same intent as the
-   .tx-status pending/failed treatment above, scaled down for a chat bubble. */
+/* A still-local optimistic echo reads as provisional without lowering the
+   contrast of its message, timestamp, or accessible status text. */
 .message--sending {
-  opacity: 0.7;
+  border-style: dashed;
 }
 
 .message__send-status {
@@ -2433,6 +2432,8 @@ button.message__reply-preview:focus-visible {
   line-height: var(--qc-line-small);
 }
 
+.message__send-status--pending::before,
+.message__send-status--broadcast::before,
 .message__send-status--sending::before {
   content: '';
   display: inline-block;
@@ -2443,8 +2444,22 @@ button.message__reply-preview:focus-visible {
   border-radius: 50%;
 }
 
+.message__send-status--confirmed {
+  color: var(--qc-color-transaction-confirmed);
+}
+
+.message__send-status--expired {
+  color: var(--qc-color-warning);
+}
+
+.message__send-status--rejected,
 .message__send-status--failed {
   color: var(--qc-color-transaction-failed);
+}
+
+.message__send-error {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
 }
 
 .message__send-status button {
@@ -4104,6 +4119,7 @@ button.message__reply-preview:focus-visible,
      taller tap area on touch. 34px keeps message rows readable while clearing
      WCAG 2.5.8's 24px minimum with margin. */
   .message__actions button,
+  .message__send-status button,
   .message__time {
     min-height: 34px;
   }

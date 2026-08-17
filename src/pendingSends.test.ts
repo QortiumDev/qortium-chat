@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canRetryPendingDelivery,
   createLocalSendId,
   createPendingRevision,
   createPendingSend,
   confirmPendingSend,
+  expirePendingRevisions,
   expirePendingSends,
   failPendingRevision,
   failPendingSend,
@@ -108,6 +110,16 @@ describe('resolvePendingSend / failPendingSend / retryPendingSend', () => {
     expect(retried.target).toEqual(failed.target);
   });
 
+  it('only retries a proven bridge rejection, never an ambiguous expiry', () => {
+    const rejected = failPendingSend(pendingMessage(), 'Bridge rejected the request.', 200);
+    const broadcast = resolvePendingSend(pendingMessage(), { signature: 'maybe-landed' }, 200);
+    const expired = expirePendingSends([broadcast], 1_500, 1_000, 'Confirmation timed out.')[0];
+
+    expect(canRetryPendingDelivery(rejected.delivery)).toBe(true);
+    expect(canRetryPendingDelivery(expired.delivery)).toBe(false);
+    expect(retryPendingSend(expired, 2_000)).toBe(expired);
+  });
+
   it('models confirmation and expiry as explicit terminal delivery phases', () => {
     const broadcast = resolvePendingSend(pendingMessage(), { signature: 'real-sig' }, 200);
     const confirmed = confirmPendingSend(broadcast, 300);
@@ -127,11 +139,14 @@ describe('resolvePendingSend / failPendingSend / retryPendingSend', () => {
 });
 
 describe('duplicate prevention', () => {
-  it('blocks the same target/body/reference while pending or broadcast, but not after rejection', () => {
+  it('blocks the same target/body/reference while pending, broadcast, or ambiguously expired', () => {
     const candidate = pendingMessage();
+    const broadcast = resolvePendingSend(candidate, { signature: 'sig' }, 200);
+    const expired = expirePendingSends([broadcast], 1_500, 1_000, 'Confirmation timed out.')[0];
 
     expect(hasActiveDuplicateSend([candidate], candidate)).toBe(true);
-    expect(hasActiveDuplicateSend([resolvePendingSend(candidate, { signature: 'sig' })], candidate)).toBe(true);
+    expect(hasActiveDuplicateSend([broadcast], candidate)).toBe(true);
+    expect(hasActiveDuplicateSend([expired], candidate)).toBe(true);
     expect(hasActiveDuplicateSend([failPendingSend(candidate, 'nope')], candidate)).toBe(false);
   });
 
@@ -290,6 +305,14 @@ describe('pending revisions (edit/delete side channel)', () => {
     expect(retried.status).toBe('sending');
     expect(retried.error).toBeUndefined();
     expect(retried.resolvedSignature).toBeNull();
+  });
+
+  it('does not retry an edit whose accepted broadcast later expires', () => {
+    const broadcast = resolvePendingRevision(pendingRevision(), { signature: 'maybe-landed' }, 200);
+    const expired = expirePendingRevisions([broadcast], 1_500, 1_000, 'Confirmation timed out.')[0];
+
+    expect(expired.delivery.phase).toBe('expired');
+    expect(retryPendingRevision(expired, 2_000)).toBe(expired);
   });
 
   it('prunePendingRevisions drops entries confirmed by signature, keeping array identity otherwise', () => {

@@ -941,7 +941,7 @@ export function renderMessageTextWithAppLinks(
   });
 }
 
-function MessageResourceCard({ resource }: { resource: QdnResource }) {
+function MessageResourceCard({ resource, t }: { resource: QdnResource; t: TranslateFunction }) {
   const fallback: QdnResourceCard = {
     network: resource.network,
     subtitle: `${resource.network === 'qortal' ? 'Qortal' : 'Qortium'} · ${resource.service} · ${resource.name}`,
@@ -967,14 +967,14 @@ function MessageResourceCard({ resource }: { resource: QdnResource }) {
   return (
     <article className="message__resource-card" title={resource.qdnUrl}>
       <strong>{card.title}</strong>
-      <span>{card.subtitle}</span>
+      <span>{t('label.resource.public')} · {card.subtitle}</span>
       {card.description ? <p>{card.description}</p> : null}
       {card.mimeType ? <small>{card.mimeType}</small> : null}
     </article>
   );
 }
 
-export function MessageResourceCards({ resources }: { resources: readonly QdnResource[] }) {
+export function MessageResourceCards({ resources, t }: { resources: readonly QdnResource[]; t: TranslateFunction }) {
   if (resources.length === 0) {
     return null;
   }
@@ -982,7 +982,7 @@ export function MessageResourceCards({ resources }: { resources: readonly QdnRes
   return (
     <div className="message__resource-cards">
       {resources.slice(0, 6).map((resource, index) => (
-        <MessageResourceCard key={`${resource.network}:${resource.qdnUrl}:${index}`} resource={resource} />
+        <MessageResourceCard key={`${resource.network}:${resource.qdnUrl}:${index}`} resource={resource} t={t} />
       ))}
     </div>
   );

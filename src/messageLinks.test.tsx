@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
   fetchQdnImagePreview,
   fetchQdnImagePreviews,
@@ -10,11 +11,13 @@ import {
   getMessageSegments,
   getMessageTextParts,
   getQortalHubImageResources,
+  MessageResourceCards,
   openAppLinkInHomeTab,
   openQdnDocumentViewer,
   openQdnMediaPlayer,
   saveQdnResource,
 } from './messageLinks';
+import { createTranslator } from './i18n';
 import { qdnRequest } from './qdnRequest';
 import { qortalRequest } from './qortalRequest';
 
@@ -182,6 +185,13 @@ describe('message link helpers', () => {
         service: 'DOCUMENT',
       },
     ]);
+  });
+
+  it('labels resource metadata cards as public in visible text', () => {
+    const resources = getMessageQdnResources('qortal://IMAGE/Alice/photo', 'qortal');
+    const markup = renderToStaticMarkup(<MessageResourceCards resources={resources} t={createTranslator('en')} />);
+
+    expect(markup).toContain('Public resource · Qortal · IMAGE · Alice');
   });
 
   it('opens contextual and native Qortal resource links only through qortalRequest', async () => {

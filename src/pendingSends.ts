@@ -34,6 +34,13 @@ export type SendDeliveryState = {
   readonly updatedAt: number;
 };
 
+/** Only a bridge rejection proves that no broadcast was accepted. A timed-out
+ * confirmation is deliberately not retryable: the original transaction may
+ * already be on-chain or merely absent from the node currently serving reads. */
+export function canRetryPendingDelivery(delivery: SendDeliveryState) {
+  return delivery.phase === 'rejected';
+}
+
 // `network` is optional and defaults to 'qortium' at every read site (see
 // App.tsx's dispatchChatSend) — slice-1 callers that never set it keep
 // behaving exactly as they did before Chat 2.0 slice 2.
@@ -205,6 +212,10 @@ export function failPendingSend(pending: PendingSend, error: string, timestamp: 
 
 /** Re-arm a failed entry for another attempt: same text/target/chatReference, fresh timestamp so it re-sorts to "now". */
 export function retryPendingSend(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
+  if (!canRetryPendingDelivery(pending.delivery)) {
+    return pending;
+  }
+
   return {
     ...pending,
     delivery: { phase: 'pending', updatedAt: timestamp },
@@ -229,16 +240,17 @@ function targetsEqual(first: PendingSendTarget, second: PendingSendTarget) {
     : second.kind === 'direct' && first.address === second.address;
 }
 
-/** Prevents an identical click/retry from starting another broadcast while the
- * first attempt is still awaiting the bridge or confirmation. Rejected and
- * expired attempts are terminal and may be explicitly retried. */
+/** Prevents an identical click from starting another broadcast while the first
+ * attempt is awaiting the bridge/confirmation or ended ambiguously. A rejected
+ * attempt is known not to have broadcast and can be retried; an expired one
+ * remains blocked until the user explicitly discards its local echo. */
 export function hasActiveDuplicateSend(
   pending: readonly PendingSend[],
   candidate: Pick<PendingSend, 'accountAddress' | 'chatReference' | 'target' | 'text'>,
 ) {
   return pending.some(
     (entry) =>
-      (entry.delivery.phase === 'pending' || entry.delivery.phase === 'broadcast') &&
+      entry.delivery.phase !== 'rejected' &&
       entry.accountAddress === candidate.accountAddress &&
       entry.text === candidate.text &&
       entry.chatReference === candidate.chatReference &&
@@ -407,6 +419,10 @@ export function failPendingRevision(
 }
 
 export function retryPendingRevision(pending: PendingRevision, timestamp: number = Date.now()): PendingRevision {
+  if (!canRetryPendingDelivery(pending.delivery)) {
+    return pending;
+  }
+
   return {
     ...pending,
     delivery: { phase: 'pending', updatedAt: timestamp },

@@ -73,6 +73,7 @@ import {
 } from './messageThreads';
 import { retainChatMessagesWhenEqual } from './messageUpdates';
 import {
+  canRetryPendingDelivery,
   createLocalSendId,
   createPendingRevision,
   createPendingSend,
@@ -1530,7 +1531,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const timeoutError = t('status.loadingError.sendMessage');
+    const timeoutError = t('message.delivery.expired');
 
     updatePendingSends((current) =>
       expirePendingSends(current, now, SEND_CONFIRMATION_TIMEOUT_MS, timeoutError),
@@ -2017,6 +2018,10 @@ export default function App() {
           )
         : emptyPendingSends,
     [account?.address, pendingSends, selectedChatKey],
+  );
+  const pendingSendByLocalId = useMemo(
+    () => new Map(pendingSendsForSelectedChat.map((entry) => [entry.localId, entry])),
+    [pendingSendsForSelectedChat],
   );
   const displayMessages = useMemo(
     () => mergeOptimisticMessages(combinedMessages, pendingSendsForSelectedChat),
@@ -3785,7 +3790,12 @@ export default function App() {
     const chat = selectedChat;
     const entry = pendingSendsRef.current.find((candidate) => candidate.localId === localId);
 
-    if (!chat || !entry || entry.accountAddress !== account?.address) {
+    if (
+      !chat ||
+      !entry ||
+      entry.accountAddress !== account?.address ||
+      !canRetryPendingDelivery(entry.delivery)
+    ) {
       return;
     }
 
@@ -3815,7 +3825,12 @@ export default function App() {
     const chat = selectedChat;
     const entry = pendingRevisionsRef.current.find((candidate) => candidate.localId === localId);
 
-    if (!chat || !entry || entry.accountAddress !== account?.address) {
+    if (
+      !chat ||
+      !entry ||
+      entry.accountAddress !== account?.address ||
+      !canRetryPendingDelivery(entry.delivery)
+    ) {
       return;
     }
 
@@ -7423,6 +7438,7 @@ export default function App() {
                 now={now}
                 pendingReactionKey={reactionPendingKey}
                 pendingRevisionBySignature={pendingRevisionBySignature}
+                pendingSendByLocalId={pendingSendByLocalId}
                 qortalResourceActions={qortalBridge.value.actions}
                 qortiumResourceActions={actions}
                 scrollChatKey={selectedChatKey}
