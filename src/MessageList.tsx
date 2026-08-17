@@ -33,7 +33,10 @@ import {
   fetchQdnImagePreviews,
   getDocumentQdnResources,
   getImageQdnResources,
+  getMessageQdnResources,
   getMediaQdnResources,
+  getQortalHubImageResources,
+  MessageResourceCards,
   openQdnDocumentViewer,
   openQdnMediaPlayer,
   renderMessageTextWithAppLinks,
@@ -52,7 +55,7 @@ import {
 import { type AvatarLightboxImage } from './AvatarLightbox';
 import { DownIcon, UpIcon } from './icons';
 import { type TranslateFunction } from './i18n';
-import { type ChatMessage, type ChatScrollPosition, type TrackedTransaction } from './types';
+import { type ChatMessage, type ChatNetwork, type ChatScrollPosition, type QdnAction, type TrackedTransaction } from './types';
 import { type PendingRevision } from './pendingSends';
 
 // Loaded on demand: the full picker only mounts after React → '+', and its
@@ -117,7 +120,7 @@ function MessageImagePreview({
     return () => {
       isDisposed = true;
     };
-  }, [resource.identifier, resource.name, resource.path, resource.qdnUrl, resource.service, t]);
+  }, [resource.identifier, resource.name, resource.network, resource.path, resource.qdnUrl, resource.service, t]);
 
   if (state.phase === 'loading') {
     return (
@@ -499,12 +502,10 @@ export const MessageList = memo(function MessageList({
   avatarProfiles,
   canCompose,
   canRevise,
-  canOpenDocumentViewer,
-  canOpenMediaPlayer,
-  canSaveQdnResource,
   emptyHint,
   initialScrollPosition,
   messages,
+  network,
   olderMessagesError,
   olderMessagesLoading,
   olderMessagesReachedStart,
@@ -523,6 +524,8 @@ export const MessageList = memo(function MessageList({
   onScrollPositionChange,
   pendingReactionKey,
   pendingRevisionBySignature,
+  qortalResourceActions,
+  qortiumResourceActions,
   scrollChatKey,
   selfAddress,
   selfName,
@@ -536,12 +539,10 @@ export const MessageList = memo(function MessageList({
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
   canRevise: boolean;
-  canOpenDocumentViewer: boolean;
-  canOpenMediaPlayer: boolean;
-  canSaveQdnResource: boolean;
   emptyHint?: string;
   initialScrollPosition: ChatScrollPosition | undefined;
   messages: ChatMessage[];
+  network: ChatNetwork;
   olderMessagesError: string;
   olderMessagesLoading: boolean;
   olderMessagesReachedStart: boolean;
@@ -560,6 +561,8 @@ export const MessageList = memo(function MessageList({
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
   pendingReactionKey: string;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
+  qortalResourceActions: QdnAction[];
+  qortiumResourceActions: QdnAction[];
   scrollChatKey: string;
   selfAddress: string | null;
   selfName: string | null;
@@ -640,6 +643,10 @@ export const MessageList = memo(function MessageList({
   const [unreadJumpVisible, setUnreadJumpVisible] = useState(false);
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
+  const hasResourceAction = (resourceNetwork: ChatNetwork, action: string) =>
+    (resourceNetwork === 'qortal' ? qortalResourceActions : qortiumResourceActions).some(
+      (candidate) => candidate.toUpperCase() === action,
+    );
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
   // Index of the first thread newer than the user's read watermark; the "new
   // messages" divider is drawn just above it. Only shown when at least one read
@@ -1681,14 +1688,37 @@ export const MessageList = memo(function MessageList({
             const isContinuation = isThreadContinuation(threads[index - 1], thread);
             const canEdit = isOwn && decoded.kind === 'text';
             const isTimeExpanded = expandedTimeKey === threadKey;
-            const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
-            const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
-            const documentResources = decoded.kind === 'text' ? getDocumentQdnResources(decoded.body) : [];
+            const textResources = decoded.kind === 'text' ? getMessageQdnResources(decoded.body, network) : [];
+            const linkedImageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body, network) : [];
+            const pinnedImageResources =
+              network === 'qortal' && decoded.kind === 'text'
+                ? getQortalHubImageResources(decoded.hubImages ?? [])
+                : [];
+            const imageResources = Array.from(
+              new Map(
+                [...linkedImageResources, ...pinnedImageResources].map((resource) => [
+                  `${resource.network}:${resource.service}:${resource.name}:${resource.identifier ?? ''}:${resource.path}`,
+                  resource,
+                ]),
+              ).values(),
+            );
+            const mediaResources =
+              decoded.kind === 'text'
+                ? getMediaQdnResources(decoded.body, network).filter((resource) =>
+                    hasResourceAction(resource.network, 'OPEN_QDN_MEDIA_PLAYER'),
+                  )
+                : [];
+            const documentResources = decoded.kind === 'text' ? getDocumentQdnResources(decoded.body, network) : [];
+            const viewableDocumentResources = documentResources.filter((resource) =>
+              hasResourceAction(resource.network, 'OPEN_QDN_DOCUMENT_VIEWER'),
+            );
+            const saveableDocumentResources = documentResources.filter((resource) =>
+              hasResourceAction(resource.network, 'SAVE_QDN_RESOURCE'),
+            );
             const hasImagePreviews = imageResources.length > 0;
-            const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
-            const hasDocumentResources = documentResources.length > 0;
-            const hasDocumentViewerActions = canOpenDocumentViewer && hasDocumentResources;
-            const hasDocumentSaveActions = canSaveQdnResource && hasDocumentResources;
+            const hasMediaActions = mediaResources.length > 0;
+            const hasDocumentViewerActions = viewableDocumentResources.length > 0;
+            const hasDocumentSaveActions = saveableDocumentResources.length > 0;
             const areImagePreviewsOpen = openImagePreviews.has(threadKey);
             const canReply = canCompose && !!original.signature;
             const canEditOrDelete = canRevise && !!original.signature;
@@ -1731,7 +1761,7 @@ export const MessageList = memo(function MessageList({
                       ))
                     : null}
                   {hasDocumentViewerActions
-                    ? documentResources.map((resource, resourceIndex) => (
+                    ? viewableDocumentResources.map((resource, resourceIndex) => (
                         <button
                           key={`view-${resource.qdnUrl}-${resourceIndex}`}
                           onClick={() => openDocument(resource)}
@@ -1743,7 +1773,7 @@ export const MessageList = memo(function MessageList({
                       ))
                     : null}
                   {hasDocumentSaveActions
-                    ? documentResources.map((resource, resourceIndex) => (
+                    ? saveableDocumentResources.map((resource, resourceIndex) => (
                         <button
                           key={`save-${resource.qdnUrl}-${resourceIndex}`}
                           onClick={() => saveResource(resource)}
@@ -1836,13 +1866,14 @@ export const MessageList = memo(function MessageList({
                 ) : null}
                 <div className="message__body">
                   {decoded.body ? (
-                    renderMessageTextWithAppLinks(decoded.body, t)
-                  ) : (
+                    renderMessageTextWithAppLinks(decoded.body, t, network)
+                  ) : imageResources.length > 0 ? null : (
                     <span className="message__body-placeholder">
                       {t('message.empty')}
                     </span>
                   )}
                 </div>
+                <MessageResourceCards resources={textResources} />
                 {areImagePreviewsOpen ? (
                   <MessageImagePreviews onOpenImage={onOpenImage} resources={imageResources} t={t} />
                 ) : null}

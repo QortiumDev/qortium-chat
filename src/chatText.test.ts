@@ -342,6 +342,98 @@ describe('machine messages', () => {
     });
   });
 
+  it('preserves validated Qortal Hub image descriptors', () => {
+    const decoded = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          images: [
+            { identifier: 'img-id', name: 'QuickMythril', service: 'image', timestamp: 1783403484577 },
+            { identifier: '../unsafe', name: 'QuickMythril', service: 'IMAGE' },
+          ],
+          messageText: null,
+          version: 3,
+        }),
+      ),
+      encoding: 'BASE64',
+      isEncrypted: false,
+      isText: true,
+    });
+
+    expect(decoded).toEqual({
+      body: '',
+      hubImages: [
+        { identifier: 'img-id', name: 'QuickMythril', service: 'IMAGE', timestamp: 1783403484577 },
+      ],
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('reduces Qortal Hub plain-string and HTML messageText variants to safe text', () => {
+    const plain = decodeChatMessage({
+      data: encodeBase64(JSON.stringify({ messageText: 'plain Hub text', version: 3 })),
+      isText: true,
+    });
+    const html = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          messageText:
+            '<p>Hello &amp; welcome<br><a href="qortal://APP/Q-Tube/default">Q-Tube</a></p><script>alert(1)</script><p>Done</p>',
+          version: 3,
+        }),
+      ),
+      isText: true,
+    });
+
+    expect(plain.body).toBe('plain Hub text');
+    expect(html.body).toBe('Hello & welcome\nQ-Tube (qortal://APP/Q-Tube/default)\nDone');
+    expect(html.body).not.toContain('<');
+    expect(html.body).not.toContain('alert');
+  });
+
+  it('preserves safe Tiptap link marks as plain link text', () => {
+    const decoded = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          messageText: {
+            content: [
+              {
+                content: [
+                  {
+                    marks: [{ attrs: { href: 'qdn://DOCUMENT/Alice/notes' }, type: 'link' }],
+                    text: 'Notes',
+                    type: 'text',
+                  },
+                ],
+                type: 'paragraph',
+              },
+            ],
+            type: 'doc',
+          },
+          version: 3,
+        }),
+      ),
+      isText: true,
+    });
+
+    expect(decoded.body).toBe('Notes (qdn://DOCUMENT/Alice/notes)');
+  });
+
+  it('accepts the observed JSON-string form of Hub image arrays', () => {
+    const decoded = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          images: JSON.stringify([{ identifier: 'img-id', name: 'Alice', service: 'IMAGE' }]),
+          messageText: '',
+          version: 3,
+        }),
+      ),
+      isText: true,
+    });
+
+    expect(decoded.hubImages).toEqual([{ identifier: 'img-id', name: 'Alice', service: 'IMAGE' }]);
+  });
+
   it('keeps a human-pasted flat JSON object with an app key visible', () => {
     const typedObject = base64(JSON.stringify({ app: 'myapp', name: 'test' }));
     const typed = decodeChatMessage({ data: typedObject, isText: true });

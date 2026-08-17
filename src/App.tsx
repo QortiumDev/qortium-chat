@@ -2239,9 +2239,6 @@ export default function App() {
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
-  const canOpenMediaPlayer = hasAction(actions, 'OPEN_QDN_MEDIA_PLAYER');
-  const canOpenDocumentViewer = hasAction(actions, 'OPEN_QDN_DOCUMENT_VIEWER');
-  const canSaveQdnResource = hasAction(actions, 'SAVE_QDN_RESOURCE');
   const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
   const canSendDirectChat = canSendGroupChat;
   const isAccountUnlocked = account?.isUnlocked === true;
@@ -7096,12 +7093,10 @@ export default function App() {
                 avatarProfiles={selectedAvatarProfiles}
                 canCompose={canComposeMessage}
                 canRevise={canComposeMessage && selectedChat?.network !== 'qortal'}
-                canOpenDocumentViewer={canOpenDocumentViewer}
-                canOpenMediaPlayer={canOpenMediaPlayer}
-                canSaveQdnResource={canSaveQdnResource}
                 emptyHint={isSelectedGeneralChat ? t('hint.noMessages.general') : undefined}
                 initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
                 messages={displayMessages}
+                network={selectedChat?.network ?? 'qortium'}
                 olderMessagesError={olderMessagesState.error}
                 olderMessagesReachedStart={olderMessagesState.reachedStart}
                 olderMessagesLoading={olderMessagesState.loading}
@@ -7121,6 +7116,8 @@ export default function App() {
                 now={now}
                 pendingReactionKey={reactionPendingKey}
                 pendingRevisionBySignature={pendingRevisionBySignature}
+                qortalResourceActions={qortalBridge.value.actions}
+                qortiumResourceActions={actions}
                 scrollChatKey={selectedChatKey}
                 selfAddress={selfAddress}
                 selfName={selfName}

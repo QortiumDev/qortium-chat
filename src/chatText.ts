@@ -7,12 +7,25 @@ function localizeMessage(t: TranslateFunction | undefined, key: Parameters<Trans
 
 export type DisplayChatMessage = {
   body: string;
+  hubImages?: QortalHubImageRef[];
   kind: 'binary' | 'empty' | 'encrypted' | 'machine' | 'reaction' | 'text' | 'unsupported';
   /** For kind 'machine': the sending app's registered marker (e.g. "chess"). */
   machineApp?: string;
   reaction?: ChatReaction;
   repliedTo: string | null;
 };
+
+// Qortal Hub pins public chat images by resource coordinates inside the v3
+// message envelope. Keep these separate from message text: MessageList turns
+// them into network-qualified Qortal resources before any bridge operation.
+export type QortalHubImageRef = {
+  identifier: string;
+  name: string;
+  service: string;
+  timestamp?: number;
+};
+
+const QORTAL_HUB_IMAGE_SERVICES = new Set(['GIF_REPOSITORY', 'IMAGE', 'QCHAT_IMAGE', 'THUMBNAIL']);
 
 export type ChatReaction = {
   content: string;
@@ -73,13 +86,32 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function getSafeLinkedAddress(value: unknown) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const address = value.trim();
+
+  return address.length <= 2048 && /^(?:qdn|qortal|home|core|https?):\/\/[^\s<>"'`]+$/i.test(address)
+    ? address
+    : null;
+}
+
 function extractTiptapText(node: unknown): string {
   if (!isPlainObject(node)) {
     return '';
   }
 
   if (node.type === 'text') {
-    return typeof node.text === 'string' ? node.text : '';
+    const text = typeof node.text === 'string' ? node.text : '';
+    const marks = Array.isArray(node.marks) ? node.marks : [];
+    const linkedAddress = marks
+      .map((mark) => (isPlainObject(mark) && mark.type === 'link' && isPlainObject(mark.attrs) ? mark.attrs.href : null))
+      .map(getSafeLinkedAddress)
+      .find((address): address is string => address !== null);
+
+    return linkedAddress && !text.includes(linkedAddress) ? `${text} (${linkedAddress})` : text;
   }
 
   if (node.type === 'hardBreak') {
@@ -90,6 +122,118 @@ function extractTiptapText(node: unknown): string {
   const joined = content.map(extractTiptapText).join('');
 
   return node.type === 'paragraph' ? `${joined}\n` : joined;
+}
+
+const HTML_BLOCK_END_PATTERN = /<\/(?:blockquote|div|h[1-6]|li|p|pre)>/gi;
+const HTML_BREAK_PATTERN = /<(?:br|hr)\s*\/?>/gi;
+const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+const HTML_DANGEROUS_BLOCK_PATTERN = /<(script|style|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const HTML_TAG_PATTERN = /<[^>]*>/g;
+const HTML_ANCHOR_PATTERN = /<a\b[^>]*\bhref\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a\s*>/gi;
+const HTML_ENTITY_PATTERN = /&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|amp|apos|gt|lt|nbsp|quot);/gi;
+
+function decodeHtmlEntities(value: string) {
+  const named: Record<string, string> = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    nbsp: ' ',
+    quot: '"',
+  };
+
+  return value.replace(HTML_ENTITY_PATTERN, (entity, decimal: string | undefined, hex: string | undefined) => {
+    if (decimal || hex) {
+      const codePoint = Number.parseInt(decimal ?? hex ?? '', decimal ? 10 : 16);
+
+      return Number.isSafeInteger(codePoint) && codePoint > 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : '';
+    }
+
+    return named[entity.slice(1, -1).toLowerCase()] ?? '';
+  });
+}
+
+// Hub history contains messageText as Tiptap JSON, plain strings, and legacy
+// HTML strings. Convert the latter to text without ever passing it to React as
+// HTML. Script/style/template contents are discarded rather than displayed.
+function extractSafeHubText(value: unknown) {
+  if (typeof value !== 'string') {
+    return extractTiptapText(value);
+  }
+
+  if (!/<[^>]*>|&(?:#\d+|#x[0-9a-f]+|amp|apos|gt|lt|nbsp|quot);/i.test(value)) {
+    return value;
+  }
+
+  return decodeHtmlEntities(
+    value
+      .replace(HTML_COMMENT_PATTERN, '')
+      .replace(HTML_DANGEROUS_BLOCK_PATTERN, '')
+      .replace(HTML_ANCHOR_PATTERN, (_anchor, _quote: string, rawAddress: string, rawLabel: string) => {
+        const address = getSafeLinkedAddress(decodeHtmlEntities(rawAddress));
+        const label = decodeHtmlEntities(rawLabel.replace(HTML_TAG_PATTERN, '')).trim();
+
+        if (!address) {
+          return label;
+        }
+
+        return label && !label.includes(address) ? `${label} (${address})` : address;
+      })
+      .replace(HTML_BREAK_PATTERN, '\n')
+      .replace(HTML_BLOCK_END_PATTERN, '\n')
+      .replace(HTML_TAG_PATTERN, ''),
+  );
+}
+
+function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
+  let candidate = value;
+
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate) as unknown;
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+
+  const images: QortalHubImageRef[] = [];
+
+  for (const image of candidate.slice(0, 12)) {
+    if (!isPlainObject(image)) {
+      continue;
+    }
+
+    const service = typeof image.service === 'string' ? image.service.trim().toUpperCase() : '';
+    const name = typeof image.name === 'string' ? image.name.trim() : '';
+    const identifier = typeof image.identifier === 'string' ? image.identifier.trim() : '';
+
+    if (
+      !QORTAL_HUB_IMAGE_SERVICES.has(service) ||
+      !name ||
+      name.length > 255 ||
+      /[\u0000-\u001f/\\]/.test(name) ||
+      !identifier ||
+      identifier.length > 64 ||
+      /[\u0000-\u001f/\\]/.test(identifier)
+    ) {
+      continue;
+    }
+
+    const timestamp =
+      typeof image.timestamp === 'number' && Number.isSafeInteger(image.timestamp) && image.timestamp >= 0
+        ? image.timestamp
+        : undefined;
+
+    images.push({ identifier, name, service, timestamp });
+  }
+
+  return images;
 }
 
 // Machine-message convention shared with other QDN apps (e.g. Chess): a JSON
@@ -125,6 +269,7 @@ function getMachineEnvelopeApp(parsed: unknown): string | null {
 
 type UnwrappedChatText = {
   body: string;
+  hubImages: QortalHubImageRef[];
   machineApp: string | null;
   reaction: ChatReaction | null;
   repliedTo: string | null;
@@ -132,6 +277,7 @@ type UnwrappedChatText = {
 
 function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
   let body = value;
+  let hubImages: QortalHubImageRef[] = [];
   let machineApp: string | null = null;
   let reaction: ChatReaction | null = null;
   let repliedTo: string | null = null;
@@ -170,13 +316,15 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
       type?: unknown;
       version?: unknown;
       messageText?: unknown;
+      images?: unknown;
     };
 
     // Qortal Hub v3 messages carry a Tiptap document instead of Chat's small
     // `{ message, repliedTo }` envelope. Decode it here so the same message
     // list renders both Home 1.7/ChibiHub traffic and Home 2 traffic.
-    if (envelope.version === 3 && isPlainObject(envelope.messageText)) {
-      body = extractTiptapText(envelope.messageText).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (envelope.version === 3) {
+      body = extractSafeHubText(envelope.messageText).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      hubImages = getQortalHubImageRefs(envelope.images);
 
       if (typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
         repliedTo = envelope.repliedTo;
@@ -203,7 +351,7 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     }
   }
 
-  return { body, machineApp, reaction, repliedTo };
+  return { body, hubImages, machineApp, reaction, repliedTo };
 }
 
 export function buildChatMessageText(text: string, repliedTo?: string | null) {
@@ -364,7 +512,7 @@ function computeDecodeChatMessage(
   }
 
   try {
-    const { body, machineApp, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
+    const { body, hubImages, machineApp, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
 
     if (reaction) {
       return {
@@ -386,6 +534,7 @@ function computeDecodeChatMessage(
 
     return {
       body,
+      ...(hubImages.length > 0 ? { hubImages } : {}),
       kind: 'text',
       repliedTo,
     };

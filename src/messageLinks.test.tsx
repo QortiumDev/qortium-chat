@@ -2,27 +2,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchQdnImagePreview,
   fetchQdnImagePreviews,
+  fetchQdnResourceCard,
   getDocumentQdnResources,
   getImageQdnResources,
   getMediaQdnResources,
+  getMessageQdnResources,
   getMessageSegments,
   getMessageTextParts,
+  getQortalHubImageResources,
   openAppLinkInHomeTab,
   openQdnDocumentViewer,
   openQdnMediaPlayer,
   saveQdnResource,
 } from './messageLinks';
 import { qdnRequest } from './qdnRequest';
+import { qortalRequest } from './qortalRequest';
 
 vi.mock('./qdnRequest', () => ({
   qdnRequest: vi.fn(),
 }));
+vi.mock('./qortalRequest', () => ({
+  qortalRequest: vi.fn(),
+}));
 
 describe('message link helpers', () => {
   const qdnRequestMock = vi.mocked(qdnRequest);
+  const qortalRequestMock = vi.mocked(qortalRequest);
 
   beforeEach(() => {
     qdnRequestMock.mockReset();
+    qortalRequestMock.mockReset();
   });
 
   afterEach(() => {
@@ -134,6 +143,7 @@ describe('message link helpers', () => {
       {
         identifier: 'photo-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo-1',
         service: 'IMAGE',
@@ -151,11 +161,76 @@ describe('message link helpers', () => {
     });
   });
 
+  it('qualifies bare qdn links by conversation and keeps native qortal links on Qortal', () => {
+    expect(getMessageQdnResources('qdn://IMAGE/Alice/photo', 'qortal')).toEqual([
+      {
+        identifier: 'photo',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qdn://IMAGE/Alice/photo',
+        service: 'IMAGE',
+      },
+    ]);
+    expect(getMessageQdnResources('qortal://DOCUMENT/Bob/file', 'qortium')).toEqual([
+      {
+        identifier: 'file',
+        name: 'Bob',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://DOCUMENT/Bob/file',
+        service: 'DOCUMENT',
+      },
+    ]);
+  });
+
+  it('opens contextual and native Qortal resource links only through qortalRequest', async () => {
+    qortalRequestMock.mockResolvedValue(true);
+
+    await expect(openAppLinkInHomeTab('qdn://APP/Q-Tube/default', 'qortal')).resolves.toBe(true);
+    await expect(openAppLinkInHomeTab('qortal://APP/Q-Tube/default', 'qortium')).resolves.toBe(true);
+
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'OPEN_NEW_TAB',
+      address: 'qortal://APP/Q-Tube/default',
+    });
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'OPEN_NEW_TAB',
+      address: 'qortal://APP/Q-Tube/default',
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects ambiguous resource coordinates instead of forwarding them to a bridge', () => {
+    expect(getMessageQdnResources('qdn://IMAGE/Alice/id/../secret', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qdn://IMAGE/Alice/id?identifier=photo&filepath=../secret', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qortal://IMAGE/Alice%2FAdmin/photo', 'qortium')).toEqual([]);
+  });
+
+  it('turns validated Hub image refs into explicit Qortal image resources', () => {
+    expect(
+      getQortalHubImageResources([
+        { identifier: 'img-id', name: 'Quick Mythril', service: 'image', timestamp: 1783403484577 },
+        { identifier: '../bad', name: 'Quick Mythril', service: 'IMAGE' },
+      ]),
+    ).toEqual([
+      {
+        identifier: 'img-id',
+        name: 'Quick Mythril',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Quick%20Mythril/img-id',
+        service: 'IMAGE',
+      },
+    ]);
+  });
+
   it('extracts image qdn resources from message text', () => {
     expect(getImageQdnResources('See qdn://IMAGE/Alice/photo-1 and qdn://APP/Chat/Chat')).toEqual([
       {
         identifier: 'photo-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo-1',
         service: 'IMAGE',
@@ -168,6 +243,7 @@ describe('message link helpers', () => {
       {
         identifier: 'avatar',
         name: 'Alice',
+        network: 'qortium',
         path: 'default/gallery/photo.png',
         qdnUrl: 'qdn://QCHAT_IMAGE/Alice/default/gallery/photo.png?identifier=avatar',
         service: 'QCHAT_IMAGE',
@@ -184,6 +260,7 @@ describe('message link helpers', () => {
       {
         identifier: 'Qortium-gif',
         name: '7R15M3G157U5',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif',
         service: 'GIF_REPOSITORY',
@@ -191,6 +268,7 @@ describe('message link helpers', () => {
       {
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo',
         service: 'GIF_REPOSITORY',
@@ -198,6 +276,7 @@ describe('message link helpers', () => {
       {
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: 'orbit-demo.gif',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif',
         service: 'GIF_REPOSITORY',
@@ -214,6 +293,7 @@ describe('message link helpers', () => {
       {
         identifier: 'episode-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://AUDIO/Alice/episode-1',
         service: 'AUDIO',
@@ -221,6 +301,7 @@ describe('message link helpers', () => {
       {
         identifier: 'trailer',
         name: 'Bob',
+        network: 'qortium',
         path: 'default/clips/demo.webm',
         qdnUrl: 'qdn://VIDEO/Bob/default/clips/demo.webm?identifier=trailer',
         service: 'VIDEO',
@@ -237,6 +318,7 @@ describe('message link helpers', () => {
       {
         identifier: 'whitepaper.pdf',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
         service: 'DOCUMENT',
@@ -244,6 +326,7 @@ describe('message link helpers', () => {
       {
         identifier: 'notes',
         name: 'Bob',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://FILE/Bob/notes',
         service: 'FILE',
@@ -258,6 +341,7 @@ describe('message link helpers', () => {
       openQdnDocumentViewer({
         identifier: 'whitepaper.pdf',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
         service: 'DOCUMENT',
@@ -279,6 +363,7 @@ describe('message link helpers', () => {
       saveQdnResource({
         identifier: 'whitepaper.pdf',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
         service: 'DOCUMENT',
@@ -300,6 +385,7 @@ describe('message link helpers', () => {
       openQdnMediaPlayer({
         identifier: 'episode-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://AUDIO/Alice/episode-1',
         service: 'AUDIO',
@@ -314,6 +400,53 @@ describe('message link helpers', () => {
     });
   });
 
+  it('routes Qortal media, document, and save actions only through qortalRequest', async () => {
+    qortalRequestMock.mockResolvedValue(true);
+    const media = {
+      identifier: 'episode-1',
+      name: 'Alice',
+      network: 'qortal' as const,
+      path: '',
+      qdnUrl: 'qortal://AUDIO/Alice/episode-1',
+      service: 'AUDIO' as const,
+    };
+    const document = {
+      identifier: 'notes',
+      name: 'Alice',
+      network: 'qortal' as const,
+      path: '',
+      qdnUrl: 'qortal://DOCUMENT/Alice/notes',
+      service: 'DOCUMENT' as const,
+    };
+
+    await openQdnMediaPlayer(media);
+    await openQdnDocumentViewer(document);
+    await saveQdnResource(document);
+
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'OPEN_QDN_MEDIA_PLAYER',
+      identifier: 'episode-1',
+      name: 'Alice',
+      path: '',
+      service: 'AUDIO',
+    });
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'OPEN_QDN_DOCUMENT_VIEWER',
+      identifier: 'notes',
+      name: 'Alice',
+      path: '',
+      service: 'DOCUMENT',
+    });
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(3, {
+      action: 'SAVE_QDN_RESOURCE',
+      identifier: 'notes',
+      name: 'Alice',
+      path: '',
+      service: 'DOCUMENT',
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
   it('fetches image previews as base64 through the Home bridge', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({ filename: 'photo.png', mimeType: 'image/png', size: 128 })
@@ -323,6 +456,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreview({
         identifier: 'photo',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo',
         service: 'IMAGE',
@@ -352,6 +486,94 @@ describe('message link helpers', () => {
     });
   });
 
+  it('fetches Qortal image previews through qortalRequest without a Qortium properties probe', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: 'iVBORw0KGgo=',
+      contentLength: 8,
+      contentType: 'image/png',
+      encoding: 'base64',
+    });
+
+    await expect(
+      fetchQdnImagePreview({
+        identifier: 'photo',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Alice/photo',
+        service: 'IMAGE',
+      }),
+    ).resolves.toMatchObject({
+      mimeType: 'image/png',
+      qdnUrl: 'qortal://IMAGE/Alice/photo',
+      src: 'data:image/png;base64,iVBORw0KGgo=',
+    });
+    expect(qortalRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'IMAGE',
+      name: 'Alice',
+      identifier: 'photo',
+      path: '',
+      encoding: 'base64',
+      rebuild: true,
+      maxBytes: 5 * 1024 * 1024,
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('loads bounded metadata cards from the descriptor network and keeps safe coordinate fallback', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      description: 'A\ncompact   description',
+      mimeType: 'text/html',
+      title: 'Q-Tube',
+    });
+
+    await expect(
+      fetchQdnResourceCard({
+        identifier: 'default',
+        name: 'Q-Tube',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://APP/Q-Tube/default',
+        service: 'APP',
+      }),
+    ).resolves.toEqual({
+      description: 'A compact description',
+      mimeType: 'text/html',
+      network: 'qortal',
+      subtitle: 'Qortal · APP · Q-Tube',
+      title: 'Q-Tube',
+    });
+    expect(qortalRequestMock).toHaveBeenCalledWith({
+      action: 'GET_QDN_RESOURCE_METADATA',
+      service: 'APP',
+      name: 'Q-Tube',
+      identifier: 'default',
+      path: '',
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-raster bytes even when a bridge labels them as an image', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: 'PHN2Zz48c2NyaXB0Pg==',
+      contentLength: 13,
+      contentType: 'image/svg+xml',
+      encoding: 'base64',
+    });
+
+    await expect(
+      fetchQdnImagePreview({
+        identifier: 'unsafe',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Alice/unsafe',
+        service: 'IMAGE',
+      }),
+    ).rejects.toThrow('unsupported or unsafe image bytes');
+  });
+
   it('fetches each gif file from a pathless gif repository resource', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({
@@ -360,6 +582,7 @@ describe('message link helpers', () => {
           'notes.txt',
           'nested/orbit-demo.gif',
           'bad//path.gif',
+          '../traversal.gif',
           'other.GIF',
         ],
       })
@@ -374,6 +597,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreviews({
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo',
         service: 'GIF_REPOSITORY',
@@ -445,6 +669,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreview({
         identifier: 'photo',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo',
         service: 'IMAGE',
@@ -469,6 +694,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreviews({
         identifier: 'Qortium-gif',
         name: '7R15M3G157U5',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif',
         service: 'GIF_REPOSITORY',
@@ -492,6 +718,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreviews({
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: 'orbit-demo.gif',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif',
         service: 'GIF_REPOSITORY',
@@ -517,6 +744,7 @@ describe('message link helpers', () => {
     await expect(
       fetchQdnImagePreview({
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice',
         service: 'IMAGE',
