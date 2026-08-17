@@ -65,7 +65,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 1.4.11, where the `1.4` prefix declares the minimum Qortium platform
+version is 1.4.12, where the `1.4` prefix declares the minimum Qortium platform
 level the app is built against and the last number is the app's own release
 counter. The build emits a `qortium-app.json` manifest (see `vite.config.ts`)
 that Qortium Home reads from the published root to show the compatibility
@@ -114,10 +114,13 @@ filters are address-scoped, so Chat has no way to exclude a message it has not
 seen yet. Suppressing it requires Home to fetch, decrypt, and classify the
 message before displaying.
 
-Qortal support in this release is intentionally limited to joined public
-groups: history, ordinary messages, and replies. Qortal DMs, closed/private
+Qortal support in this release is intentionally limited to public groups:
+joined-group history, ordinary messages and replies, plus bounded discovery and
+read-only previews for qualifying active open groups. Qortal DMs, closed/private
 groups, edits, deletes, and reactions require newer Home bridge actions that
 preserve the protocol's encryption and transaction-reference semantics. Chat
 hides the unsupported revision controls instead of broadcasting them as
-unrelated new messages. Reticulum/RCHAT remains a later, separate source
-family.
+unrelated new messages. Reticulum/RCHAT remains a later, separate source family.
+
+The working plan for completing both Qortium and Qortal CHAT capabilities is in
+[`docs/CHAT_COMPLETION_ROADMAP.md`](docs/CHAT_COMPLETION_ROADMAP.md).

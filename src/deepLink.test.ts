@@ -15,7 +15,11 @@ describe('conversation deep links', () => {
   });
 
   it('parses address and group URL query parameters', () => {
-    expect(parseDeepLinkSearch(`?address=${address}&group=42`)).toEqual({ address, group: 42 });
+    expect(parseDeepLinkSearch(`?address=${address}&group=42&network=qortal`)).toEqual({
+      address,
+      group: 42,
+      network: 'qortal',
+    });
     expect(parseDeepLinkSearch('?group=0')).toEqual({ group: 0 });
   });
 
@@ -36,6 +40,7 @@ describe('conversation deep links', () => {
     expect(parseDeepLinkSearch('?group=1.5')).toBeNull();
     expect(parseDeepLinkSearch('?group=9007199254740992')).toBeNull();
     expect(parseDeepLinkSearch(`?address=${address}&group=nope`)).toBeNull();
+    expect(parseDeepLinkSearch('?group=7&network=other')).toBeNull();
   });
 
   it('rewrites only Chat-owned keys while preserving host parameters and fragments', () => {
@@ -46,10 +51,10 @@ describe('conversation deep links', () => {
     };
 
     expect(getChatRouteUrl({ group: 42 }, location)).toBe(
-      '/render/APP/Chat/Chat?qdnHomeBridge=token&theme=dark&lang=es&textSize=large&accent=%23abc&uiStyle=modern&future=kept&group=42#message-7',
+      '/render/APP/Chat/Chat?qdnHomeBridge=token&theme=dark&lang=es&textSize=large&accent=%23abc&uiStyle=modern&future=kept&group=42&network=qortium#message-7',
     );
     expect(getChatRouteUrl({ address, group: 42 }, location)).toBe(
-      `/render/APP/Chat/Chat?qdnHomeBridge=token&theme=dark&lang=es&textSize=large&accent=%23abc&uiStyle=modern&future=kept&address=${address}#message-7`,
+      `/render/APP/Chat/Chat?qdnHomeBridge=token&theme=dark&lang=es&textSize=large&accent=%23abc&uiStyle=modern&future=kept&address=${address}&network=qortium#message-7`,
     );
   });
 
@@ -65,8 +70,8 @@ describe('conversation deep links', () => {
     writeChatRoute({ address }, 'replace', browser);
     writeChatRoute({ group: 3 }, 'none', browser);
 
-    expect(pushState).toHaveBeenCalledWith({}, '', '/render/APP/Chat/Chat?theme=dark&group=2');
-    expect(replaceState).toHaveBeenCalledWith({}, '', `/render/APP/Chat/Chat?theme=dark&address=${address}`);
+    expect(pushState).toHaveBeenCalledWith({}, '', '/render/APP/Chat/Chat?theme=dark&group=2&network=qortium');
+    expect(replaceState).toHaveBeenCalledWith({}, '', `/render/APP/Chat/Chat?theme=dark&address=${address}&network=qortium`);
     expect(pushState).toHaveBeenCalledTimes(1);
     expect(replaceState).toHaveBeenCalledTimes(1);
   });
@@ -76,7 +81,7 @@ describe('conversation deep links', () => {
     const replaceState = vi.fn();
     const browser = {
       history: { pushState, replaceState },
-      location: { hash: '#kept', pathname: '/app', search: '?theme=dark&group=7' },
+      location: { hash: '#kept', pathname: '/app', search: '?theme=dark&group=7&network=qortium' },
     };
 
     writeChatRoute({ group: 7 }, 'push', browser);
@@ -85,12 +90,18 @@ describe('conversation deep links', () => {
     expect(replaceState).not.toHaveBeenCalled();
   });
 
+  it('serializes Qortal targets with an explicit network discriminator', () => {
+    expect(getChatRouteUrl({ group: 12, network: 'qortal' }, { pathname: '/app', search: '?theme=dark' })).toBe(
+      '/app?theme=dark&group=12&network=qortal',
+    );
+  });
+
   it('parses the Home OPEN_APP_TARGET message contract', () => {
     expect(parseOpenAppTargetMessage({
       action: 'OPEN_APP_TARGET',
       requestedHandler: 'UI',
-      query: { address, group: '7' },
-    })).toEqual({ address, group: 7 });
+      query: { address, group: '7', network: 'qortal' },
+    })).toEqual({ address, group: 7, network: 'qortal' });
   });
 
   it('rejects malformed or unrelated host messages', () => {

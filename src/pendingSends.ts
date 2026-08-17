@@ -27,6 +27,19 @@ import { encodeBase64 } from './chatText';
 import type { ChatMessage, ChatNetwork } from './types';
 
 export type PendingSendStatus = 'failed' | 'sending';
+export type SendDeliveryPhase = 'ambiguous' | 'broadcast' | 'confirmed' | 'expired' | 'pending' | 'rejected';
+
+export type SendDeliveryState = {
+  readonly phase: SendDeliveryPhase;
+  readonly updatedAt: number;
+};
+
+/** Only a bridge rejection proves that no broadcast was accepted. A timed-out
+ * confirmation is deliberately not retryable: the original transaction may
+ * already be on-chain or merely absent from the node currently serving reads. */
+export function canRetryPendingDelivery(delivery: SendDeliveryState) {
+  return delivery.phase === 'rejected';
+}
 
 // `network` is optional and defaults to 'qortium' at every read site (see
 // App.tsx's dispatchChatSend) — slice-1 callers that never set it keep
@@ -42,10 +55,13 @@ export type PendingSendTarget =
 export type PendingSendKind = 'message' | 'reaction';
 
 export type PendingSend = {
+  /** Sender identity on target.network, not necessarily the Qortium wallet address. */
+  readonly accountAddress: string;
   readonly chatKey: string;
   readonly chatReference?: string;
   readonly error?: string;
   readonly kind: PendingSendKind;
+  readonly delivery: SendDeliveryState;
   readonly localId: string;
   readonly message: ChatMessage;
   /** The signature the bridge returned once the send resolves; null while still in flight. */
@@ -59,17 +75,33 @@ export type PendingSend = {
 export type PendingRevisionKind = 'delete' | 'edit';
 
 export type PendingRevision = {
+  /** Sender identity on target.network, not necessarily the Qortium wallet address. */
+  readonly accountAddress: string;
   readonly chatKey: string;
   /** The original message's real signature — the tx-level chatReference this revision targets. */
   readonly chatReference: string;
   readonly error?: string;
   readonly kind: PendingRevisionKind;
+  readonly delivery: SendDeliveryState;
   readonly localId: string;
   readonly resolvedSignature: string | null;
   readonly status: PendingSendStatus;
   readonly target: PendingSendTarget;
   readonly text: string;
 };
+
+/** Keep another network's work intact while retaining only the selected
+ * account's optimistic work for one chain. A null account invalidates all
+ * pending work for that chain during an identity refresh. */
+export function retainPendingForNetworkAccount<
+  T extends { readonly accountAddress: string; readonly target: PendingSendTarget },
+>(pending: readonly T[], network: ChatNetwork, accountAddress: string | null): T[] {
+  return pending.filter(
+    (entry) =>
+      (entry.target.network ?? 'qortium') !== network ||
+      (!!accountAddress && entry.accountAddress === accountAddress),
+  );
+}
 
 // Composite (network, signature) identity: two independent chains draw
 // signatures from unrelated namespaces, so a bare-signature Set/Map risks a
@@ -130,6 +162,7 @@ function buildOptimisticChatMessage(input: {
 }
 
 export function createPendingSend(input: {
+  accountAddress: string;
   chatKey: string;
   chatReference?: string;
   kind: PendingSendKind;
@@ -144,9 +177,11 @@ export function createPendingSend(input: {
   txGroupId: number;
 }): PendingSend {
   return {
+    accountAddress: input.accountAddress,
     chatKey: input.chatKey,
     chatReference: input.chatReference,
     kind: input.kind,
+    delivery: { phase: 'pending', updatedAt: input.timestamp },
     localId: input.localId,
     message: buildOptimisticChatMessage({
       chatReference: input.chatReference,
@@ -168,28 +203,161 @@ export function createPendingSend(input: {
 }
 
 /** The bridge accepted the broadcast: record the real signature. Still 'sending' — reconciliation (dropping the echo) happens once that signature shows up in a fetched/live list; see mergeOptimisticMessages / prunePendingSends. */
-export function resolvePendingSend(pending: PendingSend, result: { signature: string }): PendingSend {
-  return { ...pending, resolvedSignature: result.signature };
-}
-
-export function failPendingSend(pending: PendingSend, error: string): PendingSend {
+export function resolvePendingSend(
+  pending: PendingSend,
+  result: { signature: string },
+  timestamp: number = Date.now(),
+): PendingSend {
   return {
     ...pending,
+    delivery: { phase: 'broadcast', updatedAt: timestamp },
+    resolvedSignature: result.signature,
+  };
+}
+
+export function failPendingSend(pending: PendingSend, error: string, timestamp: number = Date.now()): PendingSend {
+  return {
+    ...pending,
+    delivery: { phase: 'rejected', updatedAt: timestamp },
     error,
     message: { ...pending.message, sendState: 'failed' },
     status: 'failed',
   };
 }
 
-/** Re-arm a failed entry for another attempt: same text/target/chatReference, fresh timestamp so it re-sorts to "now". */
-export function retryPendingSend(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
+/** A transport/timeout/normalization failure after dispatch does not prove the
+ * transaction was rejected: it may already have reached the node. Keep the
+ * local echo visible and duplicate-blocking, but never offer an unsafe retry. */
+export function failPendingSendAmbiguously(
+  pending: PendingSend,
+  error: string,
+  timestamp: number = Date.now(),
+): PendingSend {
   return {
     ...pending,
+    delivery: { phase: 'ambiguous', updatedAt: timestamp },
+    error,
+    message: { ...pending.message, sendState: 'failed' },
+    status: 'failed',
+  };
+}
+
+/** Home may return a signed transaction together with a post-broadcast error.
+ * Preserve that signature so polling can still reconcile the local echo, while
+ * keeping the entry duplicate-blocking and non-retryable until confirmation. */
+export function resolvePendingSendAmbiguously(
+  pending: PendingSend,
+  result: { signature: string },
+  error: string,
+  timestamp: number = Date.now(),
+): PendingSend {
+  return {
+    ...failPendingSendAmbiguously(pending, error, timestamp),
+    resolvedSignature: result.signature,
+  };
+}
+
+/** Re-arm a failed entry for another attempt: same text/target/chatReference, fresh timestamp so it re-sorts to "now". */
+export function retryPendingSend(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
+  if (!canRetryPendingDelivery(pending.delivery)) {
+    return pending;
+  }
+
+  return {
+    ...pending,
+    delivery: { phase: 'pending', updatedAt: timestamp },
     error: undefined,
     message: { ...pending.message, sendState: 'sending', timestamp },
     resolvedSignature: null,
     status: 'sending',
   };
+}
+
+export function confirmPendingSend(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
+  return { ...pending, delivery: { phase: 'confirmed', updatedAt: timestamp } };
+}
+
+function targetsEqual(first: PendingSendTarget, second: PendingSendTarget) {
+  if (first.kind !== second.kind || getTargetNetwork(first) !== getTargetNetwork(second)) {
+    return false;
+  }
+
+  return first.kind === 'group'
+    ? second.kind === 'group' && first.groupId === second.groupId
+    : second.kind === 'direct' && first.address === second.address;
+}
+
+/** Prevents an identical click from starting another broadcast while the first
+ * attempt is awaiting the bridge/confirmation or ended ambiguously. A rejected
+ * attempt is known not to have broadcast and can be retried; an expired one
+ * remains blocked until the user explicitly discards its local echo. */
+export function hasActiveDuplicateSend(
+  pending: readonly PendingSend[],
+  candidate: Pick<PendingSend, 'accountAddress' | 'chatReference' | 'target' | 'text'>,
+) {
+  return pending.some(
+    (entry) =>
+      entry.delivery.phase !== 'rejected' &&
+      entry.accountAddress === candidate.accountAddress &&
+      entry.text === candidate.text &&
+      entry.chatReference === candidate.chatReference &&
+      targetsEqual(entry.target, candidate.target),
+  );
+}
+
+export function expirePendingSends(
+  pending: PendingSend[],
+  now: number,
+  timeoutMs: number,
+  error: string,
+): PendingSend[] {
+  let changed = false;
+  const next = pending.map((entry) => {
+    if (
+      entry.delivery.phase !== 'broadcast' ||
+      now - entry.delivery.updatedAt < timeoutMs
+    ) {
+      return entry;
+    }
+
+    changed = true;
+    return {
+      ...entry,
+      delivery: { phase: 'expired' as const, updatedAt: now },
+      error,
+      message: { ...entry.message, sendState: 'failed' as const },
+      status: 'failed' as const,
+    };
+  });
+
+  return changed ? next : pending;
+}
+
+export function expirePendingRevisions(
+  pending: PendingRevision[],
+  now: number,
+  timeoutMs: number,
+  error: string,
+): PendingRevision[] {
+  let changed = false;
+  const next = pending.map((entry) => {
+    if (
+      entry.delivery.phase !== 'broadcast' ||
+      now - entry.delivery.updatedAt < timeoutMs
+    ) {
+      return entry;
+    }
+
+    changed = true;
+    return {
+      ...entry,
+      delivery: { phase: 'expired' as const, updatedAt: now },
+      error,
+      status: 'failed' as const,
+    };
+  });
+
+  return changed ? next : pending;
 }
 
 // Overlays still-pending sends onto a confirmed (fetched/live) list, for the
@@ -252,17 +420,23 @@ export function prunePendingSends(pending: PendingSend[], confirmedSignatures: R
 }
 
 export function createPendingRevision(input: {
+  accountAddress: string;
   chatKey: string;
   chatReference: string;
   kind: PendingRevisionKind;
   localId: string;
   target: PendingSendTarget;
   text: string;
+  timestamp?: number;
 }): PendingRevision {
+  const timestamp = input.timestamp ?? Date.now();
+
   return {
+    accountAddress: input.accountAddress,
     chatKey: input.chatKey,
     chatReference: input.chatReference,
     kind: input.kind,
+    delivery: { phase: 'pending', updatedAt: timestamp },
     localId: input.localId,
     resolvedSignature: null,
     status: 'sending',
@@ -271,16 +445,58 @@ export function createPendingRevision(input: {
   };
 }
 
-export function resolvePendingRevision(pending: PendingRevision, result: { signature: string }): PendingRevision {
-  return { ...pending, resolvedSignature: result.signature };
+export function resolvePendingRevision(
+  pending: PendingRevision,
+  result: { signature: string },
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return {
+    ...pending,
+    delivery: { phase: 'broadcast', updatedAt: timestamp },
+    resolvedSignature: result.signature,
+  };
 }
 
-export function failPendingRevision(pending: PendingRevision, error: string): PendingRevision {
-  return { ...pending, error, status: 'failed' };
+export function failPendingRevision(
+  pending: PendingRevision,
+  error: string,
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return { ...pending, delivery: { phase: 'rejected', updatedAt: timestamp }, error, status: 'failed' };
 }
 
-export function retryPendingRevision(pending: PendingRevision): PendingRevision {
-  return { ...pending, error: undefined, resolvedSignature: null, status: 'sending' };
+export function failPendingRevisionAmbiguously(
+  pending: PendingRevision,
+  error: string,
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return { ...pending, delivery: { phase: 'ambiguous', updatedAt: timestamp }, error, status: 'failed' };
+}
+
+export function resolvePendingRevisionAmbiguously(
+  pending: PendingRevision,
+  result: { signature: string },
+  error: string,
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return {
+    ...failPendingRevisionAmbiguously(pending, error, timestamp),
+    resolvedSignature: result.signature,
+  };
+}
+
+export function retryPendingRevision(pending: PendingRevision, timestamp: number = Date.now()): PendingRevision {
+  if (!canRetryPendingDelivery(pending.delivery)) {
+    return pending;
+  }
+
+  return {
+    ...pending,
+    delivery: { phase: 'pending', updatedAt: timestamp },
+    error: undefined,
+    resolvedSignature: null,
+    status: 'sending',
+  };
 }
 
 export function prunePendingRevisions(

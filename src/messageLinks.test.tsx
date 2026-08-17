@@ -1,28 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  fetchMessageQdnImagePreviews,
   fetchQdnImagePreview,
   fetchQdnImagePreviews,
+  fetchQdnResourceCard,
   getDocumentQdnResources,
   getImageQdnResources,
   getMediaQdnResources,
+  getMessageQdnResources,
   getMessageSegments,
   getMessageTextParts,
+  getQortalHubImageResources,
+  MessageResourceCards,
   openAppLinkInHomeTab,
   openQdnDocumentViewer,
   openQdnMediaPlayer,
+  renderMessageTextWithAppLinks,
   saveQdnResource,
 } from './messageLinks';
+import { createTranslator } from './i18n';
 import { qdnRequest } from './qdnRequest';
+import { qortalRequest } from './qortalRequest';
 
 vi.mock('./qdnRequest', () => ({
   qdnRequest: vi.fn(),
 }));
+vi.mock('./qortalRequest', () => ({
+  qortalRequest: vi.fn(),
+}));
 
 describe('message link helpers', () => {
   const qdnRequestMock = vi.mocked(qdnRequest);
+  const qortalRequestMock = vi.mocked(qortalRequest);
 
   beforeEach(() => {
     qdnRequestMock.mockReset();
+    qortalRequestMock.mockReset();
   });
 
   afterEach(() => {
@@ -134,6 +148,7 @@ describe('message link helpers', () => {
       {
         identifier: 'photo-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo-1',
         service: 'IMAGE',
@@ -151,11 +166,146 @@ describe('message link helpers', () => {
     });
   });
 
+  it('qualifies bare qdn links by conversation and keeps native qortal links on Qortal', () => {
+    expect(getMessageQdnResources('qdn://IMAGE/Alice/photo', 'qortal')).toEqual([
+      {
+        identifier: undefined,
+        name: 'Alice',
+        network: 'qortal',
+        path: 'photo',
+        qdnUrl: 'qdn://IMAGE/Alice/photo',
+        service: 'IMAGE',
+      },
+    ]);
+    expect(getMessageQdnResources('qortal://DOCUMENT/Bob/file', 'qortium')).toEqual([
+      {
+        identifier: undefined,
+        name: 'Bob',
+        network: 'qortal',
+        path: 'file',
+        qdnUrl: 'qortal://DOCUMENT/Bob/file',
+        service: 'DOCUMENT',
+      },
+    ]);
+  });
+
+  it('labels resource metadata cards as public in visible text', () => {
+    const resources = getMessageQdnResources('qortal://IMAGE/Alice/photo', 'qortal');
+    const markup = renderToStaticMarkup(<MessageResourceCards resources={resources} t={createTranslator('en')} />);
+
+    expect(markup).toContain('Public resource · Qortal · IMAGE · Alice');
+  });
+
+  it('matches Hub Qortal URI path, query-identifier, and default-WEBSITE semantics', () => {
+    expect(
+      getMessageQdnResources(
+        'qortal://APP/Q-Tube/video/Alice/item?identifier=app-id&autoplay=true qortal://QuickMythril',
+        'qortium',
+      ),
+    ).toEqual([
+      {
+        identifier: 'app-id',
+        name: 'Q-Tube',
+        network: 'qortal',
+        path: 'video/Alice/item?autoplay=true',
+        qdnUrl: 'qortal://APP/Q-Tube/video/Alice/item?identifier=app-id&autoplay=true',
+        service: 'APP',
+      },
+      {
+        identifier: undefined,
+        name: 'QuickMythril',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://QuickMythril',
+        service: 'WEBSITE',
+      },
+    ]);
+  });
+
+  it('opens contextual and native Qortal resource links only through qortalRequest', async () => {
+    qortalRequestMock.mockResolvedValue(true);
+
+    await expect(openAppLinkInHomeTab('qdn://APP/Q-Tube/default', 'qortal')).resolves.toBe(true);
+    await expect(openAppLinkInHomeTab('qortal://APP/Q-Tube/default', 'qortium')).resolves.toBe(true);
+
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'OPEN_NEW_TAB',
+      address: 'qortal://APP/Q-Tube/default',
+    });
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'OPEN_NEW_TAB',
+      address: 'qortal://APP/Q-Tube/default',
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('renders HTTP and unavailable Qortal app links as visibly copy-only buttons', () => {
+    const html = renderToStaticMarkup(
+      <>
+        {renderMessageTextWithAppLinks(
+          'https://example.com qortal://APP/Q-Tube home://settings',
+          undefined,
+          'qortal',
+        )}
+      </>,
+    );
+
+    expect(html).toContain('<button');
+    expect(html).toContain('message__web-link');
+    expect(html).toContain('message__app-link--copy-only');
+    expect(html).toContain('>Copy</span>');
+    expect(html).toContain('href="home://settings"');
+    expect(html).not.toContain('href="https://example.com"');
+    expect(html).not.toContain('href="qortal://APP/Q-Tube"');
+  });
+
+  it('renders Qortal app links as anchors only when that network advertises OPEN_NEW_TAB', () => {
+    const html = renderToStaticMarkup(
+      <>
+        {renderMessageTextWithAppLinks('qortal://APP/Q-Tube', undefined, 'qortal', {
+          canOpenQortalAppLinks: true,
+        })}
+      </>,
+    );
+
+    expect(html).toContain('href="qortal://APP/Q-Tube"');
+    expect(html).not.toContain('message__app-link--copy-only');
+  });
+
+  it('rejects ambiguous resource coordinates instead of forwarding them to a bridge', () => {
+    expect(getMessageQdnResources('qdn://IMAGE/Alice/id/../secret', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qdn://IMAGE/Alice/id?identifier=photo&filepath=../secret', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qortal://IMAGE/Alice%2FAdmin/photo', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qdn://IMAGE/%2e%2e/photo', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qdn://IMAGE/Alice/%2e%2e', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qortal://IMAGE/%2E%2E/photo', 'qortium')).toEqual([]);
+    expect(getMessageQdnResources('qortal://IMAGE/Alice/photo?identifier=%2e%2e', 'qortium')).toEqual([]);
+  });
+
+  it('turns validated Hub image refs into explicit Qortal image resources', () => {
+    expect(
+      getQortalHubImageResources([
+        { identifier: 'img-id', name: 'Quick Mythril', service: 'image', timestamp: 1783403484577 },
+        { identifier: '../bad', name: 'Quick Mythril', service: 'IMAGE' },
+      ]),
+    ).toEqual([
+      {
+        identifier: 'img-id',
+        name: 'Quick Mythril',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Quick%20Mythril?identifier=img-id',
+        service: 'IMAGE',
+      },
+    ]);
+  });
+
   it('extracts image qdn resources from message text', () => {
     expect(getImageQdnResources('See qdn://IMAGE/Alice/photo-1 and qdn://APP/Chat/Chat')).toEqual([
       {
         identifier: 'photo-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo-1',
         service: 'IMAGE',
@@ -168,6 +318,7 @@ describe('message link helpers', () => {
       {
         identifier: 'avatar',
         name: 'Alice',
+        network: 'qortium',
         path: 'default/gallery/photo.png',
         qdnUrl: 'qdn://QCHAT_IMAGE/Alice/default/gallery/photo.png?identifier=avatar',
         service: 'QCHAT_IMAGE',
@@ -184,6 +335,7 @@ describe('message link helpers', () => {
       {
         identifier: 'Qortium-gif',
         name: '7R15M3G157U5',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif',
         service: 'GIF_REPOSITORY',
@@ -191,6 +343,7 @@ describe('message link helpers', () => {
       {
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo',
         service: 'GIF_REPOSITORY',
@@ -198,6 +351,7 @@ describe('message link helpers', () => {
       {
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: 'orbit-demo.gif',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif',
         service: 'GIF_REPOSITORY',
@@ -214,6 +368,7 @@ describe('message link helpers', () => {
       {
         identifier: 'episode-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://AUDIO/Alice/episode-1',
         service: 'AUDIO',
@@ -221,6 +376,7 @@ describe('message link helpers', () => {
       {
         identifier: 'trailer',
         name: 'Bob',
+        network: 'qortium',
         path: 'default/clips/demo.webm',
         qdnUrl: 'qdn://VIDEO/Bob/default/clips/demo.webm?identifier=trailer',
         service: 'VIDEO',
@@ -237,6 +393,7 @@ describe('message link helpers', () => {
       {
         identifier: 'whitepaper.pdf',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
         service: 'DOCUMENT',
@@ -244,6 +401,7 @@ describe('message link helpers', () => {
       {
         identifier: 'notes',
         name: 'Bob',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://FILE/Bob/notes',
         service: 'FILE',
@@ -258,6 +416,7 @@ describe('message link helpers', () => {
       openQdnDocumentViewer({
         identifier: 'whitepaper.pdf',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
         service: 'DOCUMENT',
@@ -279,6 +438,7 @@ describe('message link helpers', () => {
       saveQdnResource({
         identifier: 'whitepaper.pdf',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
         service: 'DOCUMENT',
@@ -300,6 +460,7 @@ describe('message link helpers', () => {
       openQdnMediaPlayer({
         identifier: 'episode-1',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://AUDIO/Alice/episode-1',
         service: 'AUDIO',
@@ -314,6 +475,53 @@ describe('message link helpers', () => {
     });
   });
 
+  it('routes Qortal media, document, and save actions only through qortalRequest', async () => {
+    qortalRequestMock.mockResolvedValue(true);
+    const media = {
+      identifier: 'episode-1',
+      name: 'Alice',
+      network: 'qortal' as const,
+      path: '',
+      qdnUrl: 'qortal://AUDIO/Alice/episode-1',
+      service: 'AUDIO' as const,
+    };
+    const document = {
+      identifier: 'notes',
+      name: 'Alice',
+      network: 'qortal' as const,
+      path: '',
+      qdnUrl: 'qortal://DOCUMENT/Alice/notes',
+      service: 'DOCUMENT' as const,
+    };
+
+    await openQdnMediaPlayer(media);
+    await openQdnDocumentViewer(document);
+    await saveQdnResource(document);
+
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+      action: 'OPEN_QDN_MEDIA_PLAYER',
+      identifier: 'episode-1',
+      name: 'Alice',
+      path: '',
+      service: 'AUDIO',
+    });
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+      action: 'OPEN_QDN_DOCUMENT_VIEWER',
+      identifier: 'notes',
+      name: 'Alice',
+      path: '',
+      service: 'DOCUMENT',
+    });
+    expect(qortalRequestMock).toHaveBeenNthCalledWith(3, {
+      action: 'SAVE_QDN_RESOURCE',
+      identifier: 'notes',
+      name: 'Alice',
+      path: '',
+      service: 'DOCUMENT',
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
   it('fetches image previews as base64 through the Home bridge', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({ filename: 'photo.png', mimeType: 'image/png', size: 128 })
@@ -323,6 +531,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreview({
         identifier: 'photo',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo',
         service: 'IMAGE',
@@ -338,6 +547,7 @@ describe('message link helpers', () => {
       service: 'IMAGE',
       name: 'Alice',
       identifier: 'photo',
+      maxBytes: 64 * 1024,
       path: '',
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
@@ -352,6 +562,203 @@ describe('message link helpers', () => {
     });
   });
 
+  it('fetches Qortal image previews through qortalRequest without a Qortium properties probe', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: 'iVBORw0KGgo=',
+      contentLength: 8,
+      contentType: 'image/png',
+      encoding: 'base64',
+    });
+
+    await expect(
+      fetchQdnImagePreview({
+        identifier: 'photo',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Alice/photo',
+        service: 'IMAGE',
+      }),
+    ).resolves.toMatchObject({
+      mimeType: 'image/png',
+      qdnUrl: 'qortal://IMAGE/Alice/photo',
+      src: 'data:image/png;base64,iVBORw0KGgo=',
+    });
+    expect(qortalRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'IMAGE',
+      name: 'Alice',
+      identifier: 'photo',
+      path: '',
+      encoding: 'base64',
+      rebuild: true,
+      maxBytes: 5 * 1024 * 1024,
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('loads bounded metadata cards from the descriptor network and keeps safe coordinate fallback', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      description: 'A\ncompact   description',
+      mimeType: 'text/html',
+      title: 'Q-Tube',
+    });
+
+    await expect(
+      fetchQdnResourceCard({
+        identifier: 'default',
+        name: 'Q-Tube',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://APP/Q-Tube/default',
+        service: 'APP',
+      }),
+    ).resolves.toEqual({
+      description: 'A compact description',
+      mimeType: 'text/html',
+      network: 'qortal',
+      subtitle: 'Qortal · APP · Q-Tube',
+      title: 'Q-Tube',
+    });
+    expect(qortalRequestMock).toHaveBeenCalledWith({
+      action: 'GET_QDN_RESOURCE_METADATA',
+      service: 'APP',
+      name: 'Q-Tube',
+      identifier: 'default',
+      maxBytes: 128 * 1024,
+      path: '',
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-raster bytes even when a bridge labels them as an image', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: 'PHN2Zz48c2NyaXB0Pg==',
+      contentLength: 13,
+      contentType: 'image/svg+xml',
+      encoding: 'base64',
+    });
+
+    await expect(
+      fetchQdnImagePreview({
+        identifier: 'unsafe',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Alice/unsafe',
+        service: 'IMAGE',
+      }),
+    ).rejects.toThrow('unsupported or unsafe image bytes');
+  });
+
+  it('requires the WEBP form type instead of accepting every RIFF payload', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: btoa('RIFF\u0004\u0000\u0000\u0000WAVE'),
+      contentLength: 12,
+      contentType: 'image/webp',
+      encoding: 'base64',
+    });
+
+    await expect(
+      fetchQdnImagePreview({
+        identifier: 'unsafe-riff',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Alice?identifier=unsafe-riff',
+        service: 'IMAGE',
+      }),
+    ).rejects.toThrow('unsupported or unsafe image bytes');
+  });
+
+  it('rejects encoded raster dimensions beyond the practical display limit before browser decode', async () => {
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    new DataView(png.buffer).setUint32(16, 9000);
+    new DataView(png.buffer).setUint32(20, 10);
+    qortalRequestMock.mockResolvedValueOnce({
+      body: btoa(String.fromCharCode(...png)),
+      contentLength: png.byteLength,
+      contentType: 'image/png',
+      encoding: 'base64',
+    });
+
+    await expect(
+      fetchQdnImagePreview({
+        identifier: 'huge-pixels',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://IMAGE/Alice?identifier=huge-pixels',
+        service: 'IMAGE',
+      }),
+    ).rejects.toThrow('dimensions exceed the safe display limit');
+  });
+
+  it('caps one message preview operation to eight resources', async () => {
+    qortalRequestMock.mockResolvedValue({
+      body: 'iVBORw0KGgo=',
+      contentLength: 8,
+      contentType: 'image/png',
+      encoding: 'base64',
+    });
+    const resources = Array.from({ length: 12 }, (_, index) => ({
+      identifier: `photo-${index}`,
+      name: 'Alice',
+      network: 'qortal' as const,
+      path: '',
+      qdnUrl: `qortal://IMAGE/Alice?identifier=photo-${index}`,
+      service: 'IMAGE' as const,
+    }));
+
+    await expect(fetchMessageQdnImagePreviews(resources)).resolves.toHaveLength(8);
+    expect(qortalRequestMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('reserves failed preview allowances against the aggregate message byte budget', async () => {
+    qortalRequestMock.mockRejectedValue(new Error('invalid resource'));
+    const resources = Array.from({ length: 8 }, (_, index) => ({
+      identifier: `bad-${index}`,
+      name: 'Alice',
+      network: 'qortal' as const,
+      path: '',
+      qdnUrl: `qortal://IMAGE/Alice?identifier=bad-${index}`,
+      service: 'IMAGE' as const,
+    }));
+
+    await expect(fetchMessageQdnImagePreviews(resources)).rejects.toThrow('invalid resource');
+    expect(qortalRequestMock).toHaveBeenCalledTimes(3);
+    expect(qortalRequestMock.mock.calls.map(([request]) => request.maxBytes)).toEqual([
+      5 * 1024 * 1024,
+      5 * 1024 * 1024,
+      2 * 1024 * 1024,
+    ]);
+  });
+
+  it('limits automatic metadata work to four concurrent bridge requests', async () => {
+    const resolvers: Array<(value: unknown) => void> = [];
+    qdnRequestMock.mockImplementation(
+      () => new Promise((resolve) => resolvers.push(resolve)),
+    );
+    const requests = Array.from({ length: 6 }, (_, index) =>
+      fetchQdnResourceCard({
+        identifier: `card-${index}`,
+        name: 'Alice',
+        network: 'qortium',
+        path: '',
+        qdnUrl: `qdn://APP/Alice/card-${index}`,
+        service: 'APP',
+      }),
+    );
+
+    await vi.waitFor(() => expect(qdnRequestMock).toHaveBeenCalledTimes(4));
+    resolvers[0]?.({ title: 'one' });
+    resolvers[1]?.({ title: 'two' });
+    await vi.waitFor(() => expect(qdnRequestMock).toHaveBeenCalledTimes(6));
+    for (const resolve of resolvers) resolve({ title: 'done' });
+    await expect(Promise.all(requests)).resolves.toHaveLength(6);
+  });
+
   it('fetches each gif file from a pathless gif repository resource', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({
@@ -360,20 +767,22 @@ describe('message link helpers', () => {
           'notes.txt',
           'nested/orbit-demo.gif',
           'bad//path.gif',
+          '../traversal.gif',
           'other.GIF',
         ],
       })
       .mockResolvedValueOnce({ filename: 'nested/orbit-demo.gif', mimeType: 'image/gif', size: 128 })
-      .mockResolvedValueOnce({ filename: 'other.GIF', mimeType: 'image/gif', size: 256 })
-      .mockResolvedValueOnce({ filename: 'signal-bars-demo.gif', mimeType: 'image/gif', size: 512 })
       .mockResolvedValueOnce('R0lGODlhAA==')
+      .mockResolvedValueOnce({ filename: 'other.GIF', mimeType: 'image/gif', size: 256 })
       .mockResolvedValueOnce('R0lGODlhBB==')
+      .mockResolvedValueOnce({ filename: 'signal-bars-demo.gif', mimeType: 'image/gif', size: 512 })
       .mockResolvedValueOnce('R0lGODlhCC==');
 
     await expect(
       fetchQdnImagePreviews({
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo',
         service: 'GIF_REPOSITORY',
@@ -403,6 +812,7 @@ describe('message link helpers', () => {
       service: 'GIF_REPOSITORY',
       name: 'QortiumHomeTest',
       identifier: 'home-gif-demo',
+      maxBytes: 128 * 1024,
       path: '',
     });
     expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
@@ -410,9 +820,10 @@ describe('message link helpers', () => {
       service: 'GIF_REPOSITORY',
       name: 'QortiumHomeTest',
       identifier: 'home-gif-demo',
+      maxBytes: 64 * 1024,
       path: 'nested/orbit-demo.gif',
     });
-    expect(qdnRequestMock).toHaveBeenNthCalledWith(5, {
+    expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
       action: 'FETCH_QDN_RESOURCE',
       service: 'GIF_REPOSITORY',
       name: 'QortiumHomeTest',
@@ -445,6 +856,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreview({
         identifier: 'photo',
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice/photo',
         service: 'IMAGE',
@@ -469,6 +881,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreviews({
         identifier: 'Qortium-gif',
         name: '7R15M3G157U5',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://GIF_REPOSITORY/7R15M3G157U5/Qortium-gif',
         service: 'GIF_REPOSITORY',
@@ -483,6 +896,35 @@ describe('message link helpers', () => {
     ]);
   });
 
+  it('keeps Hub identifier-query semantics when expanding a Qortal GIF repository file', async () => {
+    qortalRequestMock
+      .mockResolvedValueOnce({ files: ['nested/orbit.gif'] })
+      .mockResolvedValueOnce({
+        body: 'R0lGODlhAA==',
+        contentLength: 7,
+        contentType: 'image/gif',
+        encoding: 'base64',
+      });
+
+    await expect(
+      fetchQdnImagePreviews({
+        identifier: 'repo-id',
+        name: 'Alice',
+        network: 'qortal',
+        path: '',
+        qdnUrl: 'qortal://GIF_REPOSITORY/Alice?identifier=repo-id',
+        service: 'GIF_REPOSITORY',
+      }),
+    ).resolves.toEqual([
+      {
+        alt: 'qortal://GIF_REPOSITORY/Alice/nested/orbit.gif?identifier=repo-id',
+        mimeType: 'image/gif',
+        qdnUrl: 'qortal://GIF_REPOSITORY/Alice/nested/orbit.gif?identifier=repo-id',
+        src: 'data:image/gif;base64,R0lGODlhAA==',
+      },
+    ]);
+  });
+
   it('fetches linked gif repository file resources without metadata expansion', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({ filename: 'orbit-demo.gif', mimeType: 'image/gif', size: 128 })
@@ -492,6 +934,7 @@ describe('message link helpers', () => {
       fetchQdnImagePreviews({
         identifier: 'home-gif-demo',
         name: 'QortiumHomeTest',
+        network: 'qortium',
         path: 'orbit-demo.gif',
         qdnUrl: 'qdn://GIF_REPOSITORY/QortiumHomeTest/home-gif-demo/orbit-demo.gif',
         service: 'GIF_REPOSITORY',
@@ -517,11 +960,12 @@ describe('message link helpers', () => {
     await expect(
       fetchQdnImagePreview({
         name: 'Alice',
+        network: 'qortium',
         path: '',
         qdnUrl: 'qdn://IMAGE/Alice',
         service: 'IMAGE',
       }),
-    ).rejects.toThrow('Image preview exceeds the 5 MB limit.');
+    ).rejects.toThrow('Image preview exceeds the current preview byte limit.');
     expect(qdnRequestMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -108,9 +108,10 @@ const bootstrap = `
       timestamp: messages.at(-1).timestamp
     };
     localStorage.setItem(
-      'qortium-chat:lastChat:' + self,
-      JSON.stringify({ kind: 'direct', direct: { address: peer, name: 'Mobile Peer' } })
+      'qortium-chat:v2:last:qortium:' + self,
+      JSON.stringify({ kind: 'direct', direct: { address: peer, name: 'Mobile Peer' }, network: 'qortium' })
     );
+    localStorage.setItem('qortium-chat:v2:last-network', JSON.stringify('qortium'));
     window.qdnRequest = async (request) => {
       switch (String(request.action || '').toUpperCase()) {
         case 'SHOW_ACTIONS':

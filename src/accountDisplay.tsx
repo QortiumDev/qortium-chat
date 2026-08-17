@@ -3,7 +3,7 @@ import { type AvatarLightboxImage } from './AvatarLightbox';
 import { getAvatarFallbackCharacter, normalizeRegisteredName, type AvatarProfile } from './avatarProfiles';
 import { getSenderLabel } from './chatText';
 import { type TranslateFunction } from './i18n';
-import { type ActiveDirectChat, type ChatMessage } from './types';
+import { type ActiveDirectChat, type ChatMessage, type ChatNetwork } from './types';
 
 export type AccountInfoTarget = Pick<ChatMessage, 'sender' | 'senderName'>;
 
@@ -11,11 +11,28 @@ export type CachedAvatarProfile = AvatarProfile & {
   requestKey: string;
 };
 
-// Keyed by the (untrusted) account address. A Map rather than a plain object so
-// that the address — which originates from chat-message data — is never used as
-// a computed object property name; that keeps the looked-up profile (and the
-// avatar URL it carries) from being treated as attacker-controlled downstream.
+// Render-facing maps are scoped to one network and keyed by the (untrusted)
+// account address. The owning cache uses AvatarProfilesByIdentity and keys by
+// network + address so identical addresses on Qortium and Qortal never collide.
+// A Map also avoids using message data as computed object property names.
 export type AvatarProfilesByAddress = ReadonlyMap<string, CachedAvatarProfile>;
+export type AvatarProfilesByIdentity = ReadonlyMap<string, CachedAvatarProfile>;
+
+export function selectAvatarProfilesForNetwork(
+  profiles: AvatarProfilesByIdentity,
+  network: ChatNetwork,
+): AvatarProfilesByAddress {
+  const prefix = `${network}:`;
+  const selected = new Map<string, CachedAvatarProfile>();
+
+  for (const [key, profile] of profiles) {
+    if (key.startsWith(prefix) && profile.network === network) {
+      selected.set(profile.address, profile);
+    }
+  }
+
+  return selected;
+}
 
 export function getShortAddress(address: string) {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
@@ -62,7 +79,7 @@ export function getVisibleAvatarSrc(src: string | null, failedSrc: string | null
 export function getAvatarView(profile: AvatarProfile | undefined, preferredName: string | null | undefined) {
   const name = normalizeRegisteredName(preferredName) ?? profile?.name ?? null;
   // Pointer-aware avatar responses are validated against the account address
-  // before this address-keyed profile is committed. A historical sender name
+  // before this network-and-address-keyed profile is committed. A historical sender name
   // can differ from the account's current name, but must not hide that account's
   // current avatar or pair it with another address.
   const candidateSrc = profile?.avatarSrc ?? null;
@@ -84,12 +101,14 @@ export function getMessageSenderLabel(
 
 export function UserAvatar({
   className,
+  fallback,
   name,
   onOpen,
   openLabel,
   src,
 }: {
   className: string;
+  fallback?: string;
   name: string | null;
   onOpen?: (image: AvatarLightboxImage) => void;
   openLabel?: string;
@@ -131,7 +150,7 @@ export function UserAvatar({
 
   return (
     <span aria-hidden="true" className={`${avatarClassName} user-avatar--fallback`}>
-      {getAvatarFallbackCharacter(name)}
+      {fallback ?? getAvatarFallbackCharacter(name)}
     </span>
   );
 }

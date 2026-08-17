@@ -24,6 +24,7 @@ import {
   submitGroupApproval,
   getActiveChats,
   getAccountNames,
+  getAccountNamesForNetwork,
   getCurrentBlockHeight,
   getAccountGroupJoinRequests,
   getAdminGroupJoinRequests,
@@ -319,6 +320,16 @@ describe('Core API path builders', () => {
       action: 'GET_ACCOUNT_NAMES',
       address: 'Qabc',
     });
+  });
+
+  it('keeps Qortal account-name resolution on the Qortal bridge', async () => {
+    qortalRequestMock.mockResolvedValueOnce([{ name: 'alice', owner: 'Qabc' }]);
+
+    await expect(getAccountNamesForNetwork('qortal', 'Qabc', ['GET_ACCOUNT_NAMES'])).resolves.toEqual([
+      { name: 'alice', owner: 'Qabc' },
+    ]);
+    expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'GET_ACCOUNT_NAMES', address: 'Qabc' });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
   });
 
   it('falls back to FETCH_NODE_API for account names', async () => {
@@ -747,6 +758,60 @@ describe('Core API path builders', () => {
     });
   });
 
+  it('preserves a signed Home broadcast failure as an ambiguous, reconcilable outcome', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      accepted: false,
+      error: 'Node rejected the chat transaction.',
+      errorType: 'BROADCAST_REJECTED',
+      signature: 'signed-but-not-broadcast',
+    });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
+      error: 'Node rejected the chat transaction.',
+      errorType: 'BROADCAST_REJECTED',
+      outcome: 'ambiguous',
+      signature: 'signed-but-not-broadcast',
+      timestamp: expect.any(Number),
+    });
+  });
+
+  it('preserves a signed legacy errorType result as an ambiguous, reconcilable outcome', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      errorType: 'BROADCAST_REJECTED',
+      signature: 'signed-but-not-broadcast',
+    });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
+      error: 'BROADCAST_REJECTED',
+      errorType: 'BROADCAST_REJECTED',
+      outcome: 'ambiguous',
+      signature: 'signed-but-not-broadcast',
+      timestamp: expect.any(Number),
+    });
+  });
+
+  it('allows retry for exact pre-broadcast validation and user-cancel results', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({
+        accepted: false,
+        error: 'Message is required.',
+        errorType: 'VALIDATION_FAILED',
+      })
+      .mockResolvedValueOnce({
+        accepted: false,
+        canceled: true,
+        reason: 'USER_CANCELLED',
+      });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toMatchObject({
+      message: 'Message is required.',
+      name: 'ChatSendRejectedError',
+    });
+    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toMatchObject({
+      name: 'ChatSendRejectedError',
+    });
+  });
+
   it('passes the edited message reference through to the bridge', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({ signature: 'edit-sig', timestamp: 1700000000010 })
@@ -1013,6 +1078,62 @@ describe('Core API path builders', () => {
       expect(qdnRequestMock).not.toHaveBeenCalled();
     });
 
+    it('loads Qortal active-chat previews through the Qortal bridge', async () => {
+      qortalRequestMock.mockResolvedValueOnce({
+        direct: [],
+        groups: [{ data: 'aGVsbG8=', groupId: 12, senderName: 'alice', timestamp: 500 }],
+      });
+
+      await expect(getActiveChats('qortal', 'QortalAddress', ['GET_ACTIVE_CHATS'])).resolves.toEqual({
+        direct: [],
+        groups: [{ data: 'aGVsbG8=', groupId: 12, senderName: 'alice', timestamp: 500 }],
+      });
+      expect(qortalRequestMock).toHaveBeenCalledWith({
+        action: 'GET_ACTIVE_CHATS',
+        address: 'QortalAddress',
+        encoding: 'BASE64',
+        hasChatReference: false,
+      });
+    });
+
+    it('routes Qortal roster fallback and older-history cursors to the Qortal node', async () => {
+      qortalRequestMock
+        .mockResolvedValueOnce({
+          body: '',
+          contentType: 'application/json',
+          data: { members: [{ member: 'Qmember', name: 'alice' }] },
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+        })
+        .mockResolvedValueOnce([{ sender: 'Qmember', signature: 'older', timestamp: 100, txGroupId: 12 }]);
+
+      await expect(getGroupMembers('qortal', 12, [])).resolves.toEqual([{ member: 'Qmember', name: 'alice' }]);
+      await expect(
+        getGroupMessages(
+          'qortal',
+          { groupId: 12, groupName: 'Qortal group', isOpen: true },
+          ['SEARCH_CHAT_MESSAGES'],
+          { before: 501 },
+        ),
+      ).resolves.toEqual([{ sender: 'Qmember', signature: 'older', timestamp: 100, txGroupId: 12 }]);
+
+      expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+        action: 'FETCH_NODE_API',
+        maxBytes: 2097152,
+        path: '/groups/members/12?limit=100&reverse=false',
+      });
+      expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+        action: 'SEARCH_CHAT_MESSAGES',
+        before: 501,
+        encoding: 'BASE64',
+        groupId: 12,
+        limit: 100,
+        reverse: true,
+        txGroupId: 12,
+      });
+    });
+
     it('searches Qortal groups by listing every group and filtering client-side (no SEARCH_GROUPS on Qortal)', async () => {
       qortalRequestMock.mockResolvedValueOnce([
         { groupId: 1, groupName: 'Chess Fans' },
@@ -1064,6 +1185,29 @@ describe('Core API path builders', () => {
         groupId: 0,
         message: 'hi all',
         txGroupId: 0,
+      });
+    });
+
+    it('treats Home 1.7 Qortal BROADCAST_REJECTED with a signature as outcome unknown', async () => {
+      qortalRequestMock.mockResolvedValueOnce({
+        accepted: false,
+        error: 'Qortal node request timed out.',
+        errorType: 'BROADCAST_REJECTED',
+        signature: 'possibly-accepted-qortal-signature',
+      });
+
+      await expect(sendChatMessage('qortal', 7, 'hello')).resolves.toEqual({
+        error: 'Qortal node request timed out.',
+        errorType: 'BROADCAST_REJECTED',
+        outcome: 'ambiguous',
+        signature: 'possibly-accepted-qortal-signature',
+        timestamp: expect.any(Number),
+      });
+      expect(qortalRequestMock).toHaveBeenCalledWith({
+        action: 'SEND_CHAT_MESSAGE',
+        groupId: 7,
+        message: 'hello',
+        txGroupId: 7,
       });
     });
 

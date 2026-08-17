@@ -30,10 +30,13 @@ import {
   type MessageReactionSummary,
 } from './messageReactions';
 import {
-  fetchQdnImagePreviews,
+  fetchMessageQdnImagePreviews,
   getDocumentQdnResources,
   getImageQdnResources,
+  getMessageQdnResources,
   getMediaQdnResources,
+  getQortalHubImageResources,
+  MessageResourceCards,
   openQdnDocumentViewer,
   openQdnMediaPlayer,
   renderMessageTextWithAppLinks,
@@ -52,8 +55,8 @@ import {
 import { type AvatarLightboxImage } from './AvatarLightbox';
 import { DownIcon, UpIcon } from './icons';
 import { type TranslateFunction } from './i18n';
-import { type ChatMessage, type ChatScrollPosition, type TrackedTransaction } from './types';
-import { type PendingRevision } from './pendingSends';
+import { type ChatMessage, type ChatNetwork, type ChatScrollPosition, type QdnAction, type TrackedTransaction } from './types';
+import { canRetryPendingDelivery, type PendingRevision, type PendingSend, type SendDeliveryPhase } from './pendingSends';
 
 // Loaded on demand: the full picker only mounts after React → '+', and its
 // bundle (~300 KB, a third of the app's JS) must not weigh down every app
@@ -83,23 +86,32 @@ type ImagePreviewState =
       phase: 'error';
     };
 
-function MessageImagePreview({
+function MessageImagePreviews({
   onOpenImage,
-  resource,
+  resources,
   t,
 }: {
   onOpenImage: (image: AvatarLightboxImage) => void;
-  resource: QdnImageResource;
+  resources: QdnImageResource[];
   t: TranslateFunction;
 }) {
   const [state, setState] = useState<ImagePreviewState>({ phase: 'loading' });
+  const resourcesKey = JSON.stringify(
+    resources.map((resource) => [
+      resource.network,
+      resource.service,
+      resource.name,
+      resource.identifier ?? '',
+      resource.path,
+    ]),
+  );
 
   useEffect(() => {
     let isDisposed = false;
 
     setState({ phase: 'loading' });
 
-    void fetchQdnImagePreviews(resource)
+    void fetchMessageQdnImagePreviews(resources)
       .then((previews) => {
         if (!isDisposed) {
           setState({ phase: 'ready', previews });
@@ -117,12 +129,12 @@ function MessageImagePreview({
     return () => {
       isDisposed = true;
     };
-  }, [resource.identifier, resource.name, resource.path, resource.qdnUrl, resource.service, t]);
+  }, [resourcesKey, t]);
 
   if (state.phase === 'loading') {
     return (
       <div className="message__image-preview message__image-preview--loading">
-        {t('status.loading.imagePreview')}
+        {t('label.resource.public')} · {t('status.loading.imagePreview')}
       </div>
     );
   }
@@ -130,19 +142,19 @@ function MessageImagePreview({
   if (state.phase === 'error') {
     return (
       <div className="message__image-preview message__image-preview--error">
-        {state.message}
+        {t('label.resource.public')} · {state.message}
       </div>
     );
   }
 
   return (
-    <>
+    <div className="message__image-previews">
       {state.previews.map((preview) => (
         <figure className="message__image-preview" key={preview.qdnUrl}>
           <button
-            aria-label={`${t('button.viewImagePreview')}: ${preview.alt}`}
+            aria-label={`${t('label.resource.public')}: ${t('button.viewImagePreview')}: ${preview.alt}`}
             className="message__image-preview-button"
-            onClick={() => onOpenImage({ alt: preview.alt, name: preview.alt, src: preview.src })}
+            onClick={() => onOpenImage({ alt: `${t('label.resource.public')}: ${preview.alt}`, name: preview.alt, src: preview.src })}
             title={preview.qdnUrl}
             type="button"
           >
@@ -153,26 +165,8 @@ function MessageImagePreview({
               width={preview.width}
             />
           </button>
-          <figcaption>{preview.alt}</figcaption>
+          <figcaption>{t('label.resource.public')} · {preview.alt}</figcaption>
         </figure>
-      ))}
-    </>
-  );
-}
-
-function MessageImagePreviews({
-  onOpenImage,
-  resources,
-  t,
-}: {
-  onOpenImage: (image: AvatarLightboxImage) => void;
-  resources: QdnImageResource[];
-  t: TranslateFunction;
-}) {
-  return (
-    <div className="message__image-previews">
-      {resources.map((resource, index) => (
-        <MessageImagePreview key={`${resource.qdnUrl}-${index}`} onOpenImage={onOpenImage} resource={resource} t={t} />
       ))}
     </div>
   );
@@ -181,13 +175,13 @@ function MessageImagePreviews({
 function MessageReactionPicker({
   onReact,
   original,
-  pendingReactionKey,
+  pendingReactionKeys,
   reactions,
   t,
 }: {
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   original: ChatMessage;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   reactions: MessageReactionSummary[];
   t: TranslateFunction;
 }) {
@@ -215,7 +209,7 @@ function MessageReactionPicker({
             <button
               aria-label={contentState ? t('action.addReaction') : t('action.removeReaction')}
               aria-pressed={existingReaction?.reactedBySelf ?? false}
-              disabled={pendingReactionKey === pendingKey}
+              disabled={pendingReactionKeys.has(pendingKey)}
               key={reaction}
               onClick={() => selectReaction(reaction)}
               title={contentState ? t('action.addReaction') : t('action.removeReaction')}
@@ -267,7 +261,7 @@ function MessageReactionDetails({
   onClose,
   onReact,
   original,
-  pendingReactionKey,
+  pendingReactionKeys,
   reaction,
   t,
 }: {
@@ -277,7 +271,7 @@ function MessageReactionDetails({
   onClose: () => void;
   onReact: (message: ChatMessage, reaction: string, contentState: boolean) => void;
   original: ChatMessage;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   reaction: MessageReactionSummary;
   t: TranslateFunction;
 }) {
@@ -328,7 +322,7 @@ function MessageReactionDetails({
       </ol>
       <button
         className="button button--secondary message__reaction-details-action"
-        disabled={!canReact || pendingReactionKey === pendingKey}
+        disabled={!canReact || pendingReactionKeys.has(pendingKey)}
         onClick={() => {
           onClose();
           onReact(original, reaction.content, contentState);
@@ -450,14 +444,14 @@ function MessageReactionChips({
   onToggleReactionDetails,
   openReactionDetailsKey,
   original,
-  pendingReactionKey,
+  pendingReactionKeys,
   reactions,
   t,
 }: {
   onToggleReactionDetails: (detailsKey: string, anchor: HTMLElement) => void;
   openReactionDetailsKey: string;
   original: ChatMessage;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   reactions: MessageReactionSummary[];
   t: TranslateFunction;
 }) {
@@ -479,7 +473,7 @@ function MessageReactionChips({
               aria-label={label}
               aria-haspopup="dialog"
               className={`message__reaction-chip${reaction.reactedBySelf ? ' message__reaction-chip--active' : ''}`}
-              disabled={pendingReactionKey === pendingKey}
+              disabled={pendingReactionKeys.has(pendingKey)}
               key={reaction.content}
               onClick={(event) => onToggleReactionDetails(pendingKey, event.currentTarget)}
               title={label}
@@ -495,16 +489,65 @@ function MessageReactionChips({
   );
 }
 
+export function getMessageDeliveryLabel(phase: SendDeliveryPhase, t: TranslateFunction) {
+  switch (phase) {
+    case 'broadcast':
+      return t('message.delivery.broadcast');
+    case 'confirmed':
+      return t('status.transaction.confirmed');
+    case 'expired':
+      return t('message.sendStatus.failed');
+    case 'ambiguous':
+      return t('message.delivery.ambiguous');
+    case 'rejected':
+      return t('message.sendStatus.failed');
+    default:
+      return t('message.sendStatus.sending');
+  }
+}
+
+export function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunction) {
+  if (revision.kind === 'edit') {
+    switch (revision.delivery.phase) {
+      case 'broadcast':
+        return t('message.delivery.broadcast');
+      case 'confirmed':
+        return t('status.transaction.confirmed');
+      case 'expired':
+        return t('message.editStatus.failed');
+      case 'ambiguous':
+        return t('message.delivery.ambiguous');
+      case 'rejected':
+        return t('message.editStatus.failed');
+      default:
+        return t('message.editStatus.sending');
+    }
+  }
+
+  switch (revision.delivery.phase) {
+    case 'broadcast':
+      return t('message.delivery.broadcast');
+    case 'confirmed':
+      return t('status.transaction.confirmed');
+    case 'expired':
+      return t('message.deleteStatus.failed');
+    case 'ambiguous':
+      return t('message.delivery.ambiguous');
+    case 'rejected':
+      return t('message.deleteStatus.failed');
+    default:
+      return t('message.deleteStatus.sending');
+  }
+}
+
 export const MessageList = memo(function MessageList({
   avatarProfiles,
   canCompose,
   canRevise,
-  canOpenDocumentViewer,
-  canOpenMediaPlayer,
-  canSaveQdnResource,
   emptyHint,
   initialScrollPosition,
   messages,
+  network,
   olderMessagesError,
   olderMessagesLoading,
   olderMessagesReachedStart,
@@ -521,8 +564,11 @@ export const MessageList = memo(function MessageList({
   onRetryMessage,
   onRetryRevision,
   onScrollPositionChange,
-  pendingReactionKey,
+  pendingReactionKeys,
   pendingRevisionBySignature,
+  pendingSendByLocalId,
+  qortalResourceActions,
+  qortiumResourceActions,
   scrollChatKey,
   selfAddress,
   selfName,
@@ -536,12 +582,10 @@ export const MessageList = memo(function MessageList({
   avatarProfiles: AvatarProfilesByAddress;
   canCompose: boolean;
   canRevise: boolean;
-  canOpenDocumentViewer: boolean;
-  canOpenMediaPlayer: boolean;
-  canSaveQdnResource: boolean;
   emptyHint?: string;
   initialScrollPosition: ChatScrollPosition | undefined;
   messages: ChatMessage[];
+  network: ChatNetwork;
   olderMessagesError: string;
   olderMessagesLoading: boolean;
   olderMessagesReachedStart: boolean;
@@ -558,8 +602,11 @@ export const MessageList = memo(function MessageList({
   onRetryMessage: (localId: string) => void;
   onRetryRevision: (localId: string) => void;
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
-  pendingReactionKey: string;
+  pendingReactionKeys: ReadonlySet<string>;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
+  pendingSendByLocalId: ReadonlyMap<string, PendingSend>;
+  qortalResourceActions: QdnAction[];
+  qortiumResourceActions: QdnAction[];
   scrollChatKey: string;
   selfAddress: string | null;
   selfName: string | null;
@@ -640,6 +687,10 @@ export const MessageList = memo(function MessageList({
   const [unreadJumpVisible, setUnreadJumpVisible] = useState(false);
   const [highlightedKey, setHighlightedKey] = useState('');
   const [expandedTimeKey, setExpandedTimeKey] = useState('');
+  const hasResourceAction = (resourceNetwork: ChatNetwork, action: string) =>
+    (resourceNetwork === 'qortal' ? qortalResourceActions : qortiumResourceActions).some(
+      (candidate) => candidate.toUpperCase() === action,
+    );
   const threads = useMemo(() => buildMessageThreads(messages), [messages]);
   // Index of the first thread newer than the user's read watermark; the "new
   // messages" divider is drawn just above it. Only shown when at least one read
@@ -1516,17 +1567,10 @@ export const MessageList = memo(function MessageList({
   }
 
   function toggleImagePreview(threadKey: string) {
-    setOpenImagePreviews((current) => {
-      const next = new Set(current);
-
-      if (next.has(threadKey)) {
-        next.delete(threadKey);
-      } else {
-        next.add(threadKey);
-      }
-
-      return next;
-    });
+    // Data-URL previews retain both encoded and decoded image memory. Keep one
+    // message's explicitly opened preview set at a time so repeatedly opening
+    // older messages cannot accumulate an unbounded Android renderer footprint.
+    setOpenImagePreviews((current) => current.has(threadKey) ? new Set() : new Set([threadKey]));
   }
 
   function closeReactionPopover() {
@@ -1681,18 +1725,43 @@ export const MessageList = memo(function MessageList({
             const isContinuation = isThreadContinuation(threads[index - 1], thread);
             const canEdit = isOwn && decoded.kind === 'text';
             const isTimeExpanded = expandedTimeKey === threadKey;
-            const imageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body) : [];
-            const mediaResources = decoded.kind === 'text' ? getMediaQdnResources(decoded.body) : [];
-            const documentResources = decoded.kind === 'text' ? getDocumentQdnResources(decoded.body) : [];
+            const textResources = decoded.kind === 'text'
+              ? getMessageQdnResources(decoded.body, network).filter((resource) =>
+                  hasResourceAction(resource.network, 'GET_QDN_RESOURCE_METADATA'),
+                )
+              : [];
+            const linkedImageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body, network) : [];
+            const pinnedImageResources =
+              network === 'qortal' && decoded.kind === 'text'
+                ? getQortalHubImageResources(decoded.hubImages ?? [])
+                : [];
+            const imageResources = Array.from(
+              new Map(
+                [...linkedImageResources, ...pinnedImageResources].map((resource) => [
+                  `${resource.network}:${resource.service}:${resource.name}:${resource.identifier ?? ''}:${resource.path}`,
+                  resource,
+                ]),
+              ).values(),
+            ).filter((resource) => hasResourceAction(resource.network, 'FETCH_QDN_RESOURCE'));
+            const mediaResources =
+              decoded.kind === 'text'
+                ? getMediaQdnResources(decoded.body, network).filter((resource) =>
+                    hasResourceAction(resource.network, 'OPEN_QDN_MEDIA_PLAYER'),
+                  )
+                : [];
+            const documentResources = decoded.kind === 'text' ? getDocumentQdnResources(decoded.body, network) : [];
+            const viewableDocumentResources = documentResources.filter((resource) =>
+              hasResourceAction(resource.network, 'OPEN_QDN_DOCUMENT_VIEWER'),
+            );
+            const saveableDocumentResources = documentResources.filter((resource) =>
+              hasResourceAction(resource.network, 'SAVE_QDN_RESOURCE'),
+            );
             const hasImagePreviews = imageResources.length > 0;
-            const hasMediaActions = canOpenMediaPlayer && mediaResources.length > 0;
-            const hasDocumentResources = documentResources.length > 0;
-            const hasDocumentViewerActions = canOpenDocumentViewer && hasDocumentResources;
-            const hasDocumentSaveActions = canSaveQdnResource && hasDocumentResources;
+            const hasMediaActions = mediaResources.length > 0;
+            const hasDocumentViewerActions = viewableDocumentResources.length > 0;
+            const hasDocumentSaveActions = saveableDocumentResources.length > 0;
             const areImagePreviewsOpen = openImagePreviews.has(threadKey);
             const canReply = canCompose && !!original.signature;
-            const canEditOrDelete = canRevise && !!original.signature;
-            const canReact = canEditOrDelete;
             const isReactionPickerOpen = openReactionPickerKey === threadKey;
             const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
             const senderProfile = avatarProfiles.get(original.sender);
@@ -1700,10 +1769,20 @@ export const MessageList = memo(function MessageList({
             // absent once the real confirmed message takes its place.
             const sendState = original.sendState;
             const sendLocalId = original.sendLocalId;
+            const pendingSend = sendLocalId ? pendingSendByLocalId.get(sendLocalId) : undefined;
+            const sendDeliveryPhase: SendDeliveryPhase =
+              pendingSend?.delivery.phase ?? (sendState === 'failed' ? 'rejected' : 'pending');
             // An edit/delete already in flight for this (confirmed) original,
             // driven from the side channel rather than an injected revision —
             // see pendingSends.ts's module doc for why.
             const pendingRevision = original.signature ? pendingRevisionBySignature.get(original.signature) : undefined;
+            // A revision whose outcome is pending or ambiguous owns this target
+            // until it confirms or the user explicitly discards it. Do not let
+            // the ordinary Edit/Delete buttons silently supersede that record.
+            const canEditOrDelete = canRevise && !!original.signature && !pendingRevision;
+            const canReact = canRevise && !!original.signature;
+            const hasPublicResourceActions =
+              hasImagePreviews || hasMediaActions || hasDocumentViewerActions || hasDocumentSaveActions;
             const actionButtons =
               canReply ||
               canReact ||
@@ -1712,6 +1791,9 @@ export const MessageList = memo(function MessageList({
               hasDocumentViewerActions ||
               hasDocumentSaveActions ? (
                 <div className="message__actions">
+                  {hasPublicResourceActions ? (
+                    <span className="message__resource-public-label">{t('label.resource.public')}</span>
+                  ) : null}
                   {hasImagePreviews ? (
                     <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
                       {areImagePreviewsOpen ? t('button.hideImagePreview') : t('button.viewImagePreview')}
@@ -1731,7 +1813,7 @@ export const MessageList = memo(function MessageList({
                       ))
                     : null}
                   {hasDocumentViewerActions
-                    ? documentResources.map((resource, resourceIndex) => (
+                    ? viewableDocumentResources.map((resource, resourceIndex) => (
                         <button
                           key={`view-${resource.qdnUrl}-${resourceIndex}`}
                           onClick={() => openDocument(resource)}
@@ -1743,7 +1825,7 @@ export const MessageList = memo(function MessageList({
                       ))
                     : null}
                   {hasDocumentSaveActions
-                    ? documentResources.map((resource, resourceIndex) => (
+                    ? saveableDocumentResources.map((resource, resourceIndex) => (
                         <button
                           key={`save-${resource.qdnUrl}-${resourceIndex}`}
                           onClick={() => saveResource(resource)}
@@ -1836,13 +1918,16 @@ export const MessageList = memo(function MessageList({
                 ) : null}
                 <div className="message__body">
                   {decoded.body ? (
-                    renderMessageTextWithAppLinks(decoded.body, t)
-                  ) : (
+                    renderMessageTextWithAppLinks(decoded.body, t, network, {
+                      canOpenQortalAppLinks: hasResourceAction('qortal', 'OPEN_NEW_TAB'),
+                    })
+                  ) : imageResources.length > 0 ? null : (
                     <span className="message__body-placeholder">
                       {t('message.empty')}
                     </span>
                   )}
                 </div>
+                <MessageResourceCards resources={textResources} t={t} />
                 {areImagePreviewsOpen ? (
                   <MessageImagePreviews onOpenImage={onOpenImage} resources={imageResources} t={t} />
                 ) : null}
@@ -1850,7 +1935,7 @@ export const MessageList = memo(function MessageList({
                   onToggleReactionDetails={toggleReactionDetails}
                   openReactionDetailsKey={openReactionDetailsKey}
                   original={original}
-                  pendingReactionKey={pendingReactionKey}
+                  pendingReactionKeys={pendingReactionKeys}
                   reactions={reactions}
                   t={t}
                 />
@@ -1871,42 +1956,40 @@ export const MessageList = memo(function MessageList({
                   {isContinuation ? actionButtons : null}
                 </div>
                 {sendState === 'sending' ? (
-                  <p className="message__send-status message__send-status--sending" role="status">
-                    {t('message.sendStatus.sending')}
+                  <p className={`message__send-status message__send-status--${sendDeliveryPhase}`} role="status">
+                    {getMessageDeliveryLabel(sendDeliveryPhase, t)}
                   </p>
                 ) : null}
                 {sendState === 'failed' && sendLocalId ? (
-                  <p className="message__send-status message__send-status--failed" role="alert">
-                    <span>{t('message.sendStatus.failed')}</span>
-                    <button onClick={() => onRetryMessage(sendLocalId)} type="button">
-                      {t('button.retry')}
-                    </button>
+                  <p className={`message__send-status message__send-status--${sendDeliveryPhase}`} role="alert">
+                    <span>{getMessageDeliveryLabel(sendDeliveryPhase, t)}</span>
+                    {pendingSend?.error ? <span className="message__send-error">{pendingSend.error}</span> : null}
+                    {pendingSend && canRetryPendingDelivery(pendingSend.delivery) ? (
+                      <button onClick={() => onRetryMessage(sendLocalId)} type="button">
+                        {t('button.retry')}
+                      </button>
+                    ) : null}
                     <button onClick={() => onDiscardMessage(sendLocalId)} type="button">
-                      {t('button.cancel')}
+                      {t('button.discardLocal')}
                     </button>
                   </p>
                 ) : null}
                 {pendingRevision ? (
                   <p
-                    className={`message__send-status message__send-status--${pendingRevision.status}`}
+                    className={`message__send-status message__send-status--${pendingRevision.delivery.phase}`}
                     role={pendingRevision.status === 'failed' ? 'alert' : 'status'}
                   >
-                    <span>
-                      {pendingRevision.kind === 'edit'
-                        ? pendingRevision.status === 'sending'
-                          ? t('message.editStatus.sending')
-                          : t('message.editStatus.failed')
-                        : pendingRevision.status === 'sending'
-                          ? t('message.deleteStatus.sending')
-                          : t('message.deleteStatus.failed')}
-                    </span>
+                    <span>{getRevisionDeliveryLabel(pendingRevision, t)}</span>
+                    {pendingRevision.error ? <span className="message__send-error">{pendingRevision.error}</span> : null}
                     {pendingRevision.status === 'failed' ? (
                       <>
-                        <button onClick={() => onRetryRevision(pendingRevision.localId)} type="button">
-                          {t('button.retry')}
-                        </button>
+                        {canRetryPendingDelivery(pendingRevision.delivery) ? (
+                          <button onClick={() => onRetryRevision(pendingRevision.localId)} type="button">
+                            {t('button.retry')}
+                          </button>
+                        ) : null}
                         <button onClick={() => onDiscardRevision(pendingRevision.localId)} type="button">
-                          {t('button.cancel')}
+                          {t('button.discardLocal')}
                         </button>
                       </>
                     ) : null}
@@ -1960,7 +2043,7 @@ export const MessageList = memo(function MessageList({
             onReact(message, reaction, contentState);
           }}
           original={pickerThread.original}
-          pendingReactionKey={pendingReactionKey}
+          pendingReactionKeys={pendingReactionKeys}
           reactions={pickerReactions}
           t={t}
         />
@@ -1980,7 +2063,7 @@ export const MessageList = memo(function MessageList({
           onClose={closeReactionPopover}
           onReact={onReact}
           original={detailsThread.original}
-          pendingReactionKey={pendingReactionKey}
+          pendingReactionKeys={pendingReactionKeys}
           reaction={detailsReaction}
           t={t}
         />

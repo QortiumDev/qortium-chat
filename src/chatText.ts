@@ -7,12 +7,25 @@ function localizeMessage(t: TranslateFunction | undefined, key: Parameters<Trans
 
 export type DisplayChatMessage = {
   body: string;
+  hubImages?: QortalHubImageRef[];
   kind: 'binary' | 'empty' | 'encrypted' | 'machine' | 'reaction' | 'text' | 'unsupported';
   /** For kind 'machine': the sending app's registered marker (e.g. "chess"). */
   machineApp?: string;
   reaction?: ChatReaction;
   repliedTo: string | null;
 };
+
+// Qortal Hub pins public chat images by resource coordinates inside the v3
+// message envelope. Keep these separate from message text: MessageList turns
+// them into network-qualified Qortal resources before any bridge operation.
+export type QortalHubImageRef = {
+  identifier: string;
+  name: string;
+  service: string;
+  timestamp?: number;
+};
+
+const QORTAL_HUB_IMAGE_SERVICES = new Set(['GIF_REPOSITORY', 'IMAGE', 'QCHAT_IMAGE', 'THUMBNAIL']);
 
 export type ChatReaction = {
   content: string;
@@ -73,13 +86,32 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function getSafeLinkedAddress(value: unknown) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const address = value.trim();
+
+  return address.length <= 2048 && /^(?:qdn|qortal|home|core|https?):\/\/[^\s<>"'`]+$/i.test(address)
+    ? address
+    : null;
+}
+
 function extractTiptapText(node: unknown): string {
   if (!isPlainObject(node)) {
     return '';
   }
 
   if (node.type === 'text') {
-    return typeof node.text === 'string' ? node.text : '';
+    const text = typeof node.text === 'string' ? node.text : '';
+    const marks = Array.isArray(node.marks) ? node.marks : [];
+    const linkedAddress = marks
+      .map((mark) => (isPlainObject(mark) && mark.type === 'link' && isPlainObject(mark.attrs) ? mark.attrs.href : null))
+      .map(getSafeLinkedAddress)
+      .find((address): address is string => address !== null);
+
+    return linkedAddress && !text.includes(linkedAddress) ? `${text} (${linkedAddress})` : text;
   }
 
   if (node.type === 'hardBreak') {
@@ -90,6 +122,437 @@ function extractTiptapText(node: unknown): string {
   const joined = content.map(extractTiptapText).join('');
 
   return node.type === 'paragraph' ? `${joined}\n` : joined;
+}
+
+const HTML_BLOCK_END_TAGS = new Set(['blockquote', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'p', 'pre']);
+const HTML_BREAK_TAGS = new Set(['br', 'hr']);
+const HTML_DISCARDED_CONTENT_TAGS = new Set(['script', 'style', 'template']);
+
+const HTML_NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: ' ',
+  quot: '"',
+};
+
+function isAsciiAlpha(character: string | undefined) {
+  if (!character) {
+    return false;
+  }
+
+  const code = character.charCodeAt(0);
+
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiDigit(character: string | undefined) {
+  if (!character) {
+    return false;
+  }
+
+  const code = character.charCodeAt(0);
+
+  return code >= 48 && code <= 57;
+}
+
+function isAsciiHexDigit(character: string | undefined) {
+  if (!character) {
+    return false;
+  }
+
+  const code = character.charCodeAt(0);
+
+  return isAsciiDigit(character) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102);
+}
+
+function isHtmlSpace(character: string | undefined) {
+  return character === ' ' || character === '\t' || character === '\n' || character === '\r' || character === '\f';
+}
+
+function decodeHtmlEntityBody(body: string) {
+  if (body[0] !== '#') {
+    return HTML_NAMED_ENTITIES[body.toLowerCase()] ?? null;
+  }
+
+  const isHex = body[1] === 'x' || body[1] === 'X';
+  const digits = body.slice(isHex ? 2 : 1);
+  const maxDigits = isHex ? 6 : 7;
+
+  if (
+    digits.length === 0 ||
+    digits.length > maxDigits ||
+    ![...digits].every(isHex ? isAsciiHexDigit : isAsciiDigit)
+  ) {
+    return null;
+  }
+
+  const codePoint = Number.parseInt(digits, isHex ? 16 : 10);
+
+  return Number.isSafeInteger(codePoint) &&
+    codePoint > 0 &&
+    codePoint <= 0x10ffff &&
+    !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ? String.fromCodePoint(codePoint)
+    : '';
+}
+
+function decodeHtmlEntities(value: string) {
+  const parts: string[] = [];
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const ampersand = value.indexOf('&', cursor);
+
+    if (ampersand < 0) {
+      parts.push(value.slice(cursor));
+      break;
+    }
+
+    parts.push(value.slice(cursor, ampersand));
+    const semicolon = value.indexOf(';', ampersand + 1);
+
+    // The supported numeric forms are at most eight characters between `&`
+    // and `;`. A farther semicolon belongs to ordinary message text.
+    if (semicolon < 0 || semicolon - ampersand > 9) {
+      parts.push('&');
+      cursor = ampersand + 1;
+      continue;
+    }
+
+    const decoded = decodeHtmlEntityBody(value.slice(ampersand + 1, semicolon));
+
+    if (decoded === null) {
+      parts.push('&');
+      cursor = ampersand + 1;
+      continue;
+    }
+
+    parts.push(decoded);
+    cursor = semicolon + 1;
+  }
+
+  return parts.join('');
+}
+
+type HtmlTagToken = {
+  attributes: string;
+  closing: boolean;
+  end: number;
+  name: string;
+};
+
+function findHtmlTagEnd(value: string, start: number) {
+  let quote = '';
+
+  for (let cursor = start; cursor < value.length; cursor += 1) {
+    const character = value[cursor];
+
+    if (quote) {
+      if (character === quote) {
+        quote = '';
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '>') {
+      return cursor;
+    }
+  }
+
+  return -1;
+}
+
+function readHtmlTag(value: string, start: number): HtmlTagToken | null | undefined {
+  let cursor = start + 1;
+  let closing = false;
+
+  if (value[cursor] === '/') {
+    closing = true;
+    cursor += 1;
+  }
+
+  // Declarations and processing instructions carry no display text. Comments
+  // are handled separately so an unterminated comment can discard its tail.
+  if (!closing && (value[cursor] === '!' || value[cursor] === '?')) {
+    const end = findHtmlTagEnd(value, cursor + 1);
+
+    return end < 0 ? undefined : { attributes: '', closing: false, end, name: '' };
+  }
+
+  if (!isAsciiAlpha(value[cursor])) {
+    return null;
+  }
+
+  const nameStart = cursor;
+
+  while (
+    isAsciiAlpha(value[cursor]) ||
+    isAsciiDigit(value[cursor]) ||
+    value[cursor] === ':' ||
+    value[cursor] === '-'
+  ) {
+    cursor += 1;
+  }
+
+  const nameEnd = cursor;
+  const end = findHtmlTagEnd(value, cursor);
+
+  return end < 0
+    ? undefined
+    : {
+        attributes: value.slice(nameEnd, end),
+        closing,
+        end,
+        name: value.slice(nameStart, nameEnd).toLowerCase(),
+      };
+}
+
+function getHtmlAttribute(attributes: string, wantedName: string) {
+  let cursor = 0;
+
+  while (cursor < attributes.length) {
+    while (isHtmlSpace(attributes[cursor]) || attributes[cursor] === '/') {
+      cursor += 1;
+    }
+
+    const nameStart = cursor;
+
+    while (
+      cursor < attributes.length &&
+      !isHtmlSpace(attributes[cursor]) &&
+      attributes[cursor] !== '/' &&
+      attributes[cursor] !== '=' &&
+      attributes[cursor] !== '>'
+    ) {
+      cursor += 1;
+    }
+
+    if (cursor === nameStart) {
+      cursor += 1;
+      continue;
+    }
+
+    const name = attributes.slice(nameStart, cursor).toLowerCase();
+
+    while (isHtmlSpace(attributes[cursor])) {
+      cursor += 1;
+    }
+
+    if (attributes[cursor] !== '=') {
+      continue;
+    }
+
+    cursor += 1;
+    while (isHtmlSpace(attributes[cursor])) {
+      cursor += 1;
+    }
+
+    const quote = attributes[cursor] === '"' || attributes[cursor] === "'" ? attributes[cursor] : '';
+
+    if (quote) {
+      cursor += 1;
+    }
+
+    const valueStart = cursor;
+
+    if (quote) {
+      while (cursor < attributes.length && attributes[cursor] !== quote) {
+        cursor += 1;
+      }
+    } else {
+      while (cursor < attributes.length && !isHtmlSpace(attributes[cursor])) {
+        cursor += 1;
+      }
+    }
+
+    const attributeValue = attributes.slice(valueStart, cursor);
+
+    if (quote && attributes[cursor] === quote) {
+      cursor += 1;
+    }
+
+    if (name === wantedName) {
+      return attributeValue;
+    }
+  }
+
+  return null;
+}
+
+function htmlToPlainText(value: string) {
+  const output: string[] = [];
+  const discardedTagDepth = new Map<string, number>();
+  let discardedDepth = 0;
+  let activeAnchor: { address: string | null; label: string[] } | null = null;
+
+  function appendText(text: string) {
+    if (!text || discardedDepth > 0) {
+      return;
+    }
+
+    if (activeAnchor) {
+      activeAnchor.label.push(text);
+    } else {
+      output.push(text);
+    }
+  }
+
+  function closeAnchor() {
+    if (!activeAnchor) {
+      return;
+    }
+
+    const label = activeAnchor.label.join('').trim();
+    const address = activeAnchor.address;
+
+    activeAnchor = null;
+    output.push(address ? (label && !label.includes(address) ? `${label} (${address})` : label || address) : label);
+  }
+
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const tagStart = value.indexOf('<', cursor);
+
+    if (tagStart < 0) {
+      appendText(decodeHtmlEntities(value.slice(cursor)));
+      break;
+    }
+
+    appendText(decodeHtmlEntities(value.slice(cursor, tagStart)));
+
+    if (value.startsWith('<!--', tagStart)) {
+      const commentEnd = value.indexOf('-->', tagStart + 4);
+
+      if (commentEnd < 0) {
+        break;
+      }
+
+      cursor = commentEnd + 3;
+      continue;
+    }
+
+    const tag = readHtmlTag(value, tagStart);
+
+    if (tag === undefined) {
+      // A quote-aware scan found no terminator, so the remaining tail cannot
+      // contain an independent tag. Keep it as inert text and finish in O(n).
+      appendText(decodeHtmlEntities(value.slice(tagStart)));
+      break;
+    }
+
+    if (tag === null) {
+      appendText('<');
+      cursor = tagStart + 1;
+      continue;
+    }
+
+    cursor = tag.end + 1;
+
+    if (HTML_DISCARDED_CONTENT_TAGS.has(tag.name)) {
+      const previousDepth = discardedTagDepth.get(tag.name) ?? 0;
+
+      if (tag.closing) {
+        if (previousDepth > 0) {
+          discardedTagDepth.set(tag.name, previousDepth - 1);
+          discardedDepth -= 1;
+        }
+      } else {
+        discardedTagDepth.set(tag.name, previousDepth + 1);
+        discardedDepth += 1;
+      }
+      continue;
+    }
+
+    if (discardedDepth > 0 || !tag.name) {
+      continue;
+    }
+
+    if (!tag.closing && tag.name === 'a') {
+      // Nested anchors are invalid HTML. Closing the first one here mirrors the
+      // browser parser's effective structure while keeping the tokenizer flat.
+      closeAnchor();
+      const rawAddress = getHtmlAttribute(tag.attributes, 'href');
+
+      activeAnchor = {
+        address: rawAddress === null ? null : getSafeLinkedAddress(decodeHtmlEntities(rawAddress)),
+        label: [],
+      };
+    } else if (tag.closing && tag.name === 'a') {
+      closeAnchor();
+    } else if (!tag.closing && HTML_BREAK_TAGS.has(tag.name)) {
+      appendText('\n');
+    } else if (tag.closing && HTML_BLOCK_END_TAGS.has(tag.name)) {
+      appendText('\n');
+    }
+  }
+
+  closeAnchor();
+  return output.join('');
+}
+
+// Hub history contains messageText as Tiptap JSON, plain strings, and legacy
+// HTML strings. Convert the latter to text without ever passing it to React as
+// HTML. Script/style/template contents are discarded rather than displayed.
+function extractSafeHubText(value: unknown) {
+  if (typeof value !== 'string') {
+    return extractTiptapText(value);
+  }
+
+  return htmlToPlainText(value);
+}
+
+function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
+  let candidate = value;
+
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate) as unknown;
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+
+  const images: QortalHubImageRef[] = [];
+
+  for (const image of candidate.slice(0, 12)) {
+    if (!isPlainObject(image)) {
+      continue;
+    }
+
+    const service = typeof image.service === 'string' ? image.service.trim().toUpperCase() : '';
+    const name = typeof image.name === 'string' ? image.name.trim() : '';
+    const identifier = typeof image.identifier === 'string' ? image.identifier.trim() : '';
+
+    if (
+      !QORTAL_HUB_IMAGE_SERVICES.has(service) ||
+      !name ||
+      name.length > 255 ||
+      /[\u0000-\u001f/\\]/.test(name) ||
+      !identifier ||
+      identifier.length > 64 ||
+      /[\u0000-\u001f/\\]/.test(identifier)
+    ) {
+      continue;
+    }
+
+    const timestamp =
+      typeof image.timestamp === 'number' && Number.isSafeInteger(image.timestamp) && image.timestamp >= 0
+        ? image.timestamp
+        : undefined;
+
+    images.push({ identifier, name, service, timestamp });
+  }
+
+  return images;
 }
 
 // Machine-message convention shared with other QDN apps (e.g. Chess): a JSON
@@ -125,6 +588,7 @@ function getMachineEnvelopeApp(parsed: unknown): string | null {
 
 type UnwrappedChatText = {
   body: string;
+  hubImages: QortalHubImageRef[];
   machineApp: string | null;
   reaction: ChatReaction | null;
   repliedTo: string | null;
@@ -132,6 +596,7 @@ type UnwrappedChatText = {
 
 function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
   let body = value;
+  let hubImages: QortalHubImageRef[] = [];
   let machineApp: string | null = null;
   let reaction: ChatReaction | null = null;
   let repliedTo: string | null = null;
@@ -170,13 +635,15 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
       type?: unknown;
       version?: unknown;
       messageText?: unknown;
+      images?: unknown;
     };
 
     // Qortal Hub v3 messages carry a Tiptap document instead of Chat's small
     // `{ message, repliedTo }` envelope. Decode it here so the same message
     // list renders both Home 1.7/ChibiHub traffic and Home 2 traffic.
-    if (envelope.version === 3 && isPlainObject(envelope.messageText)) {
-      body = extractTiptapText(envelope.messageText).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (envelope.version === 3) {
+      body = extractSafeHubText(envelope.messageText).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      hubImages = getQortalHubImageRefs(envelope.images);
 
       if (typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
         repliedTo = envelope.repliedTo;
@@ -203,7 +670,7 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     }
   }
 
-  return { body, machineApp, reaction, repliedTo };
+  return { body, hubImages, machineApp, reaction, repliedTo };
 }
 
 export function buildChatMessageText(text: string, repliedTo?: string | null) {
@@ -364,7 +831,7 @@ function computeDecodeChatMessage(
   }
 
   try {
-    const { body, machineApp, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
+    const { body, hubImages, machineApp, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
 
     if (reaction) {
       return {
@@ -386,6 +853,7 @@ function computeDecodeChatMessage(
 
     return {
       body,
+      ...(hubImages.length > 0 ? { hubImages } : {}),
       kind: 'text',
       repliedTo,
     };

@@ -282,15 +282,19 @@ export async function getMemberGroups(network: ChatNetwork, address: string, act
   return fetchNodeApiDataFor<GroupData[]>(network, buildMemberGroupsPath(address), 'Member groups');
 }
 
-export async function getAccountNames(address: string, actions?: QdnAction[]) {
+export async function getAccountNamesForNetwork(network: ChatNetwork, address: string, actions?: QdnAction[]) {
   if (hasBridgeAction(actions, 'GET_ACCOUNT_NAMES')) {
-    return qdnRequest<NameSummary[]>({
+    return bridgeRequest<NameSummary[]>(network, {
       action: 'GET_ACCOUNT_NAMES',
       address,
     });
   }
 
-  return fetchNodeApiData<NameSummary[]>(buildAccountNamesPath(address), 'Account names');
+  return fetchNodeApiDataFor<NameSummary[]>(network, buildAccountNamesPath(address), 'Account names');
+}
+
+export async function getAccountNames(address: string, actions?: QdnAction[]) {
+  return getAccountNamesForNetwork('qortium', address, actions);
 }
 
 // Resolve a registered name to its owner address so a direct chat can be opened
@@ -774,16 +778,30 @@ export async function approveGroupJoinRequest(groupId: number, joiner: string) {
   });
 }
 
-// The Home v2 bridge resolves SEND_CHAT_MESSAGE with the bare broadcast
-// result `{ signature, timestamp }` (docs/CHAT_2_0_PLAN.md in qortium-home) —
-// not the accepted/action/result envelope ChatActionResult models for the
-// other chat actions. Read defensively (top-level fields first, falling back
-// to a `result`-wrapped or `transactionSignature` shape) so a caller on an
-// older/legacy bridge still gets a usable signature instead of `undefined`
-// silently breaking optimistic reconciliation.
+// The Home v2 bridge normally resolves SEND_CHAT_MESSAGE with the bare
+// `{ signature, timestamp }` broadcast result, rather than the envelope used
+// by other chat actions. Read defensively for legacy envelopes too. A signed
+// failure is outcome-unknown: legacy Home can catch a timeout after the node
+// accepted the transaction, so retain its signature for reconciliation.
+export class ChatSendRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChatSendRejectedError';
+  }
+}
+
+export function isChatSendRejectedError(error: unknown): error is ChatSendRejectedError {
+  return error instanceof ChatSendRejectedError;
+}
+
 function normalizeChatSendResult(value: unknown): ChatSendResult {
   const record = (value ?? {}) as Record<string, unknown>;
   const nestedResult = (record.result ?? {}) as Record<string, unknown>;
+  const errorType =
+    (typeof record.errorType === 'string' && record.errorType) ||
+    (typeof nestedResult.errorType === 'string' && nestedResult.errorType) ||
+    '';
+
   const signature =
     (typeof record.signature === 'string' && record.signature) ||
     (typeof record.transactionSignature === 'string' && record.transactionSignature) ||
@@ -793,9 +811,36 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
     (typeof record.timestamp === 'number' && record.timestamp) ||
     (typeof nestedResult.timestamp === 'number' && nestedResult.timestamp) ||
     Date.now();
+  const detail =
+    (typeof record.error === 'string' && record.error) ||
+    (typeof nestedResult.error === 'string' && nestedResult.error) ||
+    errorType ||
+    'Chat send outcome is unknown.';
+  const canceled = record.canceled === true || nestedResult.canceled === true;
+  const reason =
+    (typeof record.reason === 'string' && record.reason) ||
+    (typeof nestedResult.reason === 'string' && nestedResult.reason) ||
+    '';
+  const isExplicitFailure = record.accepted === false || nestedResult.accepted === false || !!errorType;
+  const isDefinitelyPreBroadcast =
+    errorType === 'VALIDATION_FAILED' || (canceled && reason === 'USER_CANCELLED');
+
+  if (isExplicitFailure && isDefinitelyPreBroadcast) {
+    throw new ChatSendRejectedError(detail.slice(0, 200));
+  }
 
   if (!signature) {
-    throw new Error('Chat send did not return a transaction signature.');
+    throw new Error(isExplicitFailure ? detail.slice(0, 200) : 'Chat send did not return a transaction signature.');
+  }
+
+  if (isExplicitFailure) {
+    return {
+      error: detail.slice(0, 200),
+      errorType: errorType || undefined,
+      outcome: 'ambiguous',
+      signature,
+      timestamp,
+    };
   }
 
   return { signature, timestamp };

@@ -1706,6 +1706,19 @@ samp,
   min-width: 0;
 }
 
+.chat-pane__group-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  color: var(--qc-color-avatar-text);
+  font-size: var(--qc-text-small);
+  font-weight: 750;
+  background: var(--qc-color-avatar);
+  border-radius: 12px;
+}
+
 .chat-pane__context {
   display: flex;
   flex-wrap: wrap;
@@ -2402,11 +2415,10 @@ button.message__reply-preview:focus-visible {
   line-height: var(--qc-line-small);
 }
 
-/* A still-local optimistic echo (see pendingSends.ts) reads as visibly
-   provisional until it is confirmed or fails — same intent as the
-   .tx-status pending/failed treatment above, scaled down for a chat bubble. */
+/* A still-local optimistic echo reads as provisional without lowering the
+   contrast of its message, timestamp, or accessible status text. */
 .message--sending {
-  opacity: 0.7;
+  border-style: dashed;
 }
 
 .message__send-status {
@@ -2420,6 +2432,8 @@ button.message__reply-preview:focus-visible {
   line-height: var(--qc-line-small);
 }
 
+.message__send-status--pending::before,
+.message__send-status--broadcast::before,
 .message__send-status--sending::before {
   content: '';
   display: inline-block;
@@ -2430,8 +2444,23 @@ button.message__reply-preview:focus-visible {
   border-radius: 50%;
 }
 
+.message__send-status--confirmed {
+  color: var(--qc-color-transaction-confirmed);
+}
+
+.message__send-status--ambiguous,
+.message__send-status--expired {
+  color: var(--qc-color-warning);
+}
+
+.message__send-status--rejected,
 .message__send-status--failed {
   color: var(--qc-color-transaction-failed);
+}
+
+.message__send-error {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
 }
 
 .message__send-status button {
@@ -2891,12 +2920,32 @@ button.message__reply-preview:focus-visible,
 }
 
 .message__web-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: none;
+  border: 0;
   color: var(--qc-color-link);
   cursor: copy;
+  font: inherit;
   font-weight: 600;
+  text-align: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 0.16em;
+}
+
+.message__app-link--copy-only {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: copy;
+  font: inherit;
+  text-align: inherit;
 }
 
 .message__web-link:hover,
@@ -2938,6 +2987,52 @@ button.message__reply-preview:focus-visible,
   font-size: 0.92em;
   line-height: 1.45;
   white-space: inherit;
+}
+
+.message__resource-cards {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.message__resource-public-label {
+  align-self: center;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  font-weight: 700;
+}
+
+.message__resource-card {
+  display: grid;
+  gap: 2px;
+  max-width: min(460px, 100%);
+  padding: 8px 10px;
+  overflow: hidden;
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border-subtle);
+  border-inline-start: 3px solid var(--qc-color-accent);
+  border-radius: var(--qc-radius-sm);
+}
+
+.message__resource-card strong,
+.message__resource-card span,
+.message__resource-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message__resource-card span,
+.message__resource-card small {
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+}
+
+.message__resource-card p {
+  margin: 3px 0 0;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-small);
 }
 
 .message__image-previews {
@@ -3306,6 +3401,7 @@ button.message__reply-preview:focus-visible,
 :root[data-ui='modern'] .message__reaction-details,
 :root[data-ui='modern'] .message__reaction-picker,
 :root[data-ui='modern'] .message__image-preview,
+:root[data-ui='modern'] .message__resource-card,
 :root[data-ui='modern'] .message__code-block,
 :root[data-ui='modern'] .empty,
 :root[data-ui='modern'] .skeleton--row {
@@ -4051,6 +4147,7 @@ button.message__reply-preview:focus-visible,
      taller tap area on touch. 34px keeps message rows readable while clearing
      WCAG 2.5.8's 24px minimum with margin. */
   .message__actions button,
+  .message__send-status button,
   .message__time {
     min-height: 34px;
   }
@@ -4326,6 +4423,7 @@ button.message__reply-preview:focus-visible,
 :root[data-ui='fun'] .message__reaction-details,
 :root[data-ui='fun'] .message__reaction-picker,
 :root[data-ui='fun'] .message__image-preview,
+:root[data-ui='fun'] .message__resource-card,
 :root[data-ui='fun'] .message__code-block {
   border: 2px solid var(--qc-fun-outline);
   border-radius: var(--qc-radius-sm);

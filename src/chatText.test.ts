@@ -18,6 +18,13 @@ function base64(value: string) {
   return btoa(String.fromCharCode(...bytes));
 }
 
+function decodeHubText(messageText: unknown) {
+  return decodeChatMessage({
+    data: encodeBase64(JSON.stringify({ messageText, version: 3 })),
+    isText: true,
+  }).body;
+}
+
 describe('encodeBase64', () => {
   it('round-trips through decodeChatMessage identically to a server-encoded message', () => {
     const text = 'a message with unicode: café 🎉';
@@ -340,6 +347,164 @@ describe('machine messages', () => {
       kind: 'text',
       repliedTo: 'reply-sig',
     });
+  });
+
+  it('preserves validated Qortal Hub image descriptors', () => {
+    const decoded = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          images: [
+            { identifier: 'img-id', name: 'QuickMythril', service: 'image', timestamp: 1783403484577 },
+            { identifier: '../unsafe', name: 'QuickMythril', service: 'IMAGE' },
+          ],
+          messageText: null,
+          version: 3,
+        }),
+      ),
+      encoding: 'BASE64',
+      isEncrypted: false,
+      isText: true,
+    });
+
+    expect(decoded).toEqual({
+      body: '',
+      hubImages: [
+        { identifier: 'img-id', name: 'QuickMythril', service: 'IMAGE', timestamp: 1783403484577 },
+      ],
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('reduces Qortal Hub plain-string and HTML messageText variants to safe text', () => {
+    const plain = decodeChatMessage({
+      data: encodeBase64(JSON.stringify({ messageText: 'plain Hub text', version: 3 })),
+      isText: true,
+    });
+    const html = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          messageText:
+            '<p>Hello &amp; welcome<br><a href="qortal://APP/Q-Tube/default">Q-Tube</a></p><script>alert(1)</script><p>Done</p>',
+          version: 3,
+        }),
+      ),
+      isText: true,
+    });
+
+    expect(plain.body).toBe('plain Hub text');
+    expect(html.body).toBe('Hello & welcome\nQ-Tube (qortal://APP/Q-Tube/default)\nDone');
+    expect(html.body).not.toContain('<');
+    expect(html.body).not.toContain('alert');
+  });
+
+  it('discards nested and overlapping dangerous HTML contents', () => {
+    expect(
+      decodeHubText(
+        '<div>One<!-- <script>comment payload</script> --><p>Two</p></div>' +
+          '<script>hidden<script>nested</script>tail</script>' +
+          '<style>.secret{display:block}</style>' +
+          '<template><p>template payload</p></template><p>Done</p>',
+      ),
+    ).toBe('OneTwo\n\nDone');
+
+    // Closing tags in an adversarial order must not release text while any
+    // discarded-content element remains open.
+    expect(
+      decodeHubText('<script>one<style>two</script>three</style><p>visible</p>'),
+    ).toBe('visible');
+    expect(decodeHubText('<p>keep</p><script>drop<p>and this too')).toBe('keep');
+    expect(decodeHubText(`${'<b>'.repeat(256)}text${'</b>'.repeat(256)}`)).toBe('text');
+  });
+
+  it('handles repeated and malformed comments without exposing their contents', () => {
+    expect(decodeHubText('Before<!-- one --><!-- <b>two</b> -->After')).toBe('BeforeAfter');
+    expect(decodeHubText(`${'<!-- hidden -->'.repeat(128)}visible`)).toBe('visible');
+    expect(decodeHubText('Before<!-- unterminated <p>drop</p><script>drop</script>')).toBe('Before');
+  });
+
+  it('tokenizes malformed text and quoted tag delimiters without reparsing output', () => {
+    expect(
+      decodeHubText(
+        '2 < 3 <b>bold</b> <a title="1 > 0" href="qortal://APP/Test/default"><em>Go</em></a>' +
+          ' <script data-value=">">hidden</script> End',
+      ),
+    ).toBe('2 < 3 bold Go (qortal://APP/Test/default)  End');
+
+    // Entity-decoded markup is message text, not a second HTML parsing pass.
+    expect(decodeHubText('&lt;script&gt;visible&lt;/script&gt; &amp;lt;b&amp;gt;')).toBe(
+      '<script>visible</script> &lt;b&gt;',
+    );
+    expect(decodeHubText('&amp;'.repeat(128))).toBe('&'.repeat(128));
+  });
+
+  it('extracts only validated links from quoted, unquoted, and entity-encoded href values', () => {
+    expect(
+      decodeHubText(
+        '<a href="qortal&#58;//APP/Q-Tube/default?x=1&amp;y=2">Q&amp;A</a> ' +
+          '<a href=qdn://DOCUMENT/Alice/notes>Notes</a> ' +
+          '<a href="javascript:alert(1)">Unsafe</a> ' +
+          '<a href="https://example.com/path">https://example.com/path</a>',
+      ),
+    ).toBe(
+      'Q&A (qortal://APP/Q-Tube/default?x=1&y=2) ' +
+        'Notes (qdn://DOCUMENT/Alice/notes) Unsafe https://example.com/path',
+    );
+  });
+
+  it('handles repeated and overlapping anchors deterministically', () => {
+    expect(
+      decodeHubText(
+        '<a href="qortal://APP/A/default">Outer ' +
+          '<a href="qortal://APP/B/default">Inner</a> tail</a>' +
+          '<a href="home://apps"></a>',
+      ),
+    ).toBe(
+      'Outer (qortal://APP/A/default)Inner (qortal://APP/B/default) tailhome://apps',
+    );
+  });
+
+  it('preserves safe Tiptap link marks as plain link text', () => {
+    const decoded = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          messageText: {
+            content: [
+              {
+                content: [
+                  {
+                    marks: [{ attrs: { href: 'qdn://DOCUMENT/Alice/notes' }, type: 'link' }],
+                    text: 'Notes',
+                    type: 'text',
+                  },
+                ],
+                type: 'paragraph',
+              },
+            ],
+            type: 'doc',
+          },
+          version: 3,
+        }),
+      ),
+      isText: true,
+    });
+
+    expect(decoded.body).toBe('Notes (qdn://DOCUMENT/Alice/notes)');
+  });
+
+  it('accepts the observed JSON-string form of Hub image arrays', () => {
+    const decoded = decodeChatMessage({
+      data: encodeBase64(
+        JSON.stringify({
+          images: JSON.stringify([{ identifier: 'img-id', name: 'Alice', service: 'IMAGE' }]),
+          messageText: '',
+          version: 3,
+        }),
+      ),
+      isText: true,
+    });
+
+    expect(decoded.hubImages).toEqual([{ identifier: 'img-id', name: 'Alice', service: 'IMAGE' }]);
   });
 
   it('keeps a human-pasted flat JSON object with an app key visible', () => {
