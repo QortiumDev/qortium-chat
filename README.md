@@ -65,7 +65,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 1.4.11, where the `1.4` prefix declares the minimum Qortium platform
+version is 1.4.12, where the `1.4` prefix declares the minimum Qortium platform
 level the app is built against and the last number is the app's own release
 counter. The build emits a `qortium-app.json` manifest (see `vite.config.ts`)
 that Qortium Home reads from the published root to show the compatibility
