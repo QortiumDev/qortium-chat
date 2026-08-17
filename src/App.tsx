@@ -62,6 +62,7 @@ import {
   isHiddenChatMessage,
 } from './chatText';
 import {
+  canReviseMessageThread,
   getLatestActivityMessageTimestamp,
   getMessageKey,
   sortMessagesByTimestamp,
@@ -4316,6 +4317,12 @@ export default function App() {
         return;
       }
 
+      if (!canReviseMessageThread(thread, pendingOwnerAddress)) {
+        setDeleteTarget(null);
+        setWriteError(t('status.loadingError.selectedAccount'));
+        return;
+      }
+
       // Same shape as an edit: a revision over the original's signature —
       // just with an empty body (the reply target is preserved so the
       // tombstone stays threaded).
@@ -4632,7 +4639,7 @@ export default function App() {
   }
 
   function startEdit(thread: MessageThread) {
-    if (!thread.original.signature) {
+    if (!canReviseMessageThread(thread, selfAddress)) {
       return;
     }
 
@@ -4692,6 +4699,11 @@ export default function App() {
         !pendingOwnerAddress ||
         !isCurrentWritablePendingTarget(target, pendingOwnerAddress)
       ) {
+        return;
+      }
+
+      if (context?.kind === 'edit' && !canReviseMessageThread(context.thread, pendingOwnerAddress)) {
+        setWriteError(t('status.loadingError.selectedAccount'));
         return;
       }
 
@@ -7902,6 +7914,8 @@ export default function App() {
             }
             network={selectedChat?.network ?? (selectedChat ? 'qortium' : undefined)}
             onBack={showChatList}
+            onOpenAvatar={setAvatarLightboxImage}
+            openAvatarLabel={t('action.openAvatarImage')}
             title={selectedChatTitle}
           />
 

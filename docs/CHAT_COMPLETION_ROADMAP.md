@@ -100,8 +100,9 @@ private plaintext merely to reconstruct an optimistic send.
 
 The current Qortium avatar contract is a mutable explicit
 `{service,name,identifier}` pointer resolved to the latest revision. Older issue
-text describing signature-lifetime avatar caching is stale and must be corrected
-before implementation.
+text describing signature-lifetime avatar caching is stale. Chat now consumes
+Home's pointer-aware account/group actions with bounded validation and owns only
+its app-specific target/cache policy; avatar authoring remains in Groups/Home.
 
 ### 3. Network-aware public embeds
 
@@ -128,8 +129,11 @@ before implementation.
 Extract the network-qualified conversation, capability, rail, header, composer,
 and resource models before adding another full protocol path. Close issues whose
 current behavior is already implemented (#29 membership-first navigation and
-#30 member Direct/Mention actions), retain #38 for evidence-based revision
-identity investigation, and implement #31 and #55 under the corrected contracts.
+#30 member Direct/Mention actions). Issue #38 is resolved without weakening its
+sender boundary by rejecting stale-owner edit/delete dispatches and coalescing
+same-sender orphan revisions when the retained history window no longer includes
+their root. Issue #55's Chat display side is complete under the corrected pointer
+contract; shared authoring remains tracked by the companion Groups issue.
 
 ## Required bridge contract
 
@@ -304,6 +308,9 @@ network-scoped identity/avatar caches, and network-aware bounded resource
 rendering. The immediate follow-up keeps the same bridge surface while splitting
 the conversation rail, header, and composer into presentation modules and
 handling Core's named `ALREADY_GROUP_MEMBER` outcome as a membership refresh.
+This Chat-only follow-up closes the remaining revision-window duplication and
+stale-owner write gap, and makes a loaded selected-group avatar openable in the
+existing bounded lightbox.
 
 ### Phase 2 — small bridge parity tranche
 

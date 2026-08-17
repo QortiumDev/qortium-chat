@@ -15,6 +15,8 @@ export function ChatPaneHeader({
   isClosed = false,
   network,
   onBack,
+  onOpenAvatar,
+  openAvatarLabel,
   title,
 }: {
   actionHint?: string | null;
@@ -27,6 +29,8 @@ export function ChatPaneHeader({
   isClosed?: boolean;
   network?: ChatNetwork;
   onBack: () => void;
+  onOpenAvatar?: (image: { name: string | null; src: string }) => void;
+  openAvatarLabel?: string;
   title: string;
 }) {
   return (
@@ -46,6 +50,8 @@ export function ChatPaneHeader({
             className="chat-pane__group-avatar"
             fallback={avatar.fallback}
             name={avatar.name}
+            onOpen={onOpenAvatar}
+            openLabel={openAvatarLabel}
             src={avatar.src}
           />
         ) : null}

@@ -26,6 +26,25 @@ export type BuildMessageThreadsOptions = {
   includeDeleted?: boolean;
 };
 
+/**
+ * Revisions are only valid when the currently selected chain identity still
+ * owns the loaded root message. A referenced row can itself be an orphaned
+ * revision whose root fell outside the retained window, so it must not become
+ * a new editable root merely because it is the row currently being rendered.
+ */
+export function canReviseMessageThread(thread: MessageThread, currentSender: string | null) {
+  return (
+    !!currentSender &&
+    hasLoadedMessageThreadRoot(thread) &&
+    thread.original.sender === currentSender
+  );
+}
+
+/** A revision row is not a safe stand-in for its missing root transaction. */
+export function hasLoadedMessageThreadRoot(thread: MessageThread) {
+  return !!thread.original.signature && !thread.original.chatReference;
+}
+
 /** An accepted empty-body revision is the deletion marker for a message thread. */
 export function isDeletedMessageThread(thread: MessageThread) {
   if (thread.revisions.length === 0) {
@@ -72,6 +91,7 @@ export function buildMessageThreads(
 ): MessageThread[] {
   const originalsBySignature = new Map<string, ChatMessage>();
   const revisionsByReference = new Map<string, ChatMessage[]>();
+  const orphanRevisionsByReferenceAndSender = new Map<string, Map<string, ChatMessage[]>>();
 
   for (const message of messages) {
     if (isHiddenChatMessage(message)) {
@@ -92,6 +112,19 @@ export function buildMessageThreads(
 
     revisions.push(message);
     revisionsByReference.set(message.chatReference, revisions);
+
+    // When the root has aged out of the node's retained/page window, keep a
+    // visible row but coalesce that sender's successive revisions. Different
+    // senders remain separate: sender equality is the authorization boundary,
+    // not merely a presentation hint.
+    if (!originalsBySignature.has(message.chatReference)) {
+      const bySender = orphanRevisionsByReferenceAndSender.get(message.chatReference) ?? new Map();
+      const orphanRevisions = bySender.get(message.sender) ?? [];
+
+      orphanRevisions.push(message);
+      bySender.set(message.sender, orphanRevisions);
+      orphanRevisionsByReferenceAndSender.set(message.chatReference, bySender);
+    }
   }
 
   const threads: MessageThread[] = [];
@@ -106,6 +139,24 @@ export function buildMessageThreads(
       : undefined;
 
     if (referencedOriginal?.sender === message.sender) {
+      continue;
+    }
+
+    if (message.chatReference && !referencedOriginal) {
+      const orphanRevisions = sortMessagesByTimestamp(
+        orphanRevisionsByReferenceAndSender.get(message.chatReference)?.get(message.sender) ?? [message],
+      );
+      const orphanAnchor = orphanRevisions[0];
+
+      if (message !== orphanAnchor) {
+        continue;
+      }
+
+      threads.push({
+        latest: orphanRevisions[orphanRevisions.length - 1],
+        original: orphanAnchor,
+        revisions: orphanRevisions.slice(1),
+      });
       continue;
     }
 
