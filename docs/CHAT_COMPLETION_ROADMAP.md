@@ -76,8 +76,11 @@ overloaded onto the legacy Qortium or Qortal CHAT actions.
 The same tranche should normalize the send lifecycle on both chains:
 `pending -> broadcast -> confirmed`, with explicit rejected/expired states,
 stable signature-based reconciliation, bounded retry, and duplicate prevention.
-Closing/reopening Chat, switching nodes, or receiving a delayed history result
-must not turn one user intent into two posts.
+Within one Chat session, switching chats or accounts and receiving a delayed
+history result must not turn one user intent into two posts. Safe duplicate
+prevention across a full close/reopen additionally requires a durable,
+privacy-preserving Home receipt or idempotency contract; Chat must not persist
+private plaintext merely to reconstruct an optimistic send.
 
 ### 2. Network-scoped identity and avatars
 
@@ -294,7 +297,9 @@ targets the already released Home 1.7 action surface and requires no Home change
 
 Preserve `chatReference` through every Home bridge, add capability discovery,
 Home 2 group-avatar reads, network-aware viewer/stream/save actions, and portable
-join/leave basics. Each mutation needs its own advertised capability, validated
+join/leave basics. Add the durable broadcast receipt/idempotency contract needed
+to reconcile an accepted send after Chat closes and reopens. Each mutation needs
+its own advertised capability, validated
 serializer or public unsigned builder, local signing/attestation, fee and proof
 rules, action-specific approval, freshness checks, and broadcast tests. Enable
 Qortal edits and reactions only after Hub vectors pass.
