@@ -87,6 +87,7 @@ import {
   mergeOptimisticMessages,
   prunePendingRevisions,
   prunePendingSends,
+  retainPendingForNetworkAccount,
   resolvePendingRevision,
   resolvePendingSend,
   retryPendingRevision,
@@ -1594,6 +1595,7 @@ export default function App() {
   // Live mirror of the account address so storage writes update the visible state
   // only while that account is still selected (avoids cross-account contamination).
   const currentAccountAddressRef = useRef<string | null>(account?.address ?? null);
+  const currentQortalAccountAddressRef = useRef<string | null>(qortalAccount?.address ?? null);
   // Set once the user explicitly picks a chat, so a late-arriving account does not
   // restore over their choice. Reset per account so each account restores once.
   const userSelectedChatRef = useRef(false);
@@ -1603,6 +1605,7 @@ export default function App() {
   selectedChatKeyRef.current = selectedChatKey;
   hasSelectedChatRef.current = selectedChat !== null;
   currentAccountAddressRef.current = account?.address ?? null;
+  currentQortalAccountAddressRef.current = qortalAccount?.address ?? null;
   hasStackedDialogRef.current =
     accountInfoTarget !== null || avatarLightboxImage !== null || deleteTarget !== null;
   const groupActivityById = useMemo(() => {
@@ -2009,15 +2012,17 @@ export default function App() {
   // or reaction from another chat must not bleed into this one. Reconciliation
   // itself (dropping an entry once its signature is confirmed) is the pure
   // mergeOptimisticMessages / prunePendingSends pair in pendingSends.ts.
+  const selectedPendingAccountAddress =
+    selectedChat?.network === 'qortal' ? qortalAccount?.address : account?.address;
   const pendingSendsForSelectedChat = useMemo(
     () =>
-      selectedChatKey && account
+      selectedChatKey && selectedPendingAccountAddress
         ? pendingSends.filter(
             (entry) =>
-              entry.accountAddress === account.address && entry.chatKey === selectedChatKey,
+              entry.accountAddress === selectedPendingAccountAddress && entry.chatKey === selectedChatKey,
           )
         : emptyPendingSends,
-    [account?.address, pendingSends, selectedChatKey],
+    [pendingSends, selectedChatKey, selectedPendingAccountAddress],
   );
   const pendingSendByLocalId = useMemo(
     () => new Map(pendingSendsForSelectedChat.map((entry) => [entry.localId, entry])),
@@ -2030,12 +2035,12 @@ export default function App() {
   const pendingRevisionBySignature = useMemo(
     () =>
       indexPendingRevisionsByTarget(
-        account
-          ? pendingRevisions.filter((entry) => entry.accountAddress === account.address)
+        selectedPendingAccountAddress
+          ? pendingRevisions.filter((entry) => entry.accountAddress === selectedPendingAccountAddress)
           : [],
         selectedChatKey,
       ),
-    [account?.address, pendingRevisions, selectedChatKey],
+    [pendingRevisions, selectedChatKey, selectedPendingAccountAddress],
   );
   // Drop a pending send/revision once its resolved signature actually shows up
   // in a fetched/live message — regardless of which path delivered it (the
@@ -2778,6 +2783,10 @@ export default function App() {
     const requestId = qortalAccountRefreshGuardRef.current.begin();
 
     qortalActiveChatsRequestGuardRef.current.begin();
+    currentQortalAccountAddressRef.current = null;
+    updatePendingSends((current) => retainPendingForNetworkAccount(current, 'qortal', null));
+    updatePendingRevisions((current) => retainPendingForNetworkAccount(current, 'qortal', null));
+    setReactionPendingKey('');
 
     // A selected-account event means the old chain identity is no longer safe
     // to use. Clear it synchronously so the composer cannot send with the old
@@ -3637,6 +3646,18 @@ export default function App() {
     );
   }
 
+  function getCurrentPendingOwnerAddress(target: PendingSendTarget) {
+    return (target.network ?? 'qortium') === 'qortal'
+      ? currentQortalAccountAddressRef.current
+      : currentAccountAddressRef.current;
+  }
+
+  function isCurrentWritablePendingTarget(target: PendingSendTarget, accountAddress: string) {
+    return (target.network ?? 'qortium') === 'qortal'
+      ? currentQortalAccountAddressRef.current === accountAddress
+      : isCurrentWritableAccount(accountAddress);
+  }
+
   // The actual network round trip (local MemoryPoW + broadcast — several
   // seconds) for a new message or reaction, run detached from the submit
   // handler so composing the next message is never blocked on it. Shared by
@@ -3654,10 +3675,7 @@ export default function App() {
       return;
     }
 
-    if (
-      entry.accountAddress !== selectedAccount.address ||
-      !isCurrentWritableAccount(entry.accountAddress)
-    ) {
+    if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
       updatePendingSends((current) =>
         current.filter((candidate) => candidate.localId !== localId),
       );
@@ -3669,7 +3687,7 @@ export default function App() {
     try {
       const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
 
-      if (!isCurrentWritableAccount(entry.accountAddress)) {
+      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3696,7 +3714,7 @@ export default function App() {
         void loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
       }
     } catch (error) {
-      if (!isCurrentWritableAccount(entry.accountAddress)) {
+      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3732,10 +3750,7 @@ export default function App() {
       return;
     }
 
-    if (
-      entry.accountAddress !== selectedAccount.address ||
-      !isCurrentWritableAccount(entry.accountAddress)
-    ) {
+    if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
       updatePendingRevisions((current) =>
         current.filter((candidate) => candidate.localId !== localId),
       );
@@ -3746,7 +3761,7 @@ export default function App() {
     try {
       const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
 
-      if (!isCurrentWritableAccount(entry.accountAddress)) {
+      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3768,7 +3783,7 @@ export default function App() {
         void loadMessages(chat, actions, { accountUnlocked: selectedAccount.isUnlocked, quiet: true });
       }
     } catch (error) {
-      if (!isCurrentWritableAccount(entry.accountAddress)) {
+      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3793,7 +3808,8 @@ export default function App() {
     if (
       !chat ||
       !entry ||
-      entry.accountAddress !== account?.address ||
+      entry.chatKey !== getSelectedChatKey(chat) ||
+      !isCurrentWritablePendingTarget(entry.target, entry.accountAddress) ||
       !canRetryPendingDelivery(entry.delivery)
     ) {
       return;
@@ -3802,11 +3818,11 @@ export default function App() {
     void (async () => {
       const selectedAccount = await ensureSelectedAccountUnlocked();
 
-      if (!selectedAccount || !isCurrentWritableAccount(selectedAccount.address)) {
+      if (!selectedAccount) {
         return;
       }
 
-      if (!isCurrentWritableAccount(entry.accountAddress)) {
+      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3828,7 +3844,8 @@ export default function App() {
     if (
       !chat ||
       !entry ||
-      entry.accountAddress !== account?.address ||
+      entry.chatKey !== getSelectedChatKey(chat) ||
+      !isCurrentWritablePendingTarget(entry.target, entry.accountAddress) ||
       !canRetryPendingDelivery(entry.delivery)
     ) {
       return;
@@ -3837,11 +3854,11 @@ export default function App() {
     void (async () => {
       const selectedAccount = await ensureSelectedAccountUnlocked();
 
-      if (!selectedAccount || !isCurrentWritableAccount(selectedAccount.address)) {
+      if (!selectedAccount) {
         return;
       }
 
-      if (!isCurrentWritableAccount(entry.accountAddress)) {
+      if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         return;
       }
 
@@ -3870,8 +3887,14 @@ export default function App() {
 
     try {
       const selectedAccount = await ensureSelectedAccountUnlocked();
+      const target = pendingSendTargetFor(chat);
+      const pendingOwnerAddress = getCurrentPendingOwnerAddress(target);
 
-      if (!selectedAccount || !isCurrentWritableAccount(selectedAccount.address)) {
+      if (
+        !selectedAccount ||
+        !pendingOwnerAddress ||
+        !isCurrentWritablePendingTarget(target, pendingOwnerAddress)
+      ) {
         return;
       }
 
@@ -3886,18 +3909,18 @@ export default function App() {
         ...current.filter(
           (candidate) =>
             !(
-              candidate.accountAddress === selectedAccount.address &&
+              candidate.accountAddress === pendingOwnerAddress &&
               candidate.chatKey === chatKey &&
               candidate.chatReference === chatReference
             ),
         ),
         createPendingRevision({
-          accountAddress: selectedAccount.address,
+          accountAddress: pendingOwnerAddress,
           chatKey,
           chatReference,
           kind: 'delete',
           localId,
-          target: pendingSendTargetFor(chat),
+          target,
           text: message,
         }),
       ]);
@@ -4209,8 +4232,14 @@ export default function App() {
       // says a dual-chain app should do, since both chains sign from the same
       // underlying Home wallet.
       const selectedAccount = await ensureSelectedAccountUnlocked();
+      const target = pendingSendTargetFor(chat);
+      const pendingOwnerAddress = getCurrentPendingOwnerAddress(target);
 
-      if (!selectedAccount || !isCurrentWritableAccount(selectedAccount.address)) {
+      if (
+        !selectedAccount ||
+        !pendingOwnerAddress ||
+        !isCurrentWritablePendingTarget(target, pendingOwnerAddress)
+      ) {
         return;
       }
 
@@ -4234,7 +4263,7 @@ export default function App() {
           service: staged.service,
         });
 
-        if (!isCurrentWritableAccount(selectedAccount.address)) {
+        if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
           return;
         }
 
@@ -4261,7 +4290,6 @@ export default function App() {
       // everything else (new message or reply) gets an optimistic bubble via
       // pendingSends.
       const chatKey = getSelectedChatKey(chat);
-      const target = pendingSendTargetFor(chat);
       const localId = createLocalSendId();
       // The optimistic echo's sender must be THIS chat's chain identity — the
       // real confirmed message that eventually replaces it will carry the
@@ -4269,7 +4297,7 @@ export default function App() {
       // against that same identity (see selfAddress below) — using the
       // Qortium account.address here would make a Qortal message never read
       // as "own" even after it confirms.
-      const senderAddress = chat.network === 'qortal' ? (qortalAccount?.address ?? selectedAccount.address) : selectedAccount.address;
+      const senderAddress = pendingOwnerAddress;
       const senderName = chat.network === 'qortal' ? (qortalAccount?.name ?? null) : selectedAccount.name;
 
       if (context?.kind === 'edit' && chatReference) {
@@ -4277,13 +4305,13 @@ export default function App() {
           ...current.filter(
             (candidate) =>
               !(
-                candidate.accountAddress === selectedAccount.address &&
+                candidate.accountAddress === pendingOwnerAddress &&
                 candidate.chatKey === chatKey &&
                 candidate.chatReference === chatReference
               ),
           ),
           createPendingRevision({
-            accountAddress: selectedAccount.address,
+            accountAddress: pendingOwnerAddress,
             chatKey,
             chatReference,
             kind: 'edit',
@@ -4295,7 +4323,7 @@ export default function App() {
         void runPendingRevision(localId, chat, selectedAccount);
       } else {
         const pendingSend = createPendingSend({
-          accountAddress: selectedAccount.address,
+          accountAddress: pendingOwnerAddress,
           chatKey,
           chatReference,
           kind: 'message',
@@ -4374,15 +4402,21 @@ export default function App() {
 
     try {
       const selectedAccount = await ensureSelectedAccountUnlocked();
+      const target = pendingSendTargetFor(chat);
+      const pendingOwnerAddress = getCurrentPendingOwnerAddress(target);
 
-      if (!selectedAccount || !isCurrentWritableAccount(selectedAccount.address)) {
+      if (
+        !selectedAccount ||
+        !pendingOwnerAddress ||
+        !isCurrentWritablePendingTarget(target, pendingOwnerAddress)
+      ) {
         setReactionPendingKey('');
         return;
       }
 
       const reactionMessage = buildReactionMessageText(reaction, contentState);
       const localId = createLocalSendId();
-      const senderAddress = chat.network === 'qortal' ? (qortalAccount?.address ?? selectedAccount.address) : selectedAccount.address;
+      const senderAddress = pendingOwnerAddress;
       const senderName = chat.network === 'qortal' ? (qortalAccount?.name ?? null) : selectedAccount.name;
 
       // Merged straight into the feed (see mergeOptimisticMessages): the
@@ -4391,7 +4425,7 @@ export default function App() {
       updatePendingSends((current) => [
         ...current,
         createPendingSend({
-          accountAddress: selectedAccount.address,
+          accountAddress: pendingOwnerAddress,
           chatKey: getSelectedChatKey(chat),
           chatReference: targetSignature,
           kind: 'reaction',
@@ -4400,7 +4434,7 @@ export default function App() {
           recipientName: chat.kind === 'direct' ? (chat.direct.name ?? null) : null,
           sender: senderAddress,
           senderName,
-          target: pendingSendTargetFor(chat),
+          target,
           text: reactionMessage,
           timestamp: Date.now(),
           txGroupId: chat.kind === 'group' ? chat.group.groupId : 0,
@@ -5833,6 +5867,18 @@ export default function App() {
     // A new account restores its own last chat, regardless of the prior choice.
     userSelectedChatRef.current = false;
   }, [account?.address]);
+
+  useEffect(() => {
+    const accountAddress = qortalAccount?.address ?? null;
+
+    updatePendingSends((current) =>
+      retainPendingForNetworkAccount(current, 'qortal', accountAddress),
+    );
+    updatePendingRevisions((current) =>
+      retainPendingForNetworkAccount(current, 'qortal', accountAddress),
+    );
+    setReactionPendingKey('');
+  }, [qortalAccount?.address]);
 
   // Persist read watermarks as they advance. Runs after the load effect above, so
   // on an account switch it skips the transitional render (stale maps) once and

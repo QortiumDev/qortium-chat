@@ -55,6 +55,7 @@ export type PendingSendTarget =
 export type PendingSendKind = 'message' | 'reaction';
 
 export type PendingSend = {
+  /** Sender identity on target.network, not necessarily the Qortium wallet address. */
   readonly accountAddress: string;
   readonly chatKey: string;
   readonly chatReference?: string;
@@ -74,6 +75,7 @@ export type PendingSend = {
 export type PendingRevisionKind = 'delete' | 'edit';
 
 export type PendingRevision = {
+  /** Sender identity on target.network, not necessarily the Qortium wallet address. */
   readonly accountAddress: string;
   readonly chatKey: string;
   /** The original message's real signature — the tx-level chatReference this revision targets. */
@@ -87,6 +89,19 @@ export type PendingRevision = {
   readonly target: PendingSendTarget;
   readonly text: string;
 };
+
+/** Keep another network's work intact while retaining only the selected
+ * account's optimistic work for one chain. A null account invalidates all
+ * pending work for that chain during an identity refresh. */
+export function retainPendingForNetworkAccount<
+  T extends { readonly accountAddress: string; readonly target: PendingSendTarget },
+>(pending: readonly T[], network: ChatNetwork, accountAddress: string | null): T[] {
+  return pending.filter(
+    (entry) =>
+      (entry.target.network ?? 'qortium') !== network ||
+      (!!accountAddress && entry.accountAddress === accountAddress),
+  );
+}
 
 // Composite (network, signature) identity: two independent chains draw
 // signatures from unrelated namespaces, so a bare-signature Set/Map risks a

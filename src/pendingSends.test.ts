@@ -15,6 +15,7 @@ import {
   mergeOptimisticMessages,
   prunePendingRevisions,
   prunePendingSends,
+  retainPendingForNetworkAccount,
   resolvePendingRevision,
   resolvePendingSend,
   retryPendingRevision,
@@ -167,6 +168,45 @@ describe('duplicate prevention', () => {
     const secondAccount = pendingMessage({ accountAddress: 'Qaccount-two' });
 
     expect(hasActiveDuplicateSend([firstAccount], secondAccount)).toBe(false);
+  });
+
+  it('scopes Qortal duplicate detection to the Qortal sender identity', () => {
+    const target = { groupId: 7, kind: 'group' as const, network: 'qortal' as const };
+    const firstAccount = pendingMessage({ accountAddress: 'Qortal-one', target });
+    const sameAccount = pendingMessage({ accountAddress: 'Qortal-one', localId: 'pending-2', target });
+    const secondAccount = pendingMessage({ accountAddress: 'Qortal-two', localId: 'pending-3', target });
+
+    expect(hasActiveDuplicateSend([firstAccount], sameAccount)).toBe(true);
+    expect(hasActiveDuplicateSend([firstAccount], secondAccount)).toBe(false);
+  });
+});
+
+describe('network account invalidation', () => {
+  it('drops stale Qortal work without touching Qortium work', () => {
+    const qortium = pendingMessage({ accountAddress: 'Qortium', localId: 'qortium' });
+    const currentQortal = pendingMessage({
+      accountAddress: 'Qortal-current',
+      localId: 'qortal-current',
+      target: { groupId: 7, kind: 'group', network: 'qortal' },
+    });
+    const staleQortal = pendingMessage({
+      accountAddress: 'Qortal-stale',
+      localId: 'qortal-stale',
+      target: { groupId: 7, kind: 'group', network: 'qortal' },
+    });
+
+    expect(
+      retainPendingForNetworkAccount(
+        [qortium, currentQortal, staleQortal],
+        'qortal',
+        'Qortal-current',
+      ).map((entry) => entry.localId),
+    ).toEqual(['qortium', 'qortal-current']);
+    expect(
+      retainPendingForNetworkAccount([qortium, currentQortal], 'qortal', null).map(
+        (entry) => entry.localId,
+      ),
+    ).toEqual(['qortium']);
   });
 });
 
