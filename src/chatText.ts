@@ -124,35 +124,375 @@ function extractTiptapText(node: unknown): string {
   return node.type === 'paragraph' ? `${joined}\n` : joined;
 }
 
-const HTML_BLOCK_END_PATTERN = /<\/(?:blockquote|div|h[1-6]|li|p|pre)>/gi;
-const HTML_BREAK_PATTERN = /<(?:br|hr)\s*\/?>/gi;
-const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-const HTML_DANGEROUS_BLOCK_PATTERN = /<(script|style|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
-const HTML_TAG_PATTERN = /<[^>]*>/g;
-const HTML_ANCHOR_PATTERN = /<a\b[^>]*\bhref\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a\s*>/gi;
-const HTML_ENTITY_PATTERN = /&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|amp|apos|gt|lt|nbsp|quot);/gi;
+const HTML_BLOCK_END_TAGS = new Set(['blockquote', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'p', 'pre']);
+const HTML_BREAK_TAGS = new Set(['br', 'hr']);
+const HTML_DISCARDED_CONTENT_TAGS = new Set(['script', 'style', 'template']);
+
+const HTML_NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: ' ',
+  quot: '"',
+};
+
+function isAsciiAlpha(character: string | undefined) {
+  if (!character) {
+    return false;
+  }
+
+  const code = character.charCodeAt(0);
+
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiDigit(character: string | undefined) {
+  if (!character) {
+    return false;
+  }
+
+  const code = character.charCodeAt(0);
+
+  return code >= 48 && code <= 57;
+}
+
+function isAsciiHexDigit(character: string | undefined) {
+  if (!character) {
+    return false;
+  }
+
+  const code = character.charCodeAt(0);
+
+  return isAsciiDigit(character) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102);
+}
+
+function isHtmlSpace(character: string | undefined) {
+  return character === ' ' || character === '\t' || character === '\n' || character === '\r' || character === '\f';
+}
+
+function decodeHtmlEntityBody(body: string) {
+  if (body[0] !== '#') {
+    return HTML_NAMED_ENTITIES[body.toLowerCase()] ?? null;
+  }
+
+  const isHex = body[1] === 'x' || body[1] === 'X';
+  const digits = body.slice(isHex ? 2 : 1);
+  const maxDigits = isHex ? 6 : 7;
+
+  if (
+    digits.length === 0 ||
+    digits.length > maxDigits ||
+    ![...digits].every(isHex ? isAsciiHexDigit : isAsciiDigit)
+  ) {
+    return null;
+  }
+
+  const codePoint = Number.parseInt(digits, isHex ? 16 : 10);
+
+  return Number.isSafeInteger(codePoint) &&
+    codePoint > 0 &&
+    codePoint <= 0x10ffff &&
+    !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ? String.fromCodePoint(codePoint)
+    : '';
+}
 
 function decodeHtmlEntities(value: string) {
-  const named: Record<string, string> = {
-    amp: '&',
-    apos: "'",
-    gt: '>',
-    lt: '<',
-    nbsp: ' ',
-    quot: '"',
-  };
+  const parts: string[] = [];
+  let cursor = 0;
 
-  return value.replace(HTML_ENTITY_PATTERN, (entity, decimal: string | undefined, hex: string | undefined) => {
-    if (decimal || hex) {
-      const codePoint = Number.parseInt(decimal ?? hex ?? '', decimal ? 10 : 16);
+  while (cursor < value.length) {
+    const ampersand = value.indexOf('&', cursor);
 
-      return Number.isSafeInteger(codePoint) && codePoint > 0 && codePoint <= 0x10ffff
-        ? String.fromCodePoint(codePoint)
-        : '';
+    if (ampersand < 0) {
+      parts.push(value.slice(cursor));
+      break;
     }
 
-    return named[entity.slice(1, -1).toLowerCase()] ?? '';
-  });
+    parts.push(value.slice(cursor, ampersand));
+    const semicolon = value.indexOf(';', ampersand + 1);
+
+    // The supported numeric forms are at most eight characters between `&`
+    // and `;`. A farther semicolon belongs to ordinary message text.
+    if (semicolon < 0 || semicolon - ampersand > 9) {
+      parts.push('&');
+      cursor = ampersand + 1;
+      continue;
+    }
+
+    const decoded = decodeHtmlEntityBody(value.slice(ampersand + 1, semicolon));
+
+    if (decoded === null) {
+      parts.push('&');
+      cursor = ampersand + 1;
+      continue;
+    }
+
+    parts.push(decoded);
+    cursor = semicolon + 1;
+  }
+
+  return parts.join('');
+}
+
+type HtmlTagToken = {
+  attributes: string;
+  closing: boolean;
+  end: number;
+  name: string;
+};
+
+function findHtmlTagEnd(value: string, start: number) {
+  let quote = '';
+
+  for (let cursor = start; cursor < value.length; cursor += 1) {
+    const character = value[cursor];
+
+    if (quote) {
+      if (character === quote) {
+        quote = '';
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '>') {
+      return cursor;
+    }
+  }
+
+  return -1;
+}
+
+function readHtmlTag(value: string, start: number): HtmlTagToken | null | undefined {
+  let cursor = start + 1;
+  let closing = false;
+
+  if (value[cursor] === '/') {
+    closing = true;
+    cursor += 1;
+  }
+
+  // Declarations and processing instructions carry no display text. Comments
+  // are handled separately so an unterminated comment can discard its tail.
+  if (!closing && (value[cursor] === '!' || value[cursor] === '?')) {
+    const end = findHtmlTagEnd(value, cursor + 1);
+
+    return end < 0 ? undefined : { attributes: '', closing: false, end, name: '' };
+  }
+
+  if (!isAsciiAlpha(value[cursor])) {
+    return null;
+  }
+
+  const nameStart = cursor;
+
+  while (
+    isAsciiAlpha(value[cursor]) ||
+    isAsciiDigit(value[cursor]) ||
+    value[cursor] === ':' ||
+    value[cursor] === '-'
+  ) {
+    cursor += 1;
+  }
+
+  const nameEnd = cursor;
+  const end = findHtmlTagEnd(value, cursor);
+
+  return end < 0
+    ? undefined
+    : {
+        attributes: value.slice(nameEnd, end),
+        closing,
+        end,
+        name: value.slice(nameStart, nameEnd).toLowerCase(),
+      };
+}
+
+function getHtmlAttribute(attributes: string, wantedName: string) {
+  let cursor = 0;
+
+  while (cursor < attributes.length) {
+    while (isHtmlSpace(attributes[cursor]) || attributes[cursor] === '/') {
+      cursor += 1;
+    }
+
+    const nameStart = cursor;
+
+    while (
+      cursor < attributes.length &&
+      !isHtmlSpace(attributes[cursor]) &&
+      attributes[cursor] !== '/' &&
+      attributes[cursor] !== '=' &&
+      attributes[cursor] !== '>'
+    ) {
+      cursor += 1;
+    }
+
+    if (cursor === nameStart) {
+      cursor += 1;
+      continue;
+    }
+
+    const name = attributes.slice(nameStart, cursor).toLowerCase();
+
+    while (isHtmlSpace(attributes[cursor])) {
+      cursor += 1;
+    }
+
+    if (attributes[cursor] !== '=') {
+      continue;
+    }
+
+    cursor += 1;
+    while (isHtmlSpace(attributes[cursor])) {
+      cursor += 1;
+    }
+
+    const quote = attributes[cursor] === '"' || attributes[cursor] === "'" ? attributes[cursor] : '';
+
+    if (quote) {
+      cursor += 1;
+    }
+
+    const valueStart = cursor;
+
+    if (quote) {
+      while (cursor < attributes.length && attributes[cursor] !== quote) {
+        cursor += 1;
+      }
+    } else {
+      while (cursor < attributes.length && !isHtmlSpace(attributes[cursor])) {
+        cursor += 1;
+      }
+    }
+
+    const attributeValue = attributes.slice(valueStart, cursor);
+
+    if (quote && attributes[cursor] === quote) {
+      cursor += 1;
+    }
+
+    if (name === wantedName) {
+      return attributeValue;
+    }
+  }
+
+  return null;
+}
+
+function htmlToPlainText(value: string) {
+  const output: string[] = [];
+  const discardedTagDepth = new Map<string, number>();
+  let discardedDepth = 0;
+  let activeAnchor: { address: string | null; label: string[] } | null = null;
+
+  function appendText(text: string) {
+    if (!text || discardedDepth > 0) {
+      return;
+    }
+
+    if (activeAnchor) {
+      activeAnchor.label.push(text);
+    } else {
+      output.push(text);
+    }
+  }
+
+  function closeAnchor() {
+    if (!activeAnchor) {
+      return;
+    }
+
+    const label = activeAnchor.label.join('').trim();
+    const address = activeAnchor.address;
+
+    activeAnchor = null;
+    output.push(address ? (label && !label.includes(address) ? `${label} (${address})` : label || address) : label);
+  }
+
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const tagStart = value.indexOf('<', cursor);
+
+    if (tagStart < 0) {
+      appendText(decodeHtmlEntities(value.slice(cursor)));
+      break;
+    }
+
+    appendText(decodeHtmlEntities(value.slice(cursor, tagStart)));
+
+    if (value.startsWith('<!--', tagStart)) {
+      const commentEnd = value.indexOf('-->', tagStart + 4);
+
+      if (commentEnd < 0) {
+        break;
+      }
+
+      cursor = commentEnd + 3;
+      continue;
+    }
+
+    const tag = readHtmlTag(value, tagStart);
+
+    if (tag === undefined) {
+      // A quote-aware scan found no terminator, so the remaining tail cannot
+      // contain an independent tag. Keep it as inert text and finish in O(n).
+      appendText(decodeHtmlEntities(value.slice(tagStart)));
+      break;
+    }
+
+    if (tag === null) {
+      appendText('<');
+      cursor = tagStart + 1;
+      continue;
+    }
+
+    cursor = tag.end + 1;
+
+    if (HTML_DISCARDED_CONTENT_TAGS.has(tag.name)) {
+      const previousDepth = discardedTagDepth.get(tag.name) ?? 0;
+
+      if (tag.closing) {
+        if (previousDepth > 0) {
+          discardedTagDepth.set(tag.name, previousDepth - 1);
+          discardedDepth -= 1;
+        }
+      } else {
+        discardedTagDepth.set(tag.name, previousDepth + 1);
+        discardedDepth += 1;
+      }
+      continue;
+    }
+
+    if (discardedDepth > 0 || !tag.name) {
+      continue;
+    }
+
+    if (!tag.closing && tag.name === 'a') {
+      // Nested anchors are invalid HTML. Closing the first one here mirrors the
+      // browser parser's effective structure while keeping the tokenizer flat.
+      closeAnchor();
+      const rawAddress = getHtmlAttribute(tag.attributes, 'href');
+
+      activeAnchor = {
+        address: rawAddress === null ? null : getSafeLinkedAddress(decodeHtmlEntities(rawAddress)),
+        label: [],
+      };
+    } else if (tag.closing && tag.name === 'a') {
+      closeAnchor();
+    } else if (!tag.closing && HTML_BREAK_TAGS.has(tag.name)) {
+      appendText('\n');
+    } else if (tag.closing && HTML_BLOCK_END_TAGS.has(tag.name)) {
+      appendText('\n');
+    }
+  }
+
+  closeAnchor();
+  return output.join('');
 }
 
 // Hub history contains messageText as Tiptap JSON, plain strings, and legacy
@@ -163,28 +503,7 @@ function extractSafeHubText(value: unknown) {
     return extractTiptapText(value);
   }
 
-  if (!/<[^>]*>|&(?:#\d+|#x[0-9a-f]+|amp|apos|gt|lt|nbsp|quot);/i.test(value)) {
-    return value;
-  }
-
-  return decodeHtmlEntities(
-    value
-      .replace(HTML_COMMENT_PATTERN, '')
-      .replace(HTML_DANGEROUS_BLOCK_PATTERN, '')
-      .replace(HTML_ANCHOR_PATTERN, (_anchor, _quote: string, rawAddress: string, rawLabel: string) => {
-        const address = getSafeLinkedAddress(decodeHtmlEntities(rawAddress));
-        const label = decodeHtmlEntities(rawLabel.replace(HTML_TAG_PATTERN, '')).trim();
-
-        if (!address) {
-          return label;
-        }
-
-        return label && !label.includes(address) ? `${label} (${address})` : address;
-      })
-      .replace(HTML_BREAK_PATTERN, '\n')
-      .replace(HTML_BLOCK_END_PATTERN, '\n')
-      .replace(HTML_TAG_PATTERN, ''),
-  );
+  return htmlToPlainText(value);
 }
 
 function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
