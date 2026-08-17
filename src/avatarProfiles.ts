@@ -4,6 +4,9 @@ import { hasAction, qdnRequest } from './qdnRequest';
 import type { ChatNetwork, GroupData, NameSummary, QdnAction } from './types';
 
 export const AVATAR_MAX_BYTES = 500 * 1024;
+export const AVATAR_MAX_PIXELS = 1024 * 1024;
+export const AVATAR_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+export const AVATAR_CACHE_MAX_PIXELS = 8 * 1024 * 1024;
 export const AVATAR_PENDING_MAX_ATTEMPTS = 10;
 export const AVATAR_PENDING_MAX_ELAPSED_MS = 5 * 60 * 1000;
 
@@ -37,7 +40,7 @@ type AvatarDescriptor = { identifier: string; name: string; service: string };
 
 export type AccountAvatarFetch =
   | { kind: 'pending'; retryAfterSeconds: number; source: AvatarSource }
-  | { kind: 'ready'; source: AvatarSource; src: string }
+  | { byteLength: number; kind: 'ready'; pixelCount: number; source: AvatarSource; src: string }
   | { kind: 'unavailable' };
 
 export type AvatarPendingRetryState = {
@@ -127,6 +130,85 @@ function getSafeImageContentType(bytes: Uint8Array) {
   return null;
 }
 
+function readUint16LittleEndian(bytes: Uint8Array, offset: number) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readUint32BigEndian(bytes: Uint8Array, offset: number) {
+  return (((bytes[offset] << 24) >>> 0) + (bytes[offset + 1] << 16) + (bytes[offset + 2] << 8) + bytes[offset + 3]) >>> 0;
+}
+
+function readUint32LittleEndian(bytes: Uint8Array, offset: number) {
+  return (bytes[offset] + (bytes[offset + 1] << 8) + (bytes[offset + 2] << 16) + ((bytes[offset + 3] << 24) >>> 0)) >>> 0;
+}
+
+function getJpegDimensions(bytes: Uint8Array) {
+  let offset = 2;
+
+  while (offset + 8 < bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    const marker = bytes[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0xd9) continue;
+    if (marker === 0xda) return null;
+    if (offset + 2 > bytes.length) return null;
+    const length = (bytes[offset] << 8) | bytes[offset + 1];
+    if (length < 2 || offset + length > bytes.length) return null;
+    if (
+      (marker >= 0xc0 && marker <= 0xc3) ||
+      (marker >= 0xc5 && marker <= 0xc7) ||
+      (marker >= 0xc9 && marker <= 0xcb) ||
+      (marker >= 0xcd && marker <= 0xcf)
+    ) {
+      if (length < 7) return null;
+      return {
+        height: (bytes[offset + 3] << 8) | bytes[offset + 4],
+        width: (bytes[offset + 5] << 8) | bytes[offset + 6],
+      };
+    }
+    offset += length;
+  }
+
+  return null;
+}
+
+function getSafeImageDimensions(bytes: Uint8Array, contentType: string) {
+  if (contentType === 'image/png' && bytes.length >= 24) {
+    return { height: readUint32BigEndian(bytes, 20), width: readUint32BigEndian(bytes, 16) };
+  }
+  if (contentType === 'image/gif' && bytes.length >= 10) {
+    return { height: readUint16LittleEndian(bytes, 8), width: readUint16LittleEndian(bytes, 6) };
+  }
+  if (contentType === 'image/bmp' && bytes.length >= 26) {
+    return { height: Math.abs(readUint32LittleEndian(bytes, 22) | 0), width: Math.abs(readUint32LittleEndian(bytes, 18) | 0) };
+  }
+  if (contentType === 'image/jpeg') {
+    return getJpegDimensions(bytes);
+  }
+  if (contentType === 'image/webp' && bytes.length >= 30) {
+    const chunk = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+    if (chunk === 'VP8X') {
+      const width = 1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16);
+      const height = 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16);
+      return { height, width };
+    }
+    if (chunk === 'VP8 ' && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+      return {
+        height: readUint16LittleEndian(bytes, 28) & 0x3fff,
+        width: readUint16LittleEndian(bytes, 26) & 0x3fff,
+      };
+    }
+    if (chunk === 'VP8L' && bytes[20] === 0x2f && bytes.length >= 25) {
+      return {
+        height: 1 + (((bytes[22] >> 6) | (bytes[23] << 2) | (bytes[24] << 10)) & 0x3fff),
+        width: 1 + ((bytes[21] | (bytes[22] << 8)) & 0x3fff),
+      };
+    }
+  }
+
+  return null;
+}
+
 function createAvatarObjectUrl(body: unknown) {
   if (typeof body !== 'string') {
     return null;
@@ -135,11 +217,28 @@ function createAvatarObjectUrl(body: unknown) {
   const bytes = decodeBase64(body);
   const contentType = bytes ? getSafeImageContentType(bytes) : null;
 
-  if (!bytes || !contentType || bytes.byteLength < 1 || bytes.byteLength > AVATAR_MAX_BYTES) {
+  const dimensions = bytes && contentType ? getSafeImageDimensions(bytes, contentType) : null;
+  const pixelCount = dimensions ? dimensions.width * dimensions.height : 0;
+
+  if (
+    !bytes ||
+    !contentType ||
+    !dimensions ||
+    dimensions.width < 1 ||
+    dimensions.height < 1 ||
+    !Number.isSafeInteger(pixelCount) ||
+    pixelCount > AVATAR_MAX_PIXELS ||
+    bytes.byteLength < 1 ||
+    bytes.byteLength > AVATAR_MAX_BYTES
+  ) {
     return null;
   }
 
-  return URL.createObjectURL(new Blob([bytes.buffer], { type: contentType }));
+  return {
+    byteLength: bytes.byteLength,
+    pixelCount,
+    src: URL.createObjectURL(new Blob([bytes.buffer], { type: contentType })),
+  };
 }
 
 function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAvatarFetch {
@@ -166,23 +265,8 @@ function parseAccountAvatar(value: unknown, expectedAddress: string): AccountAva
     return { kind: 'unavailable' };
   }
 
-  const bytes = decodeBase64(value.body);
-  const contentType = bytes ? getSafeImageContentType(bytes) : null;
-
-  if (
-    !contentType ||
-    !bytes ||
-    bytes.byteLength < 1 ||
-    bytes.byteLength > AVATAR_MAX_BYTES
-  ) {
-    return { kind: 'unavailable' };
-  }
-
-  return {
-    kind: 'ready',
-    source,
-    src: URL.createObjectURL(new Blob([bytes.buffer], { type: contentType })),
-  };
+  const avatar = createAvatarObjectUrl(value.body);
+  return avatar ? { kind: 'ready', source, ...avatar } : { kind: 'unavailable' };
 }
 
 async function fetchLegacyNamedThumbnail(
@@ -203,8 +287,8 @@ async function fetchLegacyNamedThumbnail(
         service: 'THUMBNAIL',
       });
       const body = isRecord(response) && response.encoding === 'base64' ? response.body : response;
-      const src = createAvatarObjectUrl(body);
-      const parsed: AccountAvatarFetch = src ? { kind: 'ready', source: 'LEGACY', src } : { kind: 'unavailable' };
+      const avatar = createAvatarObjectUrl(body);
+      const parsed: AccountAvatarFetch = avatar ? { kind: 'ready', source: 'LEGACY', ...avatar } : { kind: 'unavailable' };
 
       if (parsed.kind === 'ready') {
         return parsed;
@@ -277,8 +361,8 @@ function parseGroupAvatar(value: unknown, expectedGroupId: number): AccountAvata
     return { kind: 'pending', retryAfterSeconds: Math.min(Math.max(Math.floor(delay), 1), 30), source };
   }
 
-  const src = value.encoding === 'base64' ? createAvatarObjectUrl(value.body) : null;
-  return src ? { kind: 'ready', source, src } : { kind: 'unavailable' };
+  const avatar = value.encoding === 'base64' ? createAvatarObjectUrl(value.body) : null;
+  return avatar ? { kind: 'ready', source, ...avatar } : { kind: 'unavailable' };
 }
 
 export async function fetchGroupAvatar(
@@ -330,8 +414,8 @@ export async function fetchGroupAvatar(
       service: 'THUMBNAIL',
     });
     const body = isRecord(response) && response.encoding === 'base64' ? response.body : response;
-    const src = createAvatarObjectUrl(body);
-    return src ? { kind: 'ready', source: 'LEGACY', src } : { kind: 'unavailable' };
+    const avatar = createAvatarObjectUrl(body);
+    return avatar ? { kind: 'ready', source: 'LEGACY', ...avatar } : { kind: 'unavailable' };
   } catch {
     return { kind: 'unavailable' };
   }

@@ -15,6 +15,9 @@ import {
 import { qdnRequest } from './qdnRequest';
 import { qortalRequest } from './qortalRequest';
 
+const VALID_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+const VALID_PNG_BYTES = atob(VALID_PNG_BASE64).length;
+
 vi.mock('./qdnRequest', () => ({
   buildNodeWebSocketUrl: (path: string) => `ws://127.0.0.1:24891${path}`,
   hasAction: (actions: string[], ...candidates: string[]) =>
@@ -57,8 +60,8 @@ describe('avatar profile helpers', () => {
 
   it('fetches a Qortal account avatar only from its primary-name convention', async () => {
     qortalRequestMock.mockResolvedValueOnce({
-      body: 'iVBORw0KGgo=',
-      contentLength: 8,
+      body: VALID_PNG_BASE64,
+      contentLength: VALID_PNG_BYTES,
       contentType: 'application/octet-stream',
       encoding: 'base64',
     });
@@ -80,8 +83,8 @@ describe('avatar profile helpers', () => {
 
   it('uses the pointer-aware Qortium group-avatar action', async () => {
     qdnRequestMock.mockResolvedValueOnce({
-      body: 'iVBORw0KGgo=',
-      contentLength: 8,
+      body: VALID_PNG_BASE64,
+      contentLength: VALID_PNG_BYTES,
       contentType: 'image/png',
       descriptor: { identifier: 'qortium-group-avatar-v1-12', name: 'alice', service: 'THUMBNAIL' },
       encoding: 'base64',
@@ -99,8 +102,8 @@ describe('avatar profile helpers', () => {
 
   it('uses the Qortal owner-name group-avatar convention', async () => {
     qortalRequestMock.mockResolvedValueOnce({
-      body: 'iVBORw0KGgo=',
-      contentLength: 8,
+      body: VALID_PNG_BASE64,
+      contentLength: VALID_PNG_BYTES,
       contentType: 'image/png',
       encoding: 'base64',
     });
@@ -131,7 +134,7 @@ describe('avatar profile helpers', () => {
   it('falls back to the established named-thumbnail identifiers on older Home builds', async () => {
     qdnRequestMock
       .mockRejectedValueOnce(new Error('missing avatar'))
-      .mockResolvedValueOnce('iVBORw0KGgo=');
+      .mockResolvedValueOnce(VALID_PNG_BASE64);
 
     await expect(
       fetchAccountAvatar(
@@ -140,7 +143,7 @@ describe('avatar profile helpers', () => {
         ['FETCH_QDN_RESOURCE'],
         'alice',
       ),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       kind: 'ready',
       source: 'LEGACY',
       src: 'blob:mock/image/png',
@@ -157,7 +160,7 @@ describe('avatar profile helpers', () => {
   });
 
   it('sniffs safe legacy image bytes without trusting a declared MIME type', async () => {
-    qdnRequestMock.mockResolvedValueOnce('iVBORw0KGgo=');
+    qdnRequestMock.mockResolvedValueOnce(VALID_PNG_BASE64);
 
     await expect(
       fetchAccountAvatar(
@@ -166,7 +169,7 @@ describe('avatar profile helpers', () => {
         ['FETCH_QDN_RESOURCE'],
         'alice',
       ),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       kind: 'ready',
       source: 'LEGACY',
       src: 'blob:mock/image/png',
@@ -179,15 +182,15 @@ describe('avatar profile helpers', () => {
   ] as const)('creates a safe Blob URL for a ready %s avatar', async (source, descriptor) => {
     qdnRequestMock.mockResolvedValueOnce({
       address: 'Qabc',
-      body: 'iVBORw0KGgo=',
-      contentLength: 8,
+      body: VALID_PNG_BASE64,
+      contentLength: VALID_PNG_BYTES,
       contentType: 'image/png',
       descriptor,
       encoding: 'base64',
       source,
     });
 
-    await expect(fetchAccountAvatar('qortium', 'Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toEqual({
+    await expect(fetchAccountAvatar('qortium', 'Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toMatchObject({
       kind: 'ready', source, src: 'blob:mock/image/png',
     });
     expect(qdnRequestMock).toHaveBeenCalledWith({
@@ -199,8 +202,8 @@ describe('avatar profile helpers', () => {
   it('accepts Android MIME-wrapped base64 avatar bytes', async () => {
     qdnRequestMock.mockResolvedValueOnce({
       address: 'Qabc',
-      body: 'iVBO\r\nRw0K Ggo=\t',
-      contentLength: 8,
+      body: `${VALID_PNG_BASE64.slice(0, 20)}\r\n${VALID_PNG_BASE64.slice(20, 60)} \t${VALID_PNG_BASE64.slice(60)}`,
+      contentLength: VALID_PNG_BYTES,
       contentType: 'image/png',
       descriptor: null,
       encoding: 'base64',
@@ -211,25 +214,45 @@ describe('avatar profile helpers', () => {
       kind: 'ready',
       source: 'LEGACY',
     });
-    expect(createObjectURLMock.mock.calls[0]?.[0]?.size).toBe(8);
+    expect(createObjectURLMock.mock.calls[0]?.[0]?.size).toBe(VALID_PNG_BYTES);
   });
 
   it('trusts image magic bytes over a mismatched declared MIME type', async () => {
     qdnRequestMock.mockResolvedValueOnce({
-      address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/bmp',
+      address: 'Qabc', body: VALID_PNG_BASE64, contentLength: VALID_PNG_BYTES, contentType: 'image/bmp',
       descriptor: { identifier: 'avatar', name: 'alice', service: 'THUMBNAIL' }, encoding: 'base64', source: 'POINTER',
     });
 
     await expect(fetchAccountAvatar('qortium', 'Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toMatchObject({
-      kind: 'ready', src: 'blob:mock/image/png',
+      byteLength: VALID_PNG_BYTES, kind: 'ready', pixelCount: 1, src: 'blob:mock/image/png',
     });
   });
 
+  it('rejects a compressed avatar whose declared pixel dimensions exceed the decode budget', async () => {
+    const bytes = Uint8Array.from(atob(VALID_PNG_BASE64), (character) => character.charCodeAt(0));
+    bytes.set([0, 0, 8, 0, 0, 0, 8, 0], 16);
+    const oversizedDimensions = btoa(String.fromCharCode(...bytes));
+    qdnRequestMock.mockResolvedValueOnce({
+      address: 'Qabc',
+      body: oversizedDimensions,
+      contentLength: bytes.byteLength,
+      contentType: 'image/png',
+      descriptor: null,
+      encoding: 'base64',
+      source: 'LEGACY',
+    });
+
+    await expect(fetchAccountAvatar('qortium', 'Qabc', ['FETCH_ACCOUNT_AVATAR'])).resolves.toEqual({
+      kind: 'unavailable',
+    });
+    expect(createObjectURLMock).not.toHaveBeenCalled();
+  });
+
   it.each([
-    { address: 'Qother', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'LEGACY' },
+    { address: 'Qother', body: VALID_PNG_BASE64, contentLength: VALID_PNG_BYTES, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'LEGACY' },
     { address: 'Qabc', body: 'not base64!', contentLength: 8, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'LEGACY' },
     { address: 'Qabc', body: 'PHN2Zz48L3N2Zz4=', contentLength: 11, contentType: 'image/svg+xml', descriptor: null, encoding: 'base64', source: 'LEGACY' },
-    { address: 'Qabc', body: 'iVBORw0KGgo=', contentLength: 8, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'POINTER' },
+    { address: 'Qabc', body: VALID_PNG_BASE64, contentLength: VALID_PNG_BYTES, contentType: 'image/png', descriptor: null, encoding: 'base64', source: 'POINTER' },
   ])('rejects malformed or unsafe avatar responses', async (response) => {
     qdnRequestMock.mockResolvedValueOnce(response);
 
@@ -240,7 +263,7 @@ describe('avatar profile helpers', () => {
   it('treats contentLength as advisory and validates the decoded bytes', async () => {
     qdnRequestMock.mockResolvedValueOnce({
       address: 'Qabc',
-      body: 'iVBORw0KGgo=',
+      body: VALID_PNG_BASE64,
       contentLength: AVATAR_MAX_BYTES + 1,
       contentType: 'image/png',
       descriptor: null,

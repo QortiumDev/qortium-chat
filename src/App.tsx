@@ -202,6 +202,8 @@ import {
 import {
   fetchAccountAvatar,
   fetchGroupAvatar,
+  AVATAR_CACHE_MAX_BYTES,
+  AVATAR_CACHE_MAX_PIXELS,
   getAvatarProfileKey,
   getGroupAvatarProfileKey,
   getNextAvatarPendingRetry,
@@ -587,6 +589,7 @@ function useAvatarProfiles(
   const avatarObjectUrlsRef = useRef(new Set<string>());
   const profileAvatarObjectUrlsRef = useRef(new Map<string, string>());
   const deferredAvatarObjectUrlsRef = useRef(new Set<string>());
+  const avatarFootprintsRef = useRef(new Map<string, { byteLength: number; pixelCount: number }>());
   // Tracks genuine unmount, distinct from an effect re-run. An in-flight avatar
   // fetch must still commit when the effect merely re-ran (e.g. a new sender
   // changed the address list) as long as its request key is still current.
@@ -616,6 +619,7 @@ function useAvatarProfiles(
 
       deferredAvatarObjectUrlsRef.current.delete(objectUrl);
       avatarObjectUrlsRef.current.delete(objectUrl);
+      avatarFootprintsRef.current.delete(objectUrl);
       revokeAvatarObjectUrl(objectUrl);
     };
 
@@ -726,7 +730,7 @@ function useAvatarProfiles(
       retryStatesRef.current.delete(address);
     };
 
-    const commit = (profile: AvatarProfile) => {
+    const commit = (profile: AvatarProfile, footprint?: { byteLength: number; pixelCount: number }) => {
       const profileKey = getAvatarProfileKey(profile.network, profile.address);
       settlePending(profileKey);
       clearRetry(profileKey);
@@ -738,19 +742,38 @@ function useAvatarProfiles(
 
       const previousObjectUrl = profileAvatarObjectUrlsRef.current.get(profileKey);
 
-      if (previousObjectUrl && previousObjectUrl !== profile.avatarSrc) {
+      let nextAvatarSrc = profile.avatarSrc;
+      if (nextAvatarSrc && nextAvatarSrc !== previousObjectUrl && footprint) {
+        let cachedBytes = 0;
+        let cachedPixels = 0;
+        for (const [src, cached] of avatarFootprintsRef.current) {
+          if (src === previousObjectUrl) continue;
+          cachedBytes += cached.byteLength;
+          cachedPixels += cached.pixelCount;
+        }
+        if (
+          cachedBytes + footprint.byteLength > AVATAR_CACHE_MAX_BYTES ||
+          cachedPixels + footprint.pixelCount > AVATAR_CACHE_MAX_PIXELS
+        ) {
+          revokeAvatarObjectUrl(nextAvatarSrc);
+          nextAvatarSrc = previousObjectUrl ?? null;
+        }
+      }
+
+      if (previousObjectUrl && previousObjectUrl !== nextAvatarSrc) {
         profileAvatarObjectUrlsRef.current.delete(profileKey);
         releaseObjectUrl(previousObjectUrl);
       }
 
-      if (profile.avatarSrc) {
-        profileAvatarObjectUrlsRef.current.set(profileKey, profile.avatarSrc);
-        avatarObjectUrlsRef.current.add(profile.avatarSrc);
+      if (nextAvatarSrc) {
+        profileAvatarObjectUrlsRef.current.set(profileKey, nextAvatarSrc);
+        avatarObjectUrlsRef.current.add(nextAvatarSrc);
+        if (footprint && nextAvatarSrc === profile.avatarSrc) avatarFootprintsRef.current.set(nextAvatarSrc, footprint);
       }
 
       setProfiles((current) => {
         const next = new Map(current);
-        next.set(profileKey, { ...profile, requestKey: requestKeyByAddress.get(profileKey) as string });
+        next.set(profileKey, { ...profile, avatarSrc: nextAvatarSrc, requestKey: requestKeyByAddress.get(profileKey) as string });
         return next;
       });
     };
@@ -843,7 +866,10 @@ function useAvatarProfiles(
         );
 
         if (avatar.kind === 'ready') {
-          commit({ ...profile, avatarSrc: avatar.src });
+          commit(
+            { ...profile, avatarSrc: avatar.src },
+            { byteLength: avatar.byteLength, pixelCount: avatar.pixelCount },
+          );
         } else if (avatar.kind === 'pending') {
           scheduleAvatarRetry(profile, avatar.retryAfterSeconds);
         } else {
@@ -957,6 +983,8 @@ function useGroupAvatarProfiles(
 ) {
   const [profiles, setProfiles] = useState<ReadonlyMap<string, CachedGroupAvatarProfile>>(() => new Map());
   const objectUrlsRef = useRef(new Map<string, string>());
+  const avatarFootprintsRef = useRef(new Map<string, { byteLength: number; pixelCount: number }>());
+  const deferredObjectUrlsRef = useRef(new Set<string>());
   const latestKeysRef = useRef(new Map<string, string>());
   const timersRef = useRef(new Map<string, number>());
   const queueRef = useRef<AvatarTaskQueue | null>(null);
@@ -973,9 +1001,24 @@ function useGroupAvatarProfiles(
     mountedRef.current = false;
     for (const timer of timersRef.current.values()) window.clearTimeout(timer);
     for (const src of objectUrlsRef.current.values()) revokeAvatarObjectUrl(src);
+    for (const src of deferredObjectUrlsRef.current) revokeAvatarObjectUrl(src);
   }, []);
 
   useEffect(() => {
+    const releaseObjectUrl = (src: string) => {
+      if (src === protectedObjectUrl) {
+        deferredObjectUrlsRef.current.add(src);
+        return;
+      }
+      deferredObjectUrlsRef.current.delete(src);
+      avatarFootprintsRef.current.delete(src);
+      revokeAvatarObjectUrl(src);
+    };
+
+    for (const src of deferredObjectUrlsRef.current) {
+      if (src !== protectedObjectUrl) releaseObjectUrl(src);
+    }
+
     const targetByKey = new Map(targets.map((target) => [
       getGroupAvatarProfileKey(target.network, target.group.groupId),
       target,
@@ -989,15 +1032,15 @@ function useGroupAvatarProfiles(
       if (typeof timer === 'number') window.clearTimeout(timer);
       timersRef.current.delete(key);
       const src = objectUrlsRef.current.get(key);
-      if (src && src !== protectedObjectUrl) {
-        revokeAvatarObjectUrl(src);
+      if (src) {
         objectUrlsRef.current.delete(key);
+        releaseObjectUrl(src);
       }
     }
     for (const [key, src] of objectUrlsRef.current) {
-      if (!wanted.has(key) && src !== protectedObjectUrl) {
-        revokeAvatarObjectUrl(src);
+      if (!wanted.has(key)) {
         objectUrlsRef.current.delete(key);
+        releaseObjectUrl(src);
       }
     }
     setProfiles((current) => {
@@ -1036,15 +1079,40 @@ function useGroupAvatarProfiles(
         }
 
         const previous = objectUrlsRef.current.get(key);
-        if (previous && previous !== protectedObjectUrl && (result.kind !== 'ready' || previous !== result.src)) {
-          revokeAvatarObjectUrl(previous);
-          objectUrlsRef.current.delete(key);
+        let nextSrc = result.kind === 'ready' ? result.src : null;
+        if (result.kind === 'ready' && nextSrc !== previous) {
+          let cachedBytes = 0;
+          let cachedPixels = 0;
+          for (const [src, cached] of avatarFootprintsRef.current) {
+            if (src === previous) continue;
+            cachedBytes += cached.byteLength;
+            cachedPixels += cached.pixelCount;
+          }
+          if (
+            cachedBytes + result.byteLength > AVATAR_CACHE_MAX_BYTES ||
+            cachedPixels + result.pixelCount > AVATAR_CACHE_MAX_PIXELS
+          ) {
+            revokeAvatarObjectUrl(nextSrc);
+            nextSrc = previous ?? null;
+          }
         }
-        if (result.kind === 'ready') objectUrlsRef.current.set(key, result.src);
+        if (previous && previous !== nextSrc) {
+          objectUrlsRef.current.delete(key);
+          releaseObjectUrl(previous);
+        }
+        if (nextSrc) {
+          objectUrlsRef.current.set(key, nextSrc);
+          if (result.kind === 'ready' && nextSrc === result.src) {
+            avatarFootprintsRef.current.set(nextSrc, {
+              byteLength: result.byteLength,
+              pixelCount: result.pixelCount,
+            });
+          }
+        }
         setProfiles((current) => {
           const next = new Map(current);
           next.set(key, {
-            avatarSrc: result.kind === 'ready' ? result.src : null,
+            avatarSrc: nextSrc,
             groupId: target.group.groupId,
             network: target.network,
             requestKey,
@@ -2101,7 +2169,7 @@ export default function App() {
   const avatarTargets = useMemo(() => {
     const targets = new Map<string, AvatarTarget>();
     const add = (network: ChatNetwork, address: string | null | undefined) => {
-      if (address && targets.size < 96) targets.set(getAvatarProfileKey(network, address), { address, network });
+      if (address && targets.size < 48) targets.set(getAvatarProfileKey(network, address), { address, network });
     };
 
     add('qortium', account?.address);
@@ -2192,7 +2260,7 @@ export default function App() {
     const add = (target: GroupAvatarTarget) => {
       if (target.group.groupId < 1) return;
       const key = getGroupAvatarProfileKey(target.network, target.group.groupId);
-      if (targets.has(key) || counts[target.network] >= 48) return;
+      if (targets.has(key) || counts[target.network] >= 24) return;
       targets.set(key, target);
       counts[target.network] += 1;
     };
