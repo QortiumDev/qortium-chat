@@ -72,6 +72,7 @@ import {
   sortMessagesByTimestamp,
   type MessageThread,
 } from './messageThreads';
+import { chatReadRequiresAccount, isChatReadSessionStale } from './chatReadSession';
 import { retainChatMessagesWhenEqual } from './messageUpdates';
 import {
   canRetryPendingDelivery,
@@ -3285,8 +3286,13 @@ export default function App() {
     const sessionAccountAddress = chat.network === 'qortal'
       ? currentQortalAccountAddressRef.current
       : currentAccountAddressRef.current;
+    const accountRequired = chatReadRequiresAccount(
+      chat.kind === 'direct'
+        ? { kind: 'direct' }
+        : { groupIsOpen: chat.group.isOpen, kind: 'group' },
+    );
 
-    if (!sessionAccountAddress) {
+    if (accountRequired && !sessionAccountAddress) {
       return;
     }
 
@@ -3313,8 +3319,13 @@ export default function App() {
     // messages are never committed into another chat's pane (mirrors the
     // request guard loadPendingApprovals already uses).
     const isStale = () =>
-      selectedChatKeyRef.current !== chatKey ||
-      currentAccountAddressRef.current !== sessionAccountAddress;
+      isChatReadSessionStale(
+        { accountAddress: sessionAccountAddress, chatKey },
+        {
+          accountAddress: currentAccountAddressRef.current,
+          chatKey: selectedChatKeyRef.current,
+        },
+      );
 
     if (isStale()) {
       return;
@@ -3429,12 +3440,19 @@ export default function App() {
     options: { quiet?: boolean; sessionAccountAddress?: string | null } = {},
   ) {
     const chatKey = getSelectedChatKey(chat);
-    const sessionAccountAddress = options.sessionAccountAddress ?? currentQortalAccountAddressRef.current;
+    const sessionAccountAddress = options.sessionAccountAddress === undefined
+      ? currentQortalAccountAddressRef.current
+      : options.sessionAccountAddress;
     const isStale = () =>
-      selectedChatKeyRef.current !== chatKey ||
-      currentQortalAccountAddressRef.current !== sessionAccountAddress;
+      isChatReadSessionStale(
+        { accountAddress: sessionAccountAddress, chatKey },
+        {
+          accountAddress: currentQortalAccountAddressRef.current,
+          chatKey: selectedChatKeyRef.current,
+        },
+      );
 
-    if (!sessionAccountAddress || isStale()) {
+    if ((chat.group.isOpen === false && !sessionAccountAddress) || isStale()) {
       return;
     }
 
@@ -3503,13 +3521,24 @@ export default function App() {
     const sessionAccountAddress = chat.network === 'qortal'
       ? currentQortalAccountAddressRef.current
       : currentAccountAddressRef.current;
+    const accountRequired = chatReadRequiresAccount(
+      chat.kind === 'direct'
+        ? { kind: 'direct' }
+        : { groupIsOpen: chat.group.isOpen, kind: 'group' },
+    );
     const isStale = () =>
-      selectedChatKeyRef.current !== chatKey ||
-      (chat.network === 'qortal'
-        ? currentQortalAccountAddressRef.current
-        : currentAccountAddressRef.current) !== sessionAccountAddress;
+      isChatReadSessionStale(
+        { accountAddress: sessionAccountAddress, chatKey },
+        {
+          accountAddress:
+            chat.network === 'qortal'
+              ? currentQortalAccountAddressRef.current
+              : currentAccountAddressRef.current,
+          chatKey: selectedChatKeyRef.current,
+        },
+      );
 
-    if (!sessionAccountAddress || isStale()) {
+    if ((accountRequired && !sessionAccountAddress) || isStale()) {
       return;
     }
 
