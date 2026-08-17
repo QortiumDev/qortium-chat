@@ -1561,17 +1561,10 @@ export const MessageList = memo(function MessageList({
   }
 
   function toggleImagePreview(threadKey: string) {
-    setOpenImagePreviews((current) => {
-      const next = new Set(current);
-
-      if (next.has(threadKey)) {
-        next.delete(threadKey);
-      } else {
-        next.add(threadKey);
-      }
-
-      return next;
-    });
+    // Data-URL previews retain both encoded and decoded image memory. Keep one
+    // message's explicitly opened preview set at a time so repeatedly opening
+    // older messages cannot accumulate an unbounded Android renderer footprint.
+    setOpenImagePreviews((current) => current.has(threadKey) ? new Set() : new Set([threadKey]));
   }
 
   function closeReactionPopover() {
@@ -1782,6 +1775,8 @@ export const MessageList = memo(function MessageList({
             // the ordinary Edit/Delete buttons silently supersede that record.
             const canEditOrDelete = canRevise && !!original.signature && !pendingRevision;
             const canReact = canRevise && !!original.signature;
+            const hasPublicResourceActions =
+              hasImagePreviews || hasMediaActions || hasDocumentViewerActions || hasDocumentSaveActions;
             const actionButtons =
               canReply ||
               canReact ||
@@ -1790,6 +1785,9 @@ export const MessageList = memo(function MessageList({
               hasDocumentViewerActions ||
               hasDocumentSaveActions ? (
                 <div className="message__actions">
+                  {hasPublicResourceActions ? (
+                    <span className="message__resource-public-label">{t('label.resource.public')}</span>
+                  ) : null}
                   {hasImagePreviews ? (
                     <button aria-expanded={areImagePreviewsOpen} onClick={() => toggleImagePreview(threadKey)} type="button">
                       {areImagePreviewsOpen ? t('button.hideImagePreview') : t('button.viewImagePreview')}

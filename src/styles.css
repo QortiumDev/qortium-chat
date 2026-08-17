@@ -2994,6 +2994,13 @@ button.message__reply-preview:focus-visible,
   margin-top: 8px;
 }
 
+.message__resource-public-label {
+  align-self: center;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-tiny);
+  font-weight: 700;
+}
+
 .message__resource-card {
   display: grid;
   gap: 2px;
