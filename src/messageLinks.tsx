@@ -8,7 +8,17 @@ import { type ChatNetwork } from './types';
 
 const IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
 const IMAGE_PREVIEW_MAX_CONCURRENT = 3;
+const IMAGE_PREVIEW_QUEUE_LIMIT = 24;
+const MESSAGE_IMAGE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024;
+const MESSAGE_IMAGE_PREVIEW_MAX_COUNT = 8;
+const MESSAGE_IMAGE_PREVIEW_MAX_PIXELS = 32_000_000;
+const IMAGE_PREVIEW_MAX_DIMENSION = 8192;
+const IMAGE_PREVIEW_MAX_PIXELS = 16_000_000;
+const RESOURCE_CARD_MAX_CONCURRENT = 4;
+const RESOURCE_CARD_QUEUE_LIMIT = 64;
 const RESOURCE_CARD_CACHE_LIMIT = 500;
+const RESOURCE_METADATA_MAX_BYTES = 128 * 1024;
+const RESOURCE_PROPERTIES_MAX_BYTES = 64 * 1024;
 // App links and plain web links share trailing-punctuation handling, so we scan
 // for both in one pass and split them apart by scheme afterwards.
 const LINK_PATTERN = /\b(?:qdn|qortal|home|core|https?):\/\/[^\s<>"'`]*/gi;
@@ -148,12 +158,8 @@ function getAddressNetwork(address: string, conversationNetwork: ChatNetwork): C
   return /^qortal:\/\//i.test(address) ? 'qortal' : conversationNetwork;
 }
 
-function isSafeResourcePath(path: string) {
-  return (
-    path.length <= 1024 &&
-    !/[\\\u0000-\u001f]/.test(path) &&
-    !path.split('/').some((segment) => segment === '.' || segment === '..' || !segment)
-  );
+function isDotSegment(value: string) {
+  return value === '.' || value === '..';
 }
 
 function parseQdnResource(qdnUrl: string, conversationNetwork: ChatNetwork): QdnResourceBase<string> | null {
@@ -166,13 +172,26 @@ function parseQdnResource(qdnUrl: string, conversationNetwork: ChatNetwork): Qdn
   const basePart = queryIndex === -1 ? withoutProtocol : withoutProtocol.slice(0, queryIndex);
   const queryString = queryIndex === -1 ? '' : withoutProtocol.slice(queryIndex + 1);
   const parts = basePart.replace(/^\/+/, '').split('/');
-  const service = decodeSegment(parts.shift() ?? '').toUpperCase();
-  const name = decodeSegment(parts.shift() ?? '').trim();
+  const network = getAddressNetwork(qdnUrl, conversationNetwork);
+  const firstSegment = decodeSegment(parts.shift() ?? '').trim();
+  let service = firstSegment.toUpperCase();
+  let name = decodeSegment(parts.shift() ?? '').trim();
+
+  // Qortal Hub treats qortal://<name> as WEBSITE/<name>. Unlike Qortium's
+  // qdn://service/name/identifier/path convention, Hub treats every segment
+  // after the name as app/resource path and accepts an identifier only through
+  // ?identifier=. Contextual qdn:// links in a Qortal conversation follow the
+  // same Qortal rule so they never resolve against the other chain by accident.
+  if (network === 'qortal' && !name && service) {
+    name = firstSegment;
+    service = 'WEBSITE';
+  }
 
   if (
     !/^[A-Z0-9_]{1,64}$/.test(service) ||
     !name ||
     name.length > 255 ||
+    isDotSegment(name) ||
     /[/\\\u0000-\u001f]/.test(name)
   ) {
     return null;
@@ -185,28 +204,40 @@ function parseQdnResource(qdnUrl: string, conversationNetwork: ChatNetwork): Qdn
     queryParams.delete('identifier');
   }
 
-  let identifier = queryIdentifier || decodeSegment(parts.shift() ?? '').trim();
+  let identifier = network === 'qortal'
+    ? queryIdentifier
+    : queryIdentifier || decodeSegment(parts.shift() ?? '').trim();
 
   if (identifier.toLowerCase() === 'default') {
     identifier = '';
   }
 
-  if (identifier.length > 64 || /[/\\\u0000-\u001f]/.test(identifier)) {
+  if (identifier.length > 64 || isDotSegment(identifier) || /[/\\\u0000-\u001f]/.test(identifier)) {
     return null;
   }
 
-  const pathOnly = parts.map(decodeSegment).join('/').replace(/^\/+/, '');
+  const decodedPath = parts.map(decodeSegment).join('/').replace(/^\/+/, '');
+  const remainingQuery = queryParams.toString();
+  const pathOnly = network === 'qortal'
+    ? `${decodedPath}${remainingQuery ? `?${remainingQuery}` : ''}`
+    : decodedPath;
 
-  // `identifier` is the only supported URI query. Passing arbitrary query
-  // text through the bridge as a filepath makes resource identity ambiguous.
-  if ([...queryParams.keys()].length > 0 || (pathOnly && !isSafeResourcePath(pathOnly))) {
+  // Qortium supports only the identity query. Qortal Hub preserves remaining
+  // query parameters as part of the app route, after extracting identifier.
+  const pathSegments = decodedPath ? decodedPath.split('/') : [];
+  if (
+    (network === 'qortium' && [...queryParams.keys()].length > 0) ||
+    pathOnly.length > 1024 ||
+    pathSegments.some((segment) => !segment || isDotSegment(segment)) ||
+    /[\\\u0000-\u001f]/.test(pathOnly)
+  ) {
     return null;
   }
 
   return {
     identifier: identifier || undefined,
     name,
-    network: getAddressNetwork(qdnUrl, conversationNetwork),
+    network,
     path: pathOnly,
     qdnUrl,
     service,
@@ -447,12 +478,45 @@ export function getDocumentQdnResources(text: string, network: ChatNetwork = 'qo
 export function getQortalHubImageResources(images: readonly QortalHubImageRef[]): QdnImageResource[] {
   return images
     .slice(0, 12)
-    .map((image) =>
-      parseQdnImageResource(
-        `qortal://${encodeURIComponent(image.service.toUpperCase())}/${encodeURIComponent(image.name)}/${encodeURIComponent(image.identifier)}`,
-        'qortal',
-      ),
-    )
+    .map((image): QdnImageResource | null => {
+      if (
+        typeof image.service !== 'string' ||
+        typeof image.name !== 'string' ||
+        typeof image.identifier !== 'string'
+      ) {
+        return null;
+      }
+
+      const service = image.service.trim().toUpperCase();
+      const name = image.name.trim();
+      const identifier = image.identifier.trim();
+
+      // Hub's images[] envelope already carries explicit QDN coordinates; do
+      // not turn it into a URI and run it through Qortal's path-oriented URI
+      // grammar, where the identifier would instead be interpreted as a path.
+      if (
+        !isImageQdnService(service) ||
+        !name ||
+        name.length > 255 ||
+        isDotSegment(name) ||
+        /[/\\\u0000-\u001f]/.test(name) ||
+        !identifier ||
+        identifier.length > 64 ||
+        isDotSegment(identifier) ||
+        /[/\\\u0000-\u001f]/.test(identifier)
+      ) {
+        return null;
+      }
+
+      return {
+        identifier,
+        name,
+        network: 'qortal',
+        path: '',
+        qdnUrl: `qortal://${service}/${encodeURIComponent(name)}?identifier=${encodeURIComponent(identifier)}`,
+        service,
+      };
+    })
     .filter((resource): resource is QdnImageResource => resource !== null);
 }
 
@@ -472,7 +536,7 @@ export async function openAppLinkInHomeTab(address: string, conversationNetwork:
   // The address comes from attacker-controlled message text. Home re-validates
   // on its side, but the trust boundary is enforced here too so a future or
   // more lenient bridge cannot be driven by a crafted chat link: only the
-  // three app-link schemes, and a sane length cap (mirroring Home's own rule).
+  // four app-link schemes, and a sane length cap (mirroring Home's own rule).
   if (address.length > 2048 || !/^(?:qdn|qortal|home|core):\/\//i.test(address)) {
     throw new Error('Blocked app link with an unsupported address.');
   }
@@ -579,14 +643,23 @@ function getBoundedMetadataString(value: unknown, maxLength: number) {
 }
 
 export async function fetchQdnResourceCard(resource: QdnResource): Promise<QdnResourceCard> {
-  const cacheKey = `${resource.network}:${resource.service}:${resource.name}:${resource.identifier ?? ''}:${resource.path}`;
+  const cacheKey = JSON.stringify([
+    resource.network,
+    resource.service,
+    resource.name,
+    resource.identifier ?? '',
+    resource.path,
+  ]);
   const cached = resourceCardCache.get(cacheKey);
 
   if (cached) {
     return cached;
   }
 
-  const pending = fetchQdnResourceCardUncached(resource);
+  const pending = scheduleResourceCard(() => fetchQdnResourceCardUncached(resource)).catch((error) => {
+    resourceCardCache.delete(cacheKey);
+    throw error;
+  });
 
   if (resourceCardCache.size >= RESOURCE_CARD_CACHE_LIMIT) {
     const oldest = resourceCardCache.keys().next().value;
@@ -602,6 +675,30 @@ export async function fetchQdnResourceCard(resource: QdnResource): Promise<QdnRe
 }
 
 const resourceCardCache = new Map<string, Promise<QdnResourceCard>>();
+let activeResourceCardFetches = 0;
+const resourceCardQueue: Array<() => void> = [];
+
+function scheduleResourceCard<T>(task: () => Promise<T>) {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      activeResourceCardFetches += 1;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeResourceCardFetches -= 1;
+          resourceCardQueue.shift()?.();
+        });
+    };
+
+    if (activeResourceCardFetches < RESOURCE_CARD_MAX_CONCURRENT) {
+      run();
+    } else if (resourceCardQueue.length < RESOURCE_CARD_QUEUE_LIMIT) {
+      resourceCardQueue.push(run);
+    } else {
+      reject(new Error('Resource card queue is full.'));
+    }
+  });
+}
 
 async function fetchQdnResourceCardUncached(resource: QdnResource): Promise<QdnResourceCard> {
   let metadata: QdnResourceMetadata = {};
@@ -611,6 +708,7 @@ async function fetchQdnResourceCardUncached(resource: QdnResource): Promise<QdnR
       await getResourceBridge<unknown>(resource.network, {
         action: 'GET_QDN_RESOURCE_METADATA',
         ...getResourceRequest(resource),
+        maxBytes: RESOURCE_METADATA_MAX_BYTES,
       }),
     );
   } catch {
@@ -654,7 +752,23 @@ function getSortedGifRepositoryFiles(metadata: QdnResourceMetadata) {
 }
 
 function buildQdnImageResourceUrl(resource: QdnImageResource) {
-  return `${resource.network === 'qortal' ? 'qortal' : 'qdn'}://${resource.service}/${encodeURIComponent(resource.name)}/${encodeURIComponent(
+  if (resource.network === 'qortal') {
+    const queryIndex = resource.path.indexOf('?');
+    const resourcePath = queryIndex === -1 ? resource.path : resource.path.slice(0, queryIndex);
+    const queryParams = new URLSearchParams(queryIndex === -1 ? '' : resource.path.slice(queryIndex + 1));
+
+    if (resource.identifier) {
+      queryParams.set('identifier', resource.identifier);
+    }
+
+    const queryString = queryParams.toString();
+
+    return `qortal://${resource.service}/${encodeURIComponent(resource.name)}${
+      resourcePath ? `/${resourcePath}` : ''
+    }${queryString ? `?${queryString}` : ''}`;
+  }
+
+  return `qdn://${resource.service}/${encodeURIComponent(resource.name)}/${encodeURIComponent(
     resource.identifier ?? 'default',
   )}${resource.path ? `/${resource.path}` : ''}`;
 }
@@ -676,11 +790,12 @@ async function fetchQdnResourceMetadata(resource: QdnImageResource) {
     await getResourceBridge<unknown>(resource.network, {
       action: 'GET_QDN_RESOURCE_METADATA',
       ...getResourceRequest(resource),
+      maxBytes: RESOURCE_METADATA_MAX_BYTES,
     }),
   );
 }
 
-async function getGifRepositoryPreviewResources(resource: QdnImageResource) {
+async function getGifRepositoryPreviewResources(resource: QdnImageResource, maxCount = MESSAGE_IMAGE_PREVIEW_MAX_COUNT) {
   if (resource.service !== 'GIF_REPOSITORY' || resource.path) {
     return [resource];
   }
@@ -688,37 +803,61 @@ async function getGifRepositoryPreviewResources(resource: QdnImageResource) {
   let metadata: QdnResourceMetadata;
 
   try {
-    metadata = await fetchQdnResourceMetadata(resource);
+    // Opening previews in several messages at once must not bypass the global
+    // image-work limit through GIF repository metadata expansion.
+    metadata = await scheduleImagePreview(() => fetchQdnResourceMetadata(resource));
   } catch {
     return [resource];
   }
 
   const files = getSortedGifRepositoryFiles(metadata);
 
-  return files.length > 0 ? files.map((file) => getQdnImageResourceWithPath(resource, file)) : [resource];
+  return files.length > 0
+    ? files.slice(0, maxCount).map((file) => getQdnImageResourceWithPath(resource, file))
+    : [resource];
 }
 
-function getImageMimeType(base64: string) {
-  if (base64.startsWith('iVBORw0KGgo')) {
+function getImageMimeType(bytes: Uint8Array) {
+  if (
+    bytes.length >= 8 &&
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((byte, index) => bytes[index] === byte)
+  ) {
     return 'image/png';
   }
 
-  if (base64.startsWith('/9j/')) {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return 'image/jpeg';
   }
 
-  if (base64.startsWith('R0lGOD')) {
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38 &&
+    (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61
+  ) {
     return 'image/gif';
   }
 
-  if (base64.startsWith('UklGR')) {
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
     return 'image/webp';
   }
 
   throw new Error('Image preview returned unsupported or unsafe image bytes.');
 }
 
-function getBase64Payload(value: unknown) {
+function decodeBase64Bytes(base64: string) {
+  try {
+    const binary = atob(base64);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+function getBase64Payload(value: unknown, maxBytes: number) {
   const record = isRecord(value) ? value : null;
   const payload = typeof value === 'string' ? value : record?.body;
   const contentLength = typeof record?.contentLength === 'number' ? record.contentLength : undefined;
@@ -736,76 +875,262 @@ function getBase64Payload(value: unknown) {
   const estimatedBytes = Math.floor((base64.length * 3) / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0);
 
   if (
-    estimatedBytes > IMAGE_PREVIEW_MAX_BYTES ||
-    (typeof contentLength === 'number' && contentLength > IMAGE_PREVIEW_MAX_BYTES)
+    estimatedBytes > maxBytes ||
+    (typeof contentLength === 'number' && contentLength > maxBytes)
   ) {
-    throw new Error('Image preview exceeds the 5 MB limit.');
+    throw new Error('Image preview exceeds the current preview byte limit.');
   }
 
-  return base64;
+  const bytes = decodeBase64Bytes(base64);
+
+  if (!bytes || bytes.byteLength !== estimatedBytes || bytes.byteLength > maxBytes) {
+    throw new Error('QDN image preview returned invalid image data.');
+  }
+
+  return { base64, bytes };
 }
 
-function decodeImageDimensions(src: string): Promise<{ height: number; width: number } | null> {
+type ImageDimensions = { height: number; width: number };
+
+function validateImageDimensions(dimensions: ImageDimensions | null, maxPixels = IMAGE_PREVIEW_MAX_PIXELS) {
+  if (
+    dimensions &&
+    (
+      dimensions.width < 1 ||
+      dimensions.height < 1 ||
+      dimensions.width > IMAGE_PREVIEW_MAX_DIMENSION ||
+      dimensions.height > IMAGE_PREVIEW_MAX_DIMENSION ||
+      dimensions.width * dimensions.height > maxPixels
+    )
+  ) {
+    throw new Error('Image preview dimensions exceed the safe display limit.');
+  }
+
+  return dimensions;
+}
+
+function readUint24LittleEndian(bytes: Uint8Array, offset: number) {
+  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+}
+
+function getEncodedImageDimensions(bytes: Uint8Array, mimeType: string): ImageDimensions | null {
+  if (mimeType === 'image/png' && bytes.length >= 24) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  }
+
+  if (mimeType === 'image/gif' && bytes.length >= 10) {
+    return {
+      width: bytes[6] | (bytes[7] << 8),
+      height: bytes[8] | (bytes[9] << 8),
+    };
+  }
+
+  if (mimeType === 'image/webp' && bytes.length >= 16) {
+    const chunk = String.fromCharCode(...bytes.slice(12, 16));
+
+    if (chunk === 'VP8X' && bytes.length >= 30) {
+      return {
+        width: readUint24LittleEndian(bytes, 24) + 1,
+        height: readUint24LittleEndian(bytes, 27) + 1,
+      };
+    }
+
+    if (chunk === 'VP8L' && bytes[20] === 0x2f && bytes.length >= 25) {
+      return {
+        width: 1 + (bytes[21] | ((bytes[22] & 0x3f) << 8)),
+        height: 1 + ((bytes[22] >> 6) | (bytes[23] << 2) | ((bytes[24] & 0x0f) << 10)),
+      };
+    }
+
+    if (
+      chunk === 'VP8 ' &&
+      bytes.length >= 30 &&
+      bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a
+    ) {
+      return {
+        width: (bytes[26] | (bytes[27] << 8)) & 0x3fff,
+        height: (bytes[28] | (bytes[29] << 8)) & 0x3fff,
+      };
+    }
+  }
+
+  if (mimeType === 'image/jpeg') {
+    let offset = 2;
+
+    while (offset + 8 < bytes.length) {
+      if (bytes[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+
+      const marker = bytes[offset + 1];
+      const segmentLength = (bytes[offset + 2] << 8) | bytes[offset + 3];
+      const isStartOfFrame =
+        marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+
+      if (isStartOfFrame && segmentLength >= 7 && offset + segmentLength + 2 <= bytes.length) {
+        return {
+          height: (bytes[offset + 5] << 8) | bytes[offset + 6],
+          width: (bytes[offset + 7] << 8) | bytes[offset + 8],
+        };
+      }
+
+      if (segmentLength < 2 || offset + segmentLength + 2 > bytes.length) {
+        break;
+      }
+
+      offset += segmentLength + 2;
+    }
+  }
+
+  return null;
+}
+
+function decodeImageDimensions(src: string, maxPixels: number): Promise<ImageDimensions | null> {
   if (typeof Image === 'undefined') {
     return Promise.resolve(null);
   }
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const image = new Image();
+    const timeout = globalThis.setTimeout(() => {
+      image.onload = null;
+      image.onerror = null;
+      image.src = '';
+      reject(new Error('Image preview decoding timed out.'));
+    }, 5000);
 
     image.onload = () => {
-      resolve(
-        image.naturalWidth > 0 && image.naturalHeight > 0
-          ? { height: image.naturalHeight, width: image.naturalWidth }
-          : null,
-      );
+      globalThis.clearTimeout(timeout);
+      try {
+        resolve(
+          validateImageDimensions(
+            image.naturalWidth > 0 && image.naturalHeight > 0
+              ? { height: image.naturalHeight, width: image.naturalWidth }
+              : null,
+            maxPixels,
+          ),
+        );
+      } catch (error) {
+        reject(error);
+      }
     };
-    image.onerror = () => resolve(null);
+    image.onerror = () => {
+      globalThis.clearTimeout(timeout);
+      resolve(null);
+    };
     image.src = src;
   });
 }
 
-export async function fetchQdnImagePreview(resource: QdnImageResource): Promise<QdnImagePreview> {
+async function fetchQdnImagePreviewBounded(
+  resource: QdnImageResource,
+  maxBytes: number,
+  maxPixels = IMAGE_PREVIEW_MAX_PIXELS,
+) {
   const properties =
     resource.network === 'qortium'
       ? normalizeProperties(
           await qdnRequest<unknown>({
             action: 'GET_QDN_RESOURCE_PROPERTIES',
             ...getResourceRequest(resource),
+            maxBytes: RESOURCE_PROPERTIES_MAX_BYTES,
           }),
         )
       : {};
 
-  if (typeof properties.size === 'number' && properties.size > IMAGE_PREVIEW_MAX_BYTES) {
-    throw new Error('Image preview exceeds the 5 MB limit.');
+  if (typeof properties.size === 'number' && properties.size > maxBytes) {
+    throw new Error('Image preview exceeds the current preview byte limit.');
   }
 
-  const base64 = getBase64Payload(
+  const { base64, bytes } = getBase64Payload(
     await getResourceBridge<unknown>(resource.network, {
       action: 'FETCH_QDN_RESOURCE',
       ...getResourceRequest(resource),
       encoding: 'base64',
       rebuild: true,
-      maxBytes: IMAGE_PREVIEW_MAX_BYTES,
+      maxBytes,
     }),
+    maxBytes,
   );
-  const mimeType = getImageMimeType(base64);
+  const mimeType = getImageMimeType(bytes);
+  validateImageDimensions(getEncodedImageDimensions(bytes, mimeType), maxPixels);
   const src = `data:${mimeType};base64,${base64}`;
-  const dimensions = await decodeImageDimensions(src);
+  const dimensions = await decodeImageDimensions(src, maxPixels);
 
   return {
-    alt: properties.filename || resource.qdnUrl,
-    ...dimensions,
-    mimeType,
-    qdnUrl: resource.qdnUrl,
-    src,
+    byteLength: bytes.byteLength,
+    pixelCount: dimensions ? dimensions.width * dimensions.height : 0,
+    preview: {
+      alt: properties.filename || resource.qdnUrl,
+      ...dimensions,
+      mimeType,
+      qdnUrl: resource.qdnUrl,
+      src,
+    },
   };
 }
 
-export async function fetchQdnImagePreviews(resource: QdnImageResource): Promise<QdnImagePreview[]> {
-  const previewResources = await getGifRepositoryPreviewResources(resource);
+export async function fetchQdnImagePreview(resource: QdnImageResource): Promise<QdnImagePreview> {
+  return (await fetchQdnImagePreviewBounded(resource, IMAGE_PREVIEW_MAX_BYTES)).preview;
+}
 
-  return Promise.all(previewResources.map((previewResource) => scheduleImagePreview(() => fetchQdnImagePreview(previewResource))));
+export async function fetchMessageQdnImagePreviews(resources: readonly QdnImageResource[]): Promise<QdnImagePreview[]> {
+  const candidates: QdnImageResource[] = [];
+
+  for (const resource of resources) {
+    if (candidates.length >= MESSAGE_IMAGE_PREVIEW_MAX_COUNT) {
+      break;
+    }
+    const expanded = await getGifRepositoryPreviewResources(
+      resource,
+      MESSAGE_IMAGE_PREVIEW_MAX_COUNT - candidates.length,
+    );
+    candidates.push(...expanded.slice(0, MESSAGE_IMAGE_PREVIEW_MAX_COUNT - candidates.length));
+  }
+
+  const previews: QdnImagePreview[] = [];
+  let remainingBytes = MESSAGE_IMAGE_PREVIEW_MAX_BYTES;
+  let remainingPixels = MESSAGE_IMAGE_PREVIEW_MAX_PIXELS;
+  let lastError: unknown = null;
+
+  for (const candidate of candidates) {
+    if (remainingBytes < 1 || remainingPixels < 1) {
+      break;
+    }
+
+    const requestMaxBytes = Math.min(IMAGE_PREVIEW_MAX_BYTES, remainingBytes);
+    // Reserve the whole permitted response before starting it. A successful
+    // short response refunds the unused portion; a failed/invalid response does
+    // not, because it may already have transferred its entire allowance.
+    remainingBytes -= requestMaxBytes;
+
+    try {
+      const result = await scheduleImagePreview(() =>
+        fetchQdnImagePreviewBounded(
+          candidate,
+          requestMaxBytes,
+          Math.min(IMAGE_PREVIEW_MAX_PIXELS, remainingPixels),
+        ),
+      );
+      previews.push(result.preview);
+      remainingBytes += requestMaxBytes - result.byteLength;
+      remainingPixels -= result.pixelCount;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (previews.length === 0 && lastError) {
+    throw lastError;
+  }
+
+  return previews;
+}
+
+export async function fetchQdnImagePreviews(resource: QdnImageResource): Promise<QdnImagePreview[]> {
+  return fetchMessageQdnImagePreviews([resource]);
 }
 
 let activeImagePreviewFetches = 0;
@@ -825,16 +1150,31 @@ function scheduleImagePreview<T>(task: () => Promise<T>) {
 
     if (activeImagePreviewFetches < IMAGE_PREVIEW_MAX_CONCURRENT) {
       run();
-    } else {
+    } else if (imagePreviewQueue.length < IMAGE_PREVIEW_QUEUE_LIMIT) {
       imagePreviewQueue.push(run);
+    } else {
+      reject(new Error('Image preview queue is full.'));
     }
   });
 }
 
 // Web links are not opened (the app holds no browser-navigation bridge and we
-// don't want messages to drive arbitrary navigation); clicking copies the URL
-// to the clipboard instead, with a brief "copied" confirmation.
-function WebLink({ url, text, copiedLabel }: { url: string; text: string; copiedLabel: string }): ReactNode {
+// don't want messages to drive arbitrary navigation). A button, rather than an
+// anchor with href, makes copy-only behavior hold for middle-click and context
+// menus as well as the ordinary click handler.
+function CopyOnlyLink({
+  className,
+  copiedLabel,
+  copyLabel,
+  text,
+  url,
+}: {
+  className: string;
+  copiedLabel: string;
+  copyLabel: string;
+  text: string;
+  url: string;
+}): ReactNode {
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -848,12 +1188,9 @@ function WebLink({ url, text, copiedLabel }: { url: string; text: string; copied
   );
 
   return (
-    <a
-      className={`message__web-link${copied ? ' message__web-link--copied' : ''}`}
-      href={url}
-      onClick={(event) => {
-        event.preventDefault();
-
+    <button
+      className={`${className}${copied ? ' message__web-link--copied' : ''}`}
+      onClick={() => {
         void copyTextToClipboard(url)
           .then((didCopy) => {
             if (!didCopy) {
@@ -872,16 +1209,14 @@ function WebLink({ url, text, copiedLabel }: { url: string; text: string; copied
             console.warn('Unable to copy link.', error);
           });
       }}
-      rel="noopener noreferrer"
-      title={copied ? copiedLabel : url}
+      title={`${copied ? copiedLabel : copyLabel}: ${url}`}
+      type="button"
     >
       {text}
-      {copied ? (
-        <span aria-live="polite" className="message__web-link-copied">
-          {copiedLabel}
-        </span>
-      ) : null}
-    </a>
+      <span aria-live="polite" className="message__web-link-copied">
+        {copied ? copiedLabel : copyLabel}
+      </span>
+    </button>
   );
 }
 
@@ -889,14 +1224,42 @@ function renderTextPart(
   part: MessageTextPart,
   key: string,
   copiedLabel: string,
+  copyLabel: string,
   conversationNetwork: ChatNetwork,
+  canOpenQortalAppLinks: boolean,
 ): ReactNode {
   if (part.kind === 'text') {
     return part.text;
   }
 
   if (part.kind === 'web-link') {
-    return <WebLink copiedLabel={copiedLabel} key={key} text={part.text} url={part.url} />;
+    return (
+      <CopyOnlyLink
+        className="message__web-link"
+        copiedLabel={copiedLabel}
+        copyLabel={copyLabel}
+        key={key}
+        text={part.text}
+        url={part.url}
+      />
+    );
+  }
+
+  if (
+    /^(?:qdn|qortal):\/\//i.test(part.address) &&
+    getAddressNetwork(part.address, conversationNetwork) === 'qortal' &&
+    !canOpenQortalAppLinks
+  ) {
+    return (
+      <CopyOnlyLink
+        className="message__app-link message__app-link--copy-only"
+        copiedLabel={copiedLabel}
+        copyLabel={copyLabel}
+        key={key}
+        text={part.text}
+        url={part.address}
+      />
+    );
   }
 
   return (
@@ -923,8 +1286,10 @@ export function renderMessageTextWithAppLinks(
   text: string,
   translate?: TranslateFunction,
   conversationNetwork: ChatNetwork = 'qortium',
+  options: { canOpenQortalAppLinks?: boolean } = {},
 ): ReactNode {
   const copiedLabel = translate ? translate('button.copied') : 'Copied';
+  const copyLabel = translate ? translate('button.copy') : 'Copy';
 
   return getMessageSegments(text).map((segment, segmentIndex) => {
     if (segment.kind === 'code') {
@@ -936,7 +1301,14 @@ export function renderMessageTextWithAppLinks(
     }
 
     return getMessageTextParts(segment.text).map((part, partIndex) =>
-      renderTextPart(part, `${segmentIndex}-${partIndex}`, copiedLabel, conversationNetwork),
+      renderTextPart(
+        part,
+        `${segmentIndex}-${partIndex}`,
+        copiedLabel,
+        copyLabel,
+        conversationNetwork,
+        options.canOpenQortalAppLinks === true,
+      ),
     );
   });
 }
@@ -948,24 +1320,52 @@ function MessageResourceCard({ resource, t }: { resource: QdnResource; t: Transl
     title: resource.identifier || resource.name,
   };
   const [card, setCard] = useState(fallback);
+  const [isNearViewport, setIsNearViewport] = useState(false);
+  const cardRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const element = cardRef.current;
+
+    if (!element || typeof IntersectionObserver === 'undefined') {
+      setIsNearViewport(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setIsNearViewport(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '240px 0px' },
+    );
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [resource.identifier, resource.name, resource.network, resource.path, resource.service]);
 
   useEffect(() => {
     let active = true;
 
     setCard(fallback);
-    void fetchQdnResourceCard(resource).then((nextCard) => {
-      if (active) {
-        setCard(nextCard);
-      }
-    });
+    if (isNearViewport) {
+      void fetchQdnResourceCard(resource)
+        .then((nextCard) => {
+          if (active) {
+            setCard(nextCard);
+          }
+        })
+        .catch(() => undefined);
+    }
 
     return () => {
       active = false;
     };
-  }, [resource.identifier, resource.name, resource.network, resource.path, resource.service]);
+  }, [isNearViewport, resource.identifier, resource.name, resource.network, resource.path, resource.service]);
 
   return (
-    <article className="message__resource-card" title={resource.qdnUrl}>
+    <article className="message__resource-card" ref={cardRef} title={resource.qdnUrl}>
       <strong>{card.title}</strong>
       <span>{t('label.resource.public')} · {card.subtitle}</span>
       {card.description ? <p>{card.description}</p> : null}

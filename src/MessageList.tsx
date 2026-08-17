@@ -30,7 +30,7 @@ import {
   type MessageReactionSummary,
 } from './messageReactions';
 import {
-  fetchQdnImagePreviews,
+  fetchMessageQdnImagePreviews,
   getDocumentQdnResources,
   getImageQdnResources,
   getMessageQdnResources,
@@ -86,23 +86,32 @@ type ImagePreviewState =
       phase: 'error';
     };
 
-function MessageImagePreview({
+function MessageImagePreviews({
   onOpenImage,
-  resource,
+  resources,
   t,
 }: {
   onOpenImage: (image: AvatarLightboxImage) => void;
-  resource: QdnImageResource;
+  resources: QdnImageResource[];
   t: TranslateFunction;
 }) {
   const [state, setState] = useState<ImagePreviewState>({ phase: 'loading' });
+  const resourcesKey = JSON.stringify(
+    resources.map((resource) => [
+      resource.network,
+      resource.service,
+      resource.name,
+      resource.identifier ?? '',
+      resource.path,
+    ]),
+  );
 
   useEffect(() => {
     let isDisposed = false;
 
     setState({ phase: 'loading' });
 
-    void fetchQdnImagePreviews(resource)
+    void fetchMessageQdnImagePreviews(resources)
       .then((previews) => {
         if (!isDisposed) {
           setState({ phase: 'ready', previews });
@@ -120,7 +129,7 @@ function MessageImagePreview({
     return () => {
       isDisposed = true;
     };
-  }, [resource.identifier, resource.name, resource.network, resource.path, resource.qdnUrl, resource.service, t]);
+  }, [resourcesKey, t]);
 
   if (state.phase === 'loading') {
     return (
@@ -139,7 +148,7 @@ function MessageImagePreview({
   }
 
   return (
-    <>
+    <div className="message__image-previews">
       {state.previews.map((preview) => (
         <figure className="message__image-preview" key={preview.qdnUrl}>
           <button
@@ -158,24 +167,6 @@ function MessageImagePreview({
           </button>
           <figcaption>{t('label.resource.public')} · {preview.alt}</figcaption>
         </figure>
-      ))}
-    </>
-  );
-}
-
-function MessageImagePreviews({
-  onOpenImage,
-  resources,
-  t,
-}: {
-  onOpenImage: (image: AvatarLightboxImage) => void;
-  resources: QdnImageResource[];
-  t: TranslateFunction;
-}) {
-  return (
-    <div className="message__image-previews">
-      {resources.map((resource, index) => (
-        <MessageImagePreview key={`${resource.qdnUrl}-${index}`} onOpenImage={onOpenImage} resource={resource} t={t} />
       ))}
     </div>
   );
@@ -1735,7 +1726,11 @@ export const MessageList = memo(function MessageList({
             const isContinuation = isThreadContinuation(threads[index - 1], thread);
             const canEdit = isOwn && decoded.kind === 'text';
             const isTimeExpanded = expandedTimeKey === threadKey;
-            const textResources = decoded.kind === 'text' ? getMessageQdnResources(decoded.body, network) : [];
+            const textResources = decoded.kind === 'text'
+              ? getMessageQdnResources(decoded.body, network).filter((resource) =>
+                  hasResourceAction(resource.network, 'GET_QDN_RESOURCE_METADATA'),
+                )
+              : [];
             const linkedImageResources = decoded.kind === 'text' ? getImageQdnResources(decoded.body, network) : [];
             const pinnedImageResources =
               network === 'qortal' && decoded.kind === 'text'
@@ -1748,7 +1743,7 @@ export const MessageList = memo(function MessageList({
                   resource,
                 ]),
               ).values(),
-            );
+            ).filter((resource) => hasResourceAction(resource.network, 'FETCH_QDN_RESOURCE'));
             const mediaResources =
               decoded.kind === 'text'
                 ? getMediaQdnResources(decoded.body, network).filter((resource) =>
@@ -1919,7 +1914,9 @@ export const MessageList = memo(function MessageList({
                 ) : null}
                 <div className="message__body">
                   {decoded.body ? (
-                    renderMessageTextWithAppLinks(decoded.body, t, network)
+                    renderMessageTextWithAppLinks(decoded.body, t, network, {
+                      canOpenQortalAppLinks: hasResourceAction('qortal', 'OPEN_NEW_TAB'),
+                    })
                   ) : imageResources.length > 0 ? null : (
                     <span className="message__body-placeholder">
                       {t('message.empty')}
