@@ -1013,6 +1013,62 @@ describe('Core API path builders', () => {
       expect(qdnRequestMock).not.toHaveBeenCalled();
     });
 
+    it('loads Qortal active-chat previews through the Qortal bridge', async () => {
+      qortalRequestMock.mockResolvedValueOnce({
+        direct: [],
+        groups: [{ data: 'aGVsbG8=', groupId: 12, senderName: 'alice', timestamp: 500 }],
+      });
+
+      await expect(getActiveChats('qortal', 'QortalAddress', ['GET_ACTIVE_CHATS'])).resolves.toEqual({
+        direct: [],
+        groups: [{ data: 'aGVsbG8=', groupId: 12, senderName: 'alice', timestamp: 500 }],
+      });
+      expect(qortalRequestMock).toHaveBeenCalledWith({
+        action: 'GET_ACTIVE_CHATS',
+        address: 'QortalAddress',
+        encoding: 'BASE64',
+        hasChatReference: false,
+      });
+    });
+
+    it('routes Qortal roster fallback and older-history cursors to the Qortal node', async () => {
+      qortalRequestMock
+        .mockResolvedValueOnce({
+          body: '',
+          contentType: 'application/json',
+          data: { members: [{ member: 'Qmember', name: 'alice' }] },
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+        })
+        .mockResolvedValueOnce([{ sender: 'Qmember', signature: 'older', timestamp: 100, txGroupId: 12 }]);
+
+      await expect(getGroupMembers('qortal', 12, [])).resolves.toEqual([{ member: 'Qmember', name: 'alice' }]);
+      await expect(
+        getGroupMessages(
+          'qortal',
+          { groupId: 12, groupName: 'Qortal group', isOpen: true },
+          ['SEARCH_CHAT_MESSAGES'],
+          { before: 501 },
+        ),
+      ).resolves.toEqual([{ sender: 'Qmember', signature: 'older', timestamp: 100, txGroupId: 12 }]);
+
+      expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+        action: 'FETCH_NODE_API',
+        maxBytes: 2097152,
+        path: '/groups/members/12?limit=100&reverse=false',
+      });
+      expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+        action: 'SEARCH_CHAT_MESSAGES',
+        before: 501,
+        encoding: 'BASE64',
+        groupId: 12,
+        limit: 100,
+        reverse: true,
+        txGroupId: 12,
+      });
+    });
+
     it('searches Qortal groups by listing every group and filtering client-side (no SEARCH_GROUPS on Qortal)', async () => {
       qortalRequestMock.mockResolvedValueOnce([
         { groupId: 1, groupName: 'Chess Fans' },

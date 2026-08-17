@@ -76,9 +76,12 @@ import {
   createLocalSendId,
   createPendingRevision,
   createPendingSend,
+  expirePendingRevisions,
+  expirePendingSends,
   failPendingRevision,
   failPendingSend,
   getPendingSignatureIdentity,
+  hasActiveDuplicateSend,
   indexPendingRevisionsByTarget,
   mergeOptimisticMessages,
   prunePendingRevisions,
@@ -257,6 +260,7 @@ const ComposerEmojiPicker = lazy(() => import('emoji-picker-react'));
 // while the tab is hidden, reconnection waits for visibility instead.
 const WS_RECONNECT_BASE_MS = 5000;
 const WS_RECONNECT_MAX_MS = 60000;
+const SEND_CONFIRMATION_TIMEOUT_MS = 120000;
 
 // Groups whose transactions are gated by development-group approval (e.g. Core
 // auto-updates). Previewnet uses group id 1 ("development"); override with the
@@ -1062,6 +1066,7 @@ export default function App() {
   // below), and there is no JOIN_GROUP bridge action for Qortal in this slice to
   // fix that from inside the app, so this only gates the composer.
   const [qortalMemberGroups, setQortalMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
+  const [qortalActiveChats, setQortalActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [qortalGroupDiscoveries, setQortalGroupDiscoveries] =
     useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
   const [qortalSearch, setQortalSearch] = useState('');
@@ -1167,7 +1172,9 @@ export default function App() {
   const requestedPrivateGroupKeysRef = useRef(new Set<string>());
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const pendingApprovalsRequestRef = useRef(0);
+  const groupMembersRequestGuardRef = useRef(new LatestRequestGuard());
   const qortalAccountRefreshGuardRef = useRef(new LatestRequestGuard());
+  const qortalActiveChatsRequestGuardRef = useRef(new LatestRequestGuard());
   const groupDiscoveryRequestRef = useRef(0);
   const qortalGroupDiscoveryRequestRef = useRef(0);
   const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
@@ -1181,10 +1188,13 @@ export default function App() {
   // memory for the session: baselined to current activity when a chat is first
   // discovered so existing history is not flagged, then advanced as chats are read.
   const [lastReadByGroupId, setLastReadByGroupId] = useState<ReadonlyMap<number, number>>(() => new Map());
+  const [lastReadByQortalGroupId, setLastReadByQortalGroupId] =
+    useState<ReadonlyMap<number, number>>(() => new Map());
   const [lastReadByAddress, setLastReadByAddress] = useState<ReadonlyMap<string, number>>(() => new Map());
   // Mirrors of the read watermarks, read synchronously when a chat opens to
   // snapshot the divider position before the "mark read" effect advances them.
   const lastReadByGroupIdRef = useRef(lastReadByGroupId);
+  const lastReadByQortalGroupIdRef = useRef(lastReadByQortalGroupId);
   const lastReadByAddressRef = useRef(lastReadByAddress);
   // Skip the one render right after an account switch, where the watermark maps
   // still hold the previous account's values, so we never persist them under the
@@ -1295,6 +1305,17 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const timeoutError = t('status.loadingError.sendMessage');
+
+    updatePendingSends((current) =>
+      expirePendingSends(current, now, SEND_CONFIRMATION_TIMEOUT_MS, timeoutError),
+    );
+    updatePendingRevisions((current) =>
+      expirePendingRevisions(current, now, SEND_CONFIRMATION_TIMEOUT_MS, timeoutError),
+    );
+  }, [now, t]);
+
   const joinedIds = useMemo(
     () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
     [memberGroups.value],
@@ -1382,21 +1403,26 @@ export default function App() {
 
     return activity;
   }, [activeChats.value.groups, loadedGroupActivityById]);
-  // Qortal counterpart of groupActivityById above, minus the active-chats
-  // merge (no GET_ACTIVE_CHATS wiring for Qortal in this slice — see the
-  // slice-2 report) — just the loaded-history timestamps with tombstones
-  // dropped, so GroupList gets the same non-nullable shape either way.
+  // Qortal counterpart of groupActivityById. Home 1.7 and Home 2 both expose
+  // GET_ACTIVE_CHATS for Qortal, while loaded history remains an activity
+  // floor for nodes whose active window omits an older conversation.
   const qortalGroupActivityByIdDisplay = useMemo(() => {
     const activity = new Map<number, number>();
 
+    for (const activeGroup of qortalActiveChats.value.groups ?? []) {
+      if (typeof activeGroup.timestamp === 'number' && !isHiddenActiveChatEntry(activeGroup)) {
+        activity.set(activeGroup.groupId, activeGroup.timestamp);
+      }
+    }
+
     for (const [groupId, timestamp] of qortalGroupActivityById) {
       if (timestamp !== null) {
-        activity.set(groupId, timestamp);
+        activity.set(groupId, Math.max(activity.get(groupId) ?? Number.NEGATIVE_INFINITY, timestamp));
       }
     }
 
     return activity;
-  }, [qortalGroupActivityById]);
+  }, [qortalActiveChats.value.groups, qortalGroupActivityById]);
   const directActivityByAddress = useMemo(() => {
     const activity = new Map<string, number>();
 
@@ -1477,7 +1503,25 @@ export default function App() {
 
     return addresses;
   }, [directActivityByAddress, lastReadByAddress, selectedDirectAddress]);
+  const unreadQortalGroupIds = useMemo(() => {
+    const ids = new Set<number>();
+
+    for (const [groupId, timestamp] of qortalGroupActivityByIdDisplay) {
+      if (selectedChat?.network === 'qortal' && groupId === selectedGroupId) {
+        continue;
+      }
+
+      const lastRead = lastReadByQortalGroupId.get(groupId);
+
+      if (lastRead !== undefined && timestamp > lastRead) {
+        ids.add(groupId);
+      }
+    }
+
+    return ids;
+  }, [lastReadByQortalGroupId, qortalGroupActivityByIdDisplay, selectedChat?.network, selectedGroupId]);
   const hasUnreadGroups = unreadGroupIds.size > 0;
+  const hasUnreadQortalGroups = unreadQortalGroupIds.size > 0;
   const hasUnreadDirect = unreadDirectAddresses.size > 0;
   const canManageNotifications = !!account && canManageChatNotifications(actions);
   const canShowNotifications = canShowChatNotifications(actions);
@@ -1593,6 +1637,28 @@ export default function App() {
 
     return previews;
   }, [activeChats.value.groups, loadedGroupPreviewById, t]);
+  const qortalGroupPreviewByGroupId = useMemo(() => {
+    const previews = new Map<number, string>();
+
+    for (const activeGroup of qortalActiveChats.value.groups ?? []) {
+      if (!activeGroup.data || isHiddenActiveChatEntry(activeGroup)) {
+        continue;
+      }
+
+      const snippet = getMessageSnippet(
+        { data: activeGroup.data, encoding: activeGroup.encoding ?? 'BASE64', isText: true },
+        t,
+        80,
+      );
+
+      previews.set(
+        activeGroup.groupId,
+        activeGroup.senderName ? `${activeGroup.senderName}: ${snippet}` : snippet,
+      );
+    }
+
+    return previews;
+  }, [qortalActiveChats.value.groups, t]);
   const groupConversations = useMemo(
     () =>
       sortedGroups.map((group) =>
@@ -1645,10 +1711,12 @@ export default function App() {
           group,
           membership: 'joined',
           network: 'qortal',
+          preview: qortalGroupPreviewByGroupId.get(group.groupId) ?? null,
           title: getGroupTitle(group, t),
+          unread: unreadQortalGroupIds.has(group.groupId),
         }),
       ),
-    [qortalGroupActivityByIdDisplay, qortalGroups.value, t],
+    [qortalGroupActivityByIdDisplay, qortalGroupPreviewByGroupId, qortalGroups.value, t, unreadQortalGroupIds],
   );
   const qortalGroupDiscoveryConversations = useMemo(
     () =>
@@ -2350,8 +2418,38 @@ export default function App() {
     }
   }
 
+  async function loadQortalActiveChats(
+    address: string,
+    actionList = qortalBridge.value.actions,
+    options: { quiet?: boolean } = {},
+  ) {
+    const requestId = qortalActiveChatsRequestGuardRef.current.begin();
+
+    if (!options.quiet) {
+      setQortalActiveChats((current) => ({ phase: 'loading', value: current.value }));
+    }
+
+    try {
+      const nextActiveChats = await getActiveChats('qortal', address, actionList);
+
+      if (qortalActiveChatsRequestGuardRef.current.isLatest(requestId)) {
+        setQortalActiveChats({ phase: 'ready', value: nextActiveChats });
+      }
+    } catch (error) {
+      if (!options.quiet && qortalActiveChatsRequestGuardRef.current.isLatest(requestId)) {
+        setQortalActiveChats((current) => ({
+          error: getBridgeErrorMessage(error, t('status.loadingError.activeChats'), t),
+          phase: 'error',
+          value: current.value,
+        }));
+      }
+    }
+  }
+
   async function refreshQortalSelectedAccount(actionList = qortalBridge.value.actions) {
     const requestId = qortalAccountRefreshGuardRef.current.begin();
+
+    qortalActiveChatsRequestGuardRef.current.begin();
 
     // A selected-account event means the old chain identity is no longer safe
     // to use. Clear it synchronously so the composer cannot send with the old
@@ -2360,6 +2458,7 @@ export default function App() {
     setQortalAccountError('');
     setQortalMemberGroups({ phase: 'loading', value: emptyGroups });
     setQortalGroups({ phase: 'loading', value: emptyGroups });
+    setQortalActiveChats({ phase: 'loading', value: emptyActiveChats });
     qortalGroupDiscoveryRequestRef.current += 1;
     setQortalGroupDiscoveries(createState([]));
 
@@ -2382,6 +2481,7 @@ export default function App() {
           phase: 'error',
           value: emptyGroups,
         });
+        void loadQortalActiveChats(snapshot.account.address, actionList);
         return;
       }
 
@@ -2394,6 +2494,7 @@ export default function App() {
         phase: 'ready',
         value: snapshot.memberGroups.filter((group) => group.groupId !== GENERAL_CHAT_GROUP_ID),
       });
+      void loadQortalActiveChats(snapshot.account.address, actionList);
     } catch (error) {
       if (!qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
         return;
@@ -2403,6 +2504,7 @@ export default function App() {
       setQortalAccountError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       setQortalMemberGroups({ phase: 'ready', value: emptyGroups });
       setQortalGroups({ phase: 'ready', value: emptyGroups });
+      setQortalActiveChats({ phase: 'ready', value: emptyActiveChats });
     }
   }
 
@@ -2424,7 +2526,13 @@ export default function App() {
     }
   }
 
-  async function loadGroupMembers(group: GroupData, actionList = actions, options: { quiet?: boolean } = {}) {
+  async function loadGroupMembers(
+    group: GroupData,
+    actionList = actions,
+    options: { network?: ChatNetwork; quiet?: boolean } = {},
+  ) {
+    const requestId = groupMembersRequestGuardRef.current.begin();
+
     if (isGeneralChatGroup(group)) {
       setGroupMembers({ phase: 'ready', value: emptyMembers });
       return;
@@ -2435,11 +2543,15 @@ export default function App() {
     }
 
     try {
-      setGroupMembers({ phase: 'ready', value: await getGroupMembers('qortium', group.groupId, actionList) });
+      const members = await getGroupMembers(options.network ?? 'qortium', group.groupId, actionList);
+
+      if (groupMembersRequestGuardRef.current.isLatest(requestId)) {
+        setGroupMembers({ phase: 'ready', value: members });
+      }
     } catch (error) {
       // Quiet 30s refreshes keep the last good roster on a transient blip
       // instead of flashing an error banner (same rule as loadMessages).
-      if (options.quiet) {
+      if (options.quiet || !groupMembersRequestGuardRef.current.isLatest(requestId)) {
         return;
       }
 
@@ -2805,11 +2917,11 @@ export default function App() {
       });
 
       if (!options.quiet) {
-        // Pagination beyond the first window is deferred for Qortal in this
-        // slice (see loadOlderMessages' guard below) — reachedStart stays
-        // `true` unconditionally so the "load older" affordance never renders
-        // as available for a Qortal chat.
-        setOlderMessagesState({ error: '', loading: false, reachedStart: true });
+        setOlderMessagesState({
+          error: '',
+          loading: false,
+          reachedStart: nextMessages.length < DEFAULT_LIST_LIMIT,
+        });
       }
     } catch (error) {
       if (options.quiet || isStale()) {
@@ -2829,14 +2941,6 @@ export default function App() {
     const chat = selectedChat;
 
     if (!chat || loadingOlderRef.current || olderMessagesState.reachedStart) {
-      return;
-    }
-
-    // Pagination beyond the first window is deferred for Qortal in this slice
-    // (see the slice-2 report) — the "load older" affordance stays hidden for
-    // a Qortal chat (see olderMessagesReachedStart wiring below), so this is a
-    // defensive no-op rather than the expected path.
-    if (chat.network === 'qortal') {
       return;
     }
 
@@ -2879,9 +2983,9 @@ export default function App() {
     try {
       const olderWindow =
         chat.kind === 'group'
-          ? await getGroupMessages('qortium', chat.group, actions, {
+          ? await getGroupMessages(chat.network ?? 'qortium', chat.group, chat.network === 'qortal' ? qortalBridge.value.actions : actions, {
               before: olderBefore,
-              decryptPrivate: shouldDecryptPrivateGroup,
+              decryptPrivate: chat.network === 'qortal' ? false : shouldDecryptPrivateGroup,
             })
           : await getDirectMessages(chat.direct.address, actions, { before: olderBefore });
 
@@ -3158,12 +3262,19 @@ export default function App() {
       options.onSettled?.();
       return;
     }
+    const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
       const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
 
       updatePendingSends((current) =>
-        current.map((candidate) => (candidate.localId === localId ? resolvePendingSend(candidate, result) : candidate)),
+        current.map((candidate) =>
+          candidate.localId === localId &&
+          candidate.delivery.phase === 'pending' &&
+          candidate.delivery.updatedAt === attemptUpdatedAt
+            ? resolvePendingSend(candidate, result)
+            : candidate,
+        ),
       );
 
       if (chat.kind === 'direct') {
@@ -3183,7 +3294,13 @@ export default function App() {
       const message = getBridgeErrorMessage(error, fallback, t);
 
       updatePendingSends((current) =>
-        current.map((candidate) => (candidate.localId === localId ? failPendingSend(candidate, message) : candidate)),
+        current.map((candidate) =>
+          candidate.localId === localId &&
+          candidate.delivery.phase === 'pending' &&
+          candidate.delivery.updatedAt === attemptUpdatedAt
+            ? failPendingSend(candidate, message)
+            : candidate,
+        ),
       );
 
       // A failed reaction reverts its chip (mergeOptimisticMessages drops a
@@ -3204,12 +3321,19 @@ export default function App() {
     if (!entry) {
       return;
     }
+    const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
       const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
 
       updatePendingRevisions((current) =>
-        current.map((candidate) => (candidate.localId === localId ? resolvePendingRevision(candidate, result) : candidate)),
+        current.map((candidate) =>
+          candidate.localId === localId &&
+          candidate.delivery.phase === 'pending' &&
+          candidate.delivery.updatedAt === attemptUpdatedAt
+            ? resolvePendingRevision(candidate, result)
+            : candidate,
+        ),
       );
 
       if (chat.kind === 'direct') {
@@ -3223,7 +3347,13 @@ export default function App() {
       const message = getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t);
 
       updatePendingRevisions((current) =>
-        current.map((candidate) => (candidate.localId === localId ? failPendingRevision(candidate, message) : candidate)),
+        current.map((candidate) =>
+          candidate.localId === localId &&
+          candidate.delivery.phase === 'pending' &&
+          candidate.delivery.updatedAt === attemptUpdatedAt
+            ? failPendingRevision(candidate, message)
+            : candidate,
+        ),
       );
     }
   }
@@ -3688,23 +3818,26 @@ export default function App() {
         ]);
         void runPendingRevision(localId, chat, selectedAccount);
       } else {
-        updatePendingSends((current) => [
-          ...current,
-          createPendingSend({
-            chatKey,
-            chatReference,
-            kind: 'message',
-            localId,
-            recipient: chat.kind === 'direct' ? chat.direct.address : null,
-            recipientName: chat.kind === 'direct' ? (chat.direct.name ?? null) : null,
-            sender: senderAddress,
-            senderName,
-            target,
-            text: message,
-            timestamp: Date.now(),
-            txGroupId: chat.kind === 'group' ? chat.group.groupId : 0,
-          }),
-        ]);
+        const pendingSend = createPendingSend({
+          chatKey,
+          chatReference,
+          kind: 'message',
+          localId,
+          recipient: chat.kind === 'direct' ? chat.direct.address : null,
+          recipientName: chat.kind === 'direct' ? (chat.direct.name ?? null) : null,
+          sender: senderAddress,
+          senderName,
+          target,
+          text: message,
+          timestamp: Date.now(),
+          txGroupId: chat.kind === 'group' ? chat.group.groupId : 0,
+        });
+
+        if (hasActiveDuplicateSend(pendingSendsRef.current, pendingSend)) {
+          return;
+        }
+
+        updatePendingSends((current) => [...current, pendingSend]);
         void runPendingSend(localId, chat, selectedAccount);
       }
 
@@ -4052,16 +4185,16 @@ export default function App() {
     if (showConversation) {
       setMobileChatView(true);
     }
-    writeChatRoute({ group: group.groupId }, historyMode);
+    writeChatRoute({ group: group.groupId, network: 'qortium' }, historyMode);
   }
 
-  // Qortal counterpart of selectGroup. Deliberately does NOT call
-  // rememberLastChat/writeChatRoute — chatStorage's last-chat and deepLink's
-  // URL route are both Qortium-only schemas in this slice (see the slice-2
-  // report), so a selected Qortal chat does not persist across a reload or
-  // participate in browser back/forward; it is always an explicit click.
   function selectQortalGroup(group: GroupData, options: ChatSelectionOptions = {}) {
-    const { showConversation = true, userInitiated = true } = options;
+    const {
+      historyMode = 'push',
+      remember = true,
+      showConversation = true,
+      userInitiated = true,
+    } = options;
 
     setWriteError('');
     setDirectLookupError('');
@@ -4070,10 +4203,16 @@ export default function App() {
     if (userInitiated) {
       userSelectedChatRef.current = true;
     }
-    setSelectedChat({ group, kind: 'group', network: 'qortal' });
+    const chat: SelectedChat = { group, kind: 'group', network: 'qortal' };
+
+    setSelectedChat(chat);
+    if (remember) {
+      rememberLastChat(chat);
+    }
     if (showConversation) {
       setMobileChatView(true);
     }
+    writeChatRoute({ group: group.groupId, network: 'qortal' }, historyMode);
   }
 
   function selectDirect(direct: ActiveDirectChat, options: ChatSelectionOptions = {}) {
@@ -4101,7 +4240,7 @@ export default function App() {
     if (showConversation) {
       setMobileChatView(true);
     }
-    writeChatRoute({ address: direct.address }, historyMode);
+    writeChatRoute({ address: direct.address, network: 'qortium' }, historyMode);
   }
 
   // Remove a persisted direct from the sidebar. If it is the open chat, fall back
@@ -4446,6 +4585,8 @@ export default function App() {
       qortalAvailableRef.current = isAvailable;
       setQortalAvailable(isAvailable);
       selectedAccountRefreshActionsRef.current.qortal = isAvailable ? nextQortalBridge.actions : [];
+    } else {
+      setQortalBridge((current) => ({ phase: 'ready', value: current.value }));
     }
 
     accountRefreshCoordinator.markReady(() => selectedAccountRefreshCallbackRef.current());
@@ -4485,13 +4626,16 @@ export default function App() {
   // earlier pending target before this effect gets a chance to apply it.
   useEffect(() => {
     const pending = pendingDeepLinkRef.current;
+    const targetNetwork = pending?.target?.network ?? 'qortium';
+    const targetGroups = targetNetwork === 'qortal' ? qortalGroups : groups;
+    const targetActiveChats = targetNetwork === 'qortal' ? qortalActiveChats : activeChats;
 
     if (
       !pending ||
-      groups.phase === 'idle' ||
-      groups.phase === 'loading' ||
-      activeChats.phase === 'idle' ||
-      activeChats.phase === 'loading'
+      targetGroups.phase === 'idle' ||
+      targetGroups.phase === 'loading' ||
+      targetActiveChats.phase === 'idle' ||
+      targetActiveChats.phase === 'loading'
     ) {
       return;
     }
@@ -4503,39 +4647,44 @@ export default function App() {
     // present, prefer the direct conversation, matching the notification's most
     // specific recipient target.
     if (pending.target?.address) {
-      selectDirect(
-        { address: pending.target.address },
-        { historyMode: pending.historyMode },
-      );
+      if (targetNetwork === 'qortium') {
+        selectDirect(
+          { address: pending.target.address },
+          { historyMode: pending.historyMode },
+        );
+      }
       return;
     }
 
-    const group = groups.value.find((candidate) => candidate.groupId === pending.target?.group);
+    const group = targetGroups.value.find((candidate) => candidate.groupId === pending.target?.group);
+    const selectTargetGroup = targetNetwork === 'qortal' ? selectQortalGroup : selectGroup;
 
     if (group) {
-      selectGroup(group, { historyMode: pending.historyMode });
+      selectTargetGroup(group, { historyMode: pending.historyMode });
       return;
     }
 
-    if (pending.target?.group === GENERAL_CHAT_GROUP_ID) {
+    if (targetNetwork === 'qortium' && pending.target?.group === GENERAL_CHAT_GROUP_ID) {
       selectGroup(withGeneralChatGroup([], '', t)[0], { historyMode: pending.historyMode });
       return;
     }
 
     if (pending.target?.group !== undefined) {
-      void getGroup('qortium', pending.target.group, actions)
+      const targetActions = targetNetwork === 'qortal' ? qortalBridge.value.actions : actions;
+
+      void getGroup(targetNetwork, pending.target.group, targetActions)
         .then((resolvedGroup) => {
           if (deepLinkResolutionRef.current === resolutionId) {
-            selectGroup(resolvedGroup, { historyMode: pending.historyMode });
+            selectTargetGroup(resolvedGroup, { historyMode: pending.historyMode });
           }
         })
         .catch(() => {
           if (
             deepLinkResolutionRef.current === resolutionId &&
             ((pending.isInitial && !hasSelectedChatRef.current) || pending.historyMode === 'none') &&
-            groups.value.length > 0
+            targetGroups.value.length > 0
           ) {
-            selectGroup(groups.value[0], {
+            selectTargetGroup(targetGroups.value[0], {
               historyMode: pending.historyMode,
               remember: false,
               showConversation: false,
@@ -4548,8 +4697,8 @@ export default function App() {
 
     // An unresolved URL group should behave like the pre-deep-link startup
     // path. Runtime requests retain the current conversation instead.
-    if (pending.isInitial && !hasSelectedChatRef.current && groups.value.length > 0) {
-      selectGroup(groups.value[0], {
+    if (pending.isInitial && !hasSelectedChatRef.current && targetGroups.value.length > 0) {
+      selectTargetGroup(targetGroups.value[0], {
         historyMode: pending.historyMode,
         remember: false,
         showConversation: false,
@@ -4569,7 +4718,17 @@ export default function App() {
         userInitiated: false,
       });
     }
-  }, [actionsKey, activeChats.phase, deepLinkRevision, groups.phase, groups.value]);
+  }, [
+    actionsKey,
+    activeChats.phase,
+    deepLinkRevision,
+    groups.phase,
+    groups.value,
+    qortalActiveChats.phase,
+    qortalBridge.value.actions.join('\n'),
+    qortalGroups.phase,
+    qortalGroups.value,
+  ]);
 
   useEffect(() => {
     if (!account || selectedGroupId === null || !isSelectedDevGroup || !isApproverOfSelectedGroup) {
@@ -4728,6 +4887,21 @@ export default function App() {
     });
   }, [groupActivityById]);
 
+  useEffect(() => {
+    setLastReadByQortalGroupId((current) => {
+      let next: Map<number, number> | null = null;
+
+      for (const [groupId, timestamp] of qortalGroupActivityByIdDisplay) {
+        if (!current.has(groupId)) {
+          next ??= new Map(current);
+          next.set(groupId, timestamp);
+        }
+      }
+
+      return next ?? current;
+    });
+  }, [qortalGroupActivityByIdDisplay]);
+
   // Announce only genuinely new incoming messages to screen readers: a message
   // newer than the last seen tail, in the SAME chat already on screen (so chat
   // switches and first loads are silent), not sent by the current account, and
@@ -4882,10 +5056,15 @@ export default function App() {
 
     if (selectedChat.kind === 'group') {
       const groupId = selectedChat.group.groupId;
-      const timestamp = groupActivityById.get(groupId);
+      const isQortal = selectedChat.network === 'qortal';
+      const timestamp = isQortal
+        ? qortalGroupActivityByIdDisplay.get(groupId)
+        : groupActivityById.get(groupId);
 
       if (typeof timestamp === 'number') {
-        setLastReadByGroupId((current) =>
+        const setLastRead = isQortal ? setLastReadByQortalGroupId : setLastReadByGroupId;
+
+        setLastRead((current) =>
           (current.get(groupId) ?? -1) >= timestamp ? current : new Map(current).set(groupId, timestamp),
         );
       }
@@ -4899,11 +5078,22 @@ export default function App() {
         );
       }
     }
-  }, [selectedChat, hasSelectedMessages, messages.value, groupActivityById, directActivityByAddress]);
+  }, [
+    selectedChat,
+    hasSelectedMessages,
+    messages.value,
+    groupActivityById,
+    qortalGroupActivityByIdDisplay,
+    directActivityByAddress,
+  ]);
 
   useEffect(() => {
     lastReadByGroupIdRef.current = lastReadByGroupId;
   }, [lastReadByGroupId]);
+
+  useEffect(() => {
+    lastReadByQortalGroupIdRef.current = lastReadByQortalGroupId;
+  }, [lastReadByQortalGroupId]);
 
   useEffect(() => {
     lastReadByAddressRef.current = lastReadByAddress;
@@ -4921,7 +5111,9 @@ export default function App() {
 
     const watermark =
       selectedChat.kind === 'group'
-        ? lastReadByGroupIdRef.current.get(selectedChat.group.groupId)
+        ? selectedChat.network === 'qortal'
+          ? lastReadByQortalGroupIdRef.current.get(selectedChat.group.groupId)
+          : lastReadByGroupIdRef.current.get(selectedChat.group.groupId)
         : lastReadByAddressRef.current.get(selectedChat.direct.address);
 
     setUnreadDividerTimestamp(typeof watermark === 'number' ? watermark : null);
@@ -5078,6 +5270,7 @@ export default function App() {
     const watermarks = account ? readReadWatermarks(account.address) : null;
     skipWatermarkPersistRef.current = true;
     setLastReadByGroupId(watermarks?.groups ?? new Map());
+    setLastReadByQortalGroupId(watermarks?.qortalGroups ?? new Map());
     setLastReadByAddress(watermarks?.directs ?? new Map());
     // Land any debounced bookmark write for the previous account before its map
     // is replaced below (the flush writes under the address captured when the
@@ -5119,8 +5312,12 @@ export default function App() {
       return;
     }
 
-    writeReadWatermarks(account.address, { directs: lastReadByAddress, groups: lastReadByGroupId });
-  }, [account, lastReadByGroupId, lastReadByAddress]);
+    writeReadWatermarks(account.address, {
+      directs: lastReadByAddress,
+      groups: lastReadByGroupId,
+      qortalGroups: lastReadByQortalGroupId,
+    });
+  }, [account, lastReadByGroupId, lastReadByQortalGroupId, lastReadByAddress]);
 
   // Load this account's persisted direct chats from storage.
   useEffect(() => {
@@ -5136,15 +5333,23 @@ export default function App() {
       return;
     }
 
-    restoredForAccountRef.current = account.address;
-
     if (userSelectedChatRef.current) {
+      restoredForAccountRef.current = account.address;
       return;
     }
 
     const saved = readLastChat(account.address);
 
+    if (saved?.network === 'qortal' && (qortalBridge.phase === 'idle' || qortalBridge.phase === 'loading')) {
+      return;
+    }
+
+    restoredForAccountRef.current = account.address;
+
     if (saved?.kind === 'direct') {
+      if (saved.network === 'qortal') {
+        return;
+      }
       selectDirect(saved.direct, {
         historyMode: 'replace',
         remember: false,
@@ -5155,7 +5360,12 @@ export default function App() {
     }
 
     if (saved?.kind === 'group') {
-      selectGroup(saved.group, {
+      if (saved.network === 'qortal' && !qortalAvailable) {
+        return;
+      }
+      const selectSavedGroup = saved.network === 'qortal' ? selectQortalGroup : selectGroup;
+
+      selectSavedGroup(saved.group, {
         historyMode: 'replace',
         remember: false,
         showConversation: false,
@@ -5176,7 +5386,7 @@ export default function App() {
         userInitiated: false,
       });
     }
-  }, [account?.address]);
+  }, [account?.address, qortalAvailable, qortalBridge.phase]);
 
   useEffect(() => {
     if (groups.value.length === 0) {
@@ -5383,6 +5593,26 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [account?.address, actionsKey, canReadPrivateDirectChat, isAccountUnlocked]);
 
+  // Qortal does not have a protocol-specific websocket route in the current
+  // bridge, so refresh its active group snapshot while visible. This drives
+  // sidebar previews and Chat-owned unread watermarks without asking Home to
+  // maintain any unread state.
+  useEffect(() => {
+    if (!qortalAccount || !qortalAvailable) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      void loadQortalActiveChats(qortalAccount.address, qortalBridge.value.actions, { quiet: true });
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [qortalAccount?.address, qortalAvailable, qortalBridge.value.actions.join('\n')]);
+
   useEffect(() => {
     applyDisplaySettings(displaySettings);
   }, [displaySettings]);
@@ -5406,10 +5636,10 @@ export default function App() {
     // action). Polling pauses while hidden, so the count freezes at its last
     // value until the tab is next visible; still a real signal on return and
     // whenever a websocket frame lands before the tab goes fully idle.
-    const unreadCount = unreadGroupIds.size + unreadDirectAddresses.size;
+    const unreadCount = unreadGroupIds.size + unreadQortalGroupIds.size + unreadDirectAddresses.size;
 
     document.title = unreadCount > 0 ? `(${unreadCount}) ${t('app.title')}` : t('app.title');
-  }, [displaySettings.language, t, unreadGroupIds, unreadDirectAddresses]);
+  }, [displaySettings.language, t, unreadGroupIds, unreadQortalGroupIds, unreadDirectAddresses]);
 
   useEffect(() => {
     function handlePopState() {
@@ -5562,19 +5792,20 @@ export default function App() {
     loadingOlderRef.current = false;
 
     if (!selectedChat) {
+      groupMembersRequestGuardRef.current.begin();
       setMessagesChatKey('');
       setMessages({ phase: 'ready', value: emptyMessages });
       setGroupMembers({ phase: 'ready', value: emptyMembers });
       return undefined;
     }
 
-    // GET_GROUP_MEMBERS here is Qortium-only (loadGroupMembers is not
-    // network-parameterized at its call sites) — a Qortal group has no member
-    // roster wired in this slice, so leave groupMembers empty rather than
-    // querying the wrong chain's groupId namespace.
-    if (selectedChat.kind === 'group' && selectedChat.network !== 'qortal') {
-      void loadGroupMembers(selectedChat.group);
+    if (selectedChat.kind === 'group') {
+      const network = selectedChat.network ?? 'qortium';
+      const actionList = network === 'qortal' ? qortalBridge.value.actions : actions;
+
+      void loadGroupMembers(selectedChat.group, actionList, { network });
     } else {
+      groupMembersRequestGuardRef.current.begin();
       setGroupMembers({ phase: 'ready', value: emptyMembers });
     }
 
@@ -5724,6 +5955,7 @@ export default function App() {
   }, [
     selectedChatKey,
     actionsKey,
+    qortalBridge.value.actions.join('\n'),
     isAccountUnlocked,
     selectedClosedGroupReadKey,
     bridge.value.transport,
@@ -5898,11 +6130,14 @@ export default function App() {
     }
 
     const interval = window.setInterval(() => {
-      void loadGroupMembers(selectedGroup, actions, { quiet: true });
+      const network = selectedChat?.network ?? 'qortium';
+      const actionList = network === 'qortal' ? qortalBridge.value.actions : actions;
+
+      void loadGroupMembers(selectedGroup, actionList, { network, quiet: true });
     }, 30000);
 
     return () => window.clearInterval(interval);
-  }, [selectedGroupId, actionsKey]);
+  }, [selectedChatKey, actionsKey, qortalBridge.value.actions.join('\n')]);
 
   useEffect(() => {
     if (!account || selectedGroupId === null || !isSelectedDevGroup || !isApproverOfSelectedGroup) {
@@ -6308,6 +6543,14 @@ export default function App() {
                     <h2>{t('label.group.joinedGroups')}</h2>
                   </button>
                   <div className="panel__header-actions">
+                    {hasUnreadQortalGroups ? (
+                      <span
+                        aria-label={t('aria.unreadGroups')}
+                        className="panel__unread-dot"
+                        role="img"
+                        title={t('aria.unreadGroups')}
+                      />
+                    ) : null}
                     <span className="panel__count">{qortalGroups.value.length}</span>
                     <button
                       aria-expanded={isQortalGroupSearchOpen}
@@ -6369,6 +6612,9 @@ export default function App() {
                 ) : null}
                 {!isQortalGroupsCollapsed && qortalGroups.phase === 'error' ? (
                   <p className="error">{qortalGroups.error}</p>
+                ) : null}
+                {!isQortalGroupsCollapsed && qortalActiveChats.phase === 'error' ? (
+                  <p className="error">{qortalActiveChats.error}</p>
                 ) : null}
                 {qortalGroups.phase === 'loading' && !isQortalGroupsCollapsed ? (
                   <LoadingRows count={5} label={t('label.loading')} />

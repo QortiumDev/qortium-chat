@@ -1,9 +1,12 @@
 // Conversation targets supplied by Qortium Home. The values are deliberately
 // validated here before they reach the app's selection state: a target can open
 // a conversation, but it cannot become an arbitrary search or API input.
+import type { ChatNetwork } from './types';
+
 export type ChatDeepLinkTarget = {
   address?: string;
   group?: number;
+  network?: ChatNetwork;
 };
 
 export type ChatHistoryMode = 'none' | 'push' | 'replace';
@@ -24,7 +27,7 @@ type BrowserLike = {
   location: LocationLike;
 };
 
-const CHAT_ROUTE_QUERY_KEYS = ['address', 'group'] as const;
+const CHAT_ROUTE_QUERY_KEYS = ['address', 'group', 'network'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -46,7 +49,15 @@ function parseGroupId(value: string): number | null {
   return Number.isSafeInteger(group) ? group : null;
 }
 
-function parseTarget(address: unknown, group: unknown): ChatDeepLinkTarget | null {
+function parseNetwork(value: unknown): ChatNetwork | undefined | null {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return value === 'qortal' || value === 'qortium' ? value : null;
+}
+
+function parseTarget(address: unknown, group: unknown, network: unknown): ChatDeepLinkTarget | null {
   if (address !== undefined && (typeof address !== 'string' || !isPlausibleQortiumAddress(address))) {
     return null;
   }
@@ -56,8 +67,9 @@ function parseTarget(address: unknown, group: unknown): ChatDeepLinkTarget | nul
   }
 
   const parsedGroup = typeof group === 'string' ? parseGroupId(group) : undefined;
+  const parsedNetwork = parseNetwork(network);
 
-  if (parsedGroup === null) {
+  if (parsedGroup === null || parsedNetwork === null) {
     return null;
   }
 
@@ -68,13 +80,18 @@ function parseTarget(address: unknown, group: unknown): ChatDeepLinkTarget | nul
   return {
     ...(typeof address === 'string' ? { address } : {}),
     ...(typeof parsedGroup === 'number' ? { group: parsedGroup } : {}),
+    ...(parsedNetwork ? { network: parsedNetwork } : {}),
   };
 }
 
 export function parseDeepLinkSearch(search: string): ChatDeepLinkTarget | null {
   const query = new URLSearchParams(search);
 
-  return parseTarget(query.get('address') ?? undefined, query.get('group') ?? undefined);
+  return parseTarget(
+    query.get('address') ?? undefined,
+    query.get('group') ?? undefined,
+    query.get('network') ?? undefined,
+  );
 }
 
 // Rewrite only the conversation target. Home's bridge/display parameters and
@@ -96,6 +113,10 @@ export function getChatRouteUrl(
     query.set('address', target.address);
   } else if (target.group !== undefined) {
     query.set('group', String(target.group));
+  }
+
+  if (target.address || target.group !== undefined) {
+    query.set('network', target.network ?? 'qortium');
   }
 
   const serializedQuery = query.toString();
@@ -135,5 +156,5 @@ export function parseOpenAppTargetMessage(value: unknown): ChatDeepLinkTarget | 
     return null;
   }
 
-  return parseTarget(value.query.address, value.query.group);
+  return parseTarget(value.query.address, value.query.group, value.query.network);
 }

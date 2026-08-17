@@ -27,6 +27,12 @@ import { encodeBase64 } from './chatText';
 import type { ChatMessage, ChatNetwork } from './types';
 
 export type PendingSendStatus = 'failed' | 'sending';
+export type SendDeliveryPhase = 'broadcast' | 'confirmed' | 'expired' | 'pending' | 'rejected';
+
+export type SendDeliveryState = {
+  readonly phase: SendDeliveryPhase;
+  readonly updatedAt: number;
+};
 
 // `network` is optional and defaults to 'qortium' at every read site (see
 // App.tsx's dispatchChatSend) — slice-1 callers that never set it keep
@@ -46,6 +52,7 @@ export type PendingSend = {
   readonly chatReference?: string;
   readonly error?: string;
   readonly kind: PendingSendKind;
+  readonly delivery: SendDeliveryState;
   readonly localId: string;
   readonly message: ChatMessage;
   /** The signature the bridge returned once the send resolves; null while still in flight. */
@@ -64,6 +71,7 @@ export type PendingRevision = {
   readonly chatReference: string;
   readonly error?: string;
   readonly kind: PendingRevisionKind;
+  readonly delivery: SendDeliveryState;
   readonly localId: string;
   readonly resolvedSignature: string | null;
   readonly status: PendingSendStatus;
@@ -147,6 +155,7 @@ export function createPendingSend(input: {
     chatKey: input.chatKey,
     chatReference: input.chatReference,
     kind: input.kind,
+    delivery: { phase: 'pending', updatedAt: input.timestamp },
     localId: input.localId,
     message: buildOptimisticChatMessage({
       chatReference: input.chatReference,
@@ -168,13 +177,22 @@ export function createPendingSend(input: {
 }
 
 /** The bridge accepted the broadcast: record the real signature. Still 'sending' — reconciliation (dropping the echo) happens once that signature shows up in a fetched/live list; see mergeOptimisticMessages / prunePendingSends. */
-export function resolvePendingSend(pending: PendingSend, result: { signature: string }): PendingSend {
-  return { ...pending, resolvedSignature: result.signature };
-}
-
-export function failPendingSend(pending: PendingSend, error: string): PendingSend {
+export function resolvePendingSend(
+  pending: PendingSend,
+  result: { signature: string },
+  timestamp: number = Date.now(),
+): PendingSend {
   return {
     ...pending,
+    delivery: { phase: 'broadcast', updatedAt: timestamp },
+    resolvedSignature: result.signature,
+  };
+}
+
+export function failPendingSend(pending: PendingSend, error: string, timestamp: number = Date.now()): PendingSend {
+  return {
+    ...pending,
+    delivery: { phase: 'rejected', updatedAt: timestamp },
     error,
     message: { ...pending.message, sendState: 'failed' },
     status: 'failed',
@@ -185,11 +203,97 @@ export function failPendingSend(pending: PendingSend, error: string): PendingSen
 export function retryPendingSend(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
   return {
     ...pending,
+    delivery: { phase: 'pending', updatedAt: timestamp },
     error: undefined,
     message: { ...pending.message, sendState: 'sending', timestamp },
     resolvedSignature: null,
     status: 'sending',
   };
+}
+
+export function confirmPendingSend(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
+  return { ...pending, delivery: { phase: 'confirmed', updatedAt: timestamp } };
+}
+
+function targetsEqual(first: PendingSendTarget, second: PendingSendTarget) {
+  if (first.kind !== second.kind || getTargetNetwork(first) !== getTargetNetwork(second)) {
+    return false;
+  }
+
+  return first.kind === 'group'
+    ? second.kind === 'group' && first.groupId === second.groupId
+    : second.kind === 'direct' && first.address === second.address;
+}
+
+/** Prevents an identical click/retry from starting another broadcast while the
+ * first attempt is still awaiting the bridge or confirmation. Rejected and
+ * expired attempts are terminal and may be explicitly retried. */
+export function hasActiveDuplicateSend(
+  pending: readonly PendingSend[],
+  candidate: Pick<PendingSend, 'chatReference' | 'target' | 'text'>,
+) {
+  return pending.some(
+    (entry) =>
+      (entry.delivery.phase === 'pending' || entry.delivery.phase === 'broadcast') &&
+      entry.text === candidate.text &&
+      entry.chatReference === candidate.chatReference &&
+      targetsEqual(entry.target, candidate.target),
+  );
+}
+
+export function expirePendingSends(
+  pending: PendingSend[],
+  now: number,
+  timeoutMs: number,
+  error: string,
+): PendingSend[] {
+  let changed = false;
+  const next = pending.map((entry) => {
+    if (
+      entry.delivery.phase !== 'broadcast' ||
+      now - entry.delivery.updatedAt < timeoutMs
+    ) {
+      return entry;
+    }
+
+    changed = true;
+    return {
+      ...entry,
+      delivery: { phase: 'expired' as const, updatedAt: now },
+      error,
+      message: { ...entry.message, sendState: 'failed' as const },
+      status: 'failed' as const,
+    };
+  });
+
+  return changed ? next : pending;
+}
+
+export function expirePendingRevisions(
+  pending: PendingRevision[],
+  now: number,
+  timeoutMs: number,
+  error: string,
+): PendingRevision[] {
+  let changed = false;
+  const next = pending.map((entry) => {
+    if (
+      entry.delivery.phase !== 'broadcast' ||
+      now - entry.delivery.updatedAt < timeoutMs
+    ) {
+      return entry;
+    }
+
+    changed = true;
+    return {
+      ...entry,
+      delivery: { phase: 'expired' as const, updatedAt: now },
+      error,
+      status: 'failed' as const,
+    };
+  });
+
+  return changed ? next : pending;
 }
 
 // Overlays still-pending sends onto a confirmed (fetched/live) list, for the
@@ -258,11 +362,15 @@ export function createPendingRevision(input: {
   localId: string;
   target: PendingSendTarget;
   text: string;
+  timestamp?: number;
 }): PendingRevision {
+  const timestamp = input.timestamp ?? Date.now();
+
   return {
     chatKey: input.chatKey,
     chatReference: input.chatReference,
     kind: input.kind,
+    delivery: { phase: 'pending', updatedAt: timestamp },
     localId: input.localId,
     resolvedSignature: null,
     status: 'sending',
@@ -271,16 +379,34 @@ export function createPendingRevision(input: {
   };
 }
 
-export function resolvePendingRevision(pending: PendingRevision, result: { signature: string }): PendingRevision {
-  return { ...pending, resolvedSignature: result.signature };
+export function resolvePendingRevision(
+  pending: PendingRevision,
+  result: { signature: string },
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return {
+    ...pending,
+    delivery: { phase: 'broadcast', updatedAt: timestamp },
+    resolvedSignature: result.signature,
+  };
 }
 
-export function failPendingRevision(pending: PendingRevision, error: string): PendingRevision {
-  return { ...pending, error, status: 'failed' };
+export function failPendingRevision(
+  pending: PendingRevision,
+  error: string,
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return { ...pending, delivery: { phase: 'rejected', updatedAt: timestamp }, error, status: 'failed' };
 }
 
-export function retryPendingRevision(pending: PendingRevision): PendingRevision {
-  return { ...pending, error: undefined, resolvedSignature: null, status: 'sending' };
+export function retryPendingRevision(pending: PendingRevision, timestamp: number = Date.now()): PendingRevision {
+  return {
+    ...pending,
+    delivery: { phase: 'pending', updatedAt: timestamp },
+    error: undefined,
+    resolvedSignature: null,
+    status: 'sending',
+  };
 }
 
 export function prunePendingRevisions(

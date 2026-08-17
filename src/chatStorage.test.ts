@@ -110,17 +110,24 @@ describe('mergePersistedDirect', () => {
 
 describe('toStoredSelectedChat', () => {
   it('stores a group as-is', () => {
-    expect(toStoredSelectedChat({ kind: 'group', group })).toEqual({ kind: 'group', group });
+    expect(toStoredSelectedChat({ kind: 'group', group })).toEqual({ kind: 'group', group, network: 'qortium' });
+    expect(toStoredSelectedChat({ kind: 'group', group, network: 'qortal' })).toEqual({
+      kind: 'group',
+      group,
+      network: 'qortal',
+    });
   });
 
   it('stores a direct address and name, dropping the name when absent', () => {
     expect(toStoredSelectedChat({ kind: 'direct', direct: { address: 'Qalice', name: 'alice' } })).toEqual({
       kind: 'direct',
       direct: { address: 'Qalice', name: 'alice' },
+      network: 'qortium',
     });
     expect(toStoredSelectedChat({ kind: 'direct', direct: { address: 'Qbob' } })).toEqual({
       kind: 'direct',
       direct: { address: 'Qbob' },
+      network: 'qortium',
     });
   });
 });
@@ -133,11 +140,15 @@ describe('storage round-trips', () => {
   afterEach(removeStorage);
 
   it('persists and reads back the last chat', () => {
-    writeLastChat(ADDRESS, { kind: 'group', group });
-    expect(readLastChat(ADDRESS)).toEqual({ kind: 'group', group });
+    writeLastChat(ADDRESS, { kind: 'group', group, network: 'qortal' });
+    expect(readLastChat(ADDRESS)).toEqual({ kind: 'group', group, network: 'qortal' });
 
-    writeLastChat(ADDRESS, { kind: 'direct', direct: { address: 'Qalice', name: 'alice' } });
-    expect(readLastChat(ADDRESS)).toEqual({ kind: 'direct', direct: { address: 'Qalice', name: 'alice' } });
+    writeLastChat(ADDRESS, { kind: 'direct', direct: { address: 'Qalice', name: 'alice' }, network: 'qortium' });
+    expect(readLastChat(ADDRESS)).toEqual({
+      kind: 'direct',
+      direct: { address: 'Qalice', name: 'alice' },
+      network: 'qortium',
+    });
   });
 
   it('rejects malformed last-chat values', () => {
@@ -149,6 +160,17 @@ describe('storage round-trips', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
 
     window.localStorage.setItem(lastChatStorageKey(ADDRESS), 'not json');
+    expect(readLastChat(ADDRESS)).toBeNull();
+  });
+
+  it('migrates legacy selections to Qortium and rejects unknown networks', () => {
+    window.localStorage.setItem(lastChatStorageKey(ADDRESS), JSON.stringify({ kind: 'group', group }));
+    expect(readLastChat(ADDRESS)).toEqual({ kind: 'group', group, network: 'qortium' });
+
+    window.localStorage.setItem(
+      lastChatStorageKey(ADDRESS),
+      JSON.stringify({ kind: 'group', group, network: 'other' }),
+    );
     expect(readLastChat(ADDRESS)).toBeNull();
   });
 
@@ -167,16 +189,18 @@ describe('storage round-trips', () => {
     writeReadWatermarks(ADDRESS, {
       directs: new Map([['Qalice', 1000]]),
       groups: new Map([[42, 2000]]),
+      qortalGroups: new Map([[42, 3000]]),
     });
 
     const restored = readReadWatermarks(ADDRESS);
 
     expect([...restored.groups]).toEqual([[42, 2000]]);
     expect([...restored.directs]).toEqual([['Qalice', 1000]]);
+    expect([...restored.qortalGroups]).toEqual([[42, 3000]]);
   });
 
   it('drops malformed watermark entries and defaults to empty maps', () => {
-    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), directs: new Map() });
+    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), qortalGroups: new Map(), directs: new Map() });
 
     window.localStorage.setItem(
       readWatermarksStorageKey(ADDRESS),
@@ -187,6 +211,7 @@ describe('storage round-trips', () => {
 
     expect([...restored.groups]).toEqual([[42, 2000]]);
     expect([...restored.directs]).toEqual([['Qalice', 1000]]);
+    expect([...restored.qortalGroups]).toEqual([]);
   });
 });
 
@@ -199,11 +224,11 @@ describe('without storage', () => {
   it('degrades to empty reads and silent writes', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
     expect(readPersistedDirects(ADDRESS)).toEqual([]);
-    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), directs: new Map() });
-    expect(() => writeLastChat(ADDRESS, { kind: 'group', group })).not.toThrow();
+    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), qortalGroups: new Map(), directs: new Map() });
+    expect(() => writeLastChat(ADDRESS, { kind: 'group', group, network: 'qortium' })).not.toThrow();
     expect(() => writePersistedDirects(ADDRESS, [{ address: 'Qalice' }])).not.toThrow();
     expect(() =>
-      writeReadWatermarks(ADDRESS, { directs: new Map(), groups: new Map([[1, 2]]) }),
+      writeReadWatermarks(ADDRESS, { directs: new Map(), groups: new Map([[1, 2]]), qortalGroups: new Map() }),
     ).not.toThrow();
   });
 });
@@ -218,7 +243,7 @@ describe('with storage that throws on use', () => {
   it('degrades to empty reads and silent writes when storage access throws', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
     expect(readPersistedDirects(ADDRESS)).toEqual([]);
-    expect(() => writeLastChat(ADDRESS, { kind: 'group', group })).not.toThrow();
+    expect(() => writeLastChat(ADDRESS, { kind: 'group', group, network: 'qortium' })).not.toThrow();
     expect(() => writePersistedDirects(ADDRESS, [{ address: 'Qalice' }])).not.toThrow();
   });
 });
@@ -237,11 +262,12 @@ describe('memory-only mode', () => {
   it('does not read or write the shared origin localStorage', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
 
-    writeLastChat(ADDRESS, { kind: 'direct', direct: { address: 'Qalice' } });
+    writeLastChat(ADDRESS, { kind: 'direct', direct: { address: 'Qalice' }, network: 'qortium' });
 
     expect(readLastChat(ADDRESS)).toEqual({
       kind: 'direct',
       direct: { address: 'Qalice' },
+      network: 'qortium',
     });
     expect(JSON.parse(window.localStorage.getItem(lastChatStorageKey(ADDRESS)) ?? '{}')).toEqual({
       kind: 'group',

@@ -3,9 +3,12 @@ import {
   createLocalSendId,
   createPendingRevision,
   createPendingSend,
+  confirmPendingSend,
+  expirePendingSends,
   failPendingRevision,
   failPendingSend,
   getPendingSignatureIdentity,
+  hasActiveDuplicateSend,
   indexPendingRevisionsByTarget,
   mergeOptimisticMessages,
   prunePendingRevisions,
@@ -61,6 +64,7 @@ describe('createPendingSend', () => {
     const pending = pendingMessage();
 
     expect(pending.status).toBe('sending');
+    expect(pending.delivery).toEqual({ phase: 'pending', updatedAt: 100 });
     expect(pending.resolvedSignature).toBeNull();
     expect(pending.message.signature).toBeNull();
     expect(pending.message.sendState).toBe('sending');
@@ -72,18 +76,20 @@ describe('createPendingSend', () => {
 
 describe('resolvePendingSend / failPendingSend / retryPendingSend', () => {
   it('resolvePendingSend records the bridge-returned signature but keeps status sending', () => {
-    const resolved = resolvePendingSend(pendingMessage(), { signature: 'real-sig' });
+    const resolved = resolvePendingSend(pendingMessage(), { signature: 'real-sig' }, 200);
 
     expect(resolved.resolvedSignature).toBe('real-sig');
     expect(resolved.status).toBe('sending');
+    expect(resolved.delivery).toEqual({ phase: 'broadcast', updatedAt: 200 });
   });
 
   it('failPendingSend flips status and the echo message to failed, keeping the error', () => {
-    const failed = failPendingSend(pendingMessage(), 'Unable to send chat message.');
+    const failed = failPendingSend(pendingMessage(), 'Unable to send chat message.', 200);
 
     expect(failed.status).toBe('failed');
     expect(failed.error).toBe('Unable to send chat message.');
     expect(failed.message.sendState).toBe('failed');
+    expect(failed.delivery).toEqual({ phase: 'rejected', updatedAt: 200 });
   });
 
   it('retryPendingSend re-arms a failed entry back to sending, clearing error and resolvedSignature', () => {
@@ -95,9 +101,49 @@ describe('resolvePendingSend / failPendingSend / retryPendingSend', () => {
     expect(retried.resolvedSignature).toBeNull();
     expect(retried.message.sendState).toBe('sending');
     expect(retried.message.timestamp).toBe(500);
+    expect(retried.delivery).toEqual({ phase: 'pending', updatedAt: 500 });
     // Same text/target — a retry re-invokes the identical send.
     expect(retried.text).toBe(failed.text);
     expect(retried.target).toEqual(failed.target);
+  });
+
+  it('models confirmation and expiry as explicit terminal delivery phases', () => {
+    const broadcast = resolvePendingSend(pendingMessage(), { signature: 'real-sig' }, 200);
+    const confirmed = confirmPendingSend(broadcast, 300);
+
+    expect(confirmed.delivery).toEqual({ phase: 'confirmed', updatedAt: 300 });
+
+    const expired = expirePendingSends([broadcast], 1_500, 1_000, 'Timed out.')[0];
+
+    expect(expired.delivery).toEqual({ phase: 'expired', updatedAt: 1_500 });
+    expect(expired.status).toBe('failed');
+    expect(expired.message.sendState).toBe('failed');
+    expect(expired.error).toBe('Timed out.');
+    expect(expirePendingSends([pendingMessage()], 10_000, 1_000, 'Timed out.')[0].delivery.phase).toBe(
+      'pending',
+    );
+  });
+});
+
+describe('duplicate prevention', () => {
+  it('blocks the same target/body/reference while pending or broadcast, but not after rejection', () => {
+    const candidate = pendingMessage();
+
+    expect(hasActiveDuplicateSend([candidate], candidate)).toBe(true);
+    expect(hasActiveDuplicateSend([resolvePendingSend(candidate, { signature: 'sig' })], candidate)).toBe(true);
+    expect(hasActiveDuplicateSend([failPendingSend(candidate, 'nope')], candidate)).toBe(false);
+  });
+
+  it('keeps target network and reference in duplicate identity', () => {
+    const qortium = pendingMessage();
+    const qortal = pendingMessage({
+      chatKey: 'qortal:group:7',
+      target: { groupId: 7, kind: 'group', network: 'qortal' },
+    });
+    const reply = pendingMessage({ chatReference: 'reply-sig' });
+
+    expect(hasActiveDuplicateSend([qortium], qortal)).toBe(false);
+    expect(hasActiveDuplicateSend([qortium], reply)).toBe(false);
   });
 });
 

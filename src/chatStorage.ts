@@ -3,7 +3,7 @@
 // keep in the sidebar even after their messages expire off the active-chats list.
 // All access is defensive: in embeds where storage is unavailable or blocked the
 // helpers degrade to no-ops / empty reads rather than throwing.
-import type { ActiveDirectChat, GroupData } from './types';
+import type { ActiveDirectChat, ChatNetwork, GroupData } from './types';
 
 export type StoredDirect = {
   address: string;
@@ -11,8 +11,8 @@ export type StoredDirect = {
 };
 
 export type StoredSelectedChat =
-  | { kind: 'group'; group: GroupData }
-  | { kind: 'direct'; direct: StoredDirect };
+  | { kind: 'group'; group: GroupData; network: ChatNetwork }
+  | { kind: 'direct'; direct: StoredDirect; network: ChatNetwork };
 
 export type PersistedDirect = StoredDirect;
 
@@ -22,6 +22,7 @@ export type PersistedDirect = StoredDirect;
 export type StoredReadWatermarks = {
   directs: ReadonlyMap<string, number>;
   groups: ReadonlyMap<number, number>;
+  qortalGroups: ReadonlyMap<number, number>;
 };
 
 const PREFIX = 'qortium-chat';
@@ -173,11 +174,18 @@ function toTimestampMap<K extends string | number>(
 }
 
 export function readReadWatermarks(accountAddress: string): StoredReadWatermarks {
-  const value = readJson<{ directs?: unknown; groups?: unknown }>(readWatermarksStorageKey(accountAddress));
+  const value = readJson<{ directs?: unknown; groups?: unknown; qortalGroups?: unknown }>(
+    readWatermarksStorageKey(accountAddress),
+  );
 
   return {
     directs: toTimestampMap(value?.directs, (key) => (key.length > 0 ? key : null)),
     groups: toTimestampMap(value?.groups, (key) => {
+      const groupId = Number(key);
+
+      return Number.isInteger(groupId) ? groupId : null;
+    }),
+    qortalGroups: toTimestampMap(value?.qortalGroups, (key) => {
       const groupId = Number(key);
 
       return Number.isInteger(groupId) ? groupId : null;
@@ -189,6 +197,7 @@ export function writeReadWatermarks(accountAddress: string, watermarks: StoredRe
   writeJson(readWatermarksStorageKey(accountAddress), {
     directs: Object.fromEntries(watermarks.directs),
     groups: Object.fromEntries(watermarks.groups),
+    qortalGroups: Object.fromEntries(watermarks.qortalGroups),
   });
 }
 
@@ -198,6 +207,11 @@ function isStoredSelectedChat(value: unknown): value is StoredSelectedChat {
   }
 
   const candidate = value as Record<string, unknown>;
+  const network = candidate.network;
+
+  if (network !== undefined && network !== 'qortal' && network !== 'qortium') {
+    return false;
+  }
 
   if (candidate.kind === 'group') {
     const group = candidate.group as Record<string, unknown> | undefined;
@@ -222,18 +236,21 @@ function isStoredSelectedChat(value: unknown): value is StoredSelectedChat {
 export function readLastChat(accountAddress: string): StoredSelectedChat | null {
   const value = readJson<unknown>(lastChatStorageKey(accountAddress));
 
-  return isStoredSelectedChat(value) ? value : null;
+  return isStoredSelectedChat(value) ? { ...value, network: value.network ?? 'qortium' } : null;
 }
 
 export function toStoredSelectedChat(
-  chat: { kind: 'group'; group: GroupData } | { kind: 'direct'; direct: ActiveDirectChat },
+  chat:
+    | { kind: 'group'; group: GroupData; network?: ChatNetwork }
+    | { kind: 'direct'; direct: ActiveDirectChat; network?: ChatNetwork },
 ): StoredSelectedChat {
   if (chat.kind === 'group') {
-    return { kind: 'group', group: chat.group };
+    return { kind: 'group', group: chat.group, network: chat.network ?? 'qortium' };
   }
 
   return {
     kind: 'direct',
+    network: chat.network ?? 'qortium',
     direct: chat.direct.name ? { address: chat.direct.address, name: chat.direct.name } : { address: chat.direct.address },
   };
 }
