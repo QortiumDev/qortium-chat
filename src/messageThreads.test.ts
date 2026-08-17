@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMessageThreads,
+  canReviseMessageThread,
   getLatestActivityMessageTimestamp,
+  hasLoadedMessageThreadRoot,
   isThreadContinuation,
   THREAD_CONTINUATION_WINDOW_MS,
   type MessageThread,
@@ -73,6 +75,37 @@ describe('buildMessageThreads', () => {
     expect(buildMessageThreads([orphan, other])).toEqual([
       { latest: orphan, original: orphan, revisions: [] },
       { latest: other, original: other, revisions: [] },
+    ]);
+  });
+
+  it('coalesces same-sender revisions whose original is outside the loaded window', () => {
+    const firstEdit = message({ chatReference: 'sig-older', sender: 'Qa', signature: 'sig-edit-1', timestamp: 20 });
+    const secondEdit = message({ chatReference: 'sig-older', sender: 'Qa', signature: 'sig-edit-2', timestamp: 30 });
+    const other = message({ sender: 'Qb', signature: 'sig-b', timestamp: 40 });
+
+    expect(buildMessageThreads([firstEdit, secondEdit, other])).toEqual([
+      { latest: secondEdit, original: firstEdit, revisions: [secondEdit] },
+      { latest: other, original: other, revisions: [] },
+    ]);
+  });
+
+  it('keeps orphaned revision chains from different senders separate', () => {
+    const firstSenderEdit = message({
+      chatReference: 'sig-older',
+      sender: 'Qa',
+      signature: 'sig-edit-a',
+      timestamp: 20,
+    });
+    const secondSenderEdit = message({
+      chatReference: 'sig-older',
+      sender: 'Qb',
+      signature: 'sig-edit-b',
+      timestamp: 30,
+    });
+
+    expect(buildMessageThreads([firstSenderEdit, secondSenderEdit])).toEqual([
+      { latest: firstSenderEdit, original: firstSenderEdit, revisions: [] },
+      { latest: secondSenderEdit, original: secondSenderEdit, revisions: [] },
     ]);
   });
 
@@ -158,6 +191,26 @@ describe('buildMessageThreads', () => {
     expect(buildMessageThreads([original, deletion, restored])).toEqual([
       { latest: restored, original, revisions: [deletion, restored] },
     ]);
+  });
+});
+
+describe('canReviseMessageThread', () => {
+  it('requires the current sender to own a loaded root message', () => {
+    const original = message({ sender: 'Qa', signature: 'sig-a', timestamp: 10 });
+    const thread = { latest: original, original, revisions: [] };
+
+    expect(canReviseMessageThread(thread, 'Qa')).toBe(true);
+    expect(canReviseMessageThread(thread, 'Qb')).toBe(false);
+    expect(canReviseMessageThread(thread, null)).toBe(false);
+    expect(hasLoadedMessageThreadRoot(thread)).toBe(true);
+  });
+
+  it('does not treat an orphaned revision as a new editable root', () => {
+    const orphan = message({ chatReference: 'sig-older', sender: 'Qa', signature: 'sig-edit', timestamp: 20 });
+    const thread = { latest: orphan, original: orphan, revisions: [] };
+
+    expect(canReviseMessageThread(thread, 'Qa')).toBe(false);
+    expect(hasLoadedMessageThreadRoot(thread)).toBe(false);
   });
 });
 

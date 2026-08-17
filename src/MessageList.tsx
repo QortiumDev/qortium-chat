@@ -20,7 +20,9 @@ import {
 } from './chatText';
 import {
   buildMessageThreads,
+  canReviseMessageThread,
   getMessageKey,
+  hasLoadedMessageThreadRoot,
   isThreadContinuation,
   type MessageThread,
 } from './messageThreads';
@@ -1723,7 +1725,7 @@ export const MessageList = memo(function MessageList({
             const repliedThread = repliedTarget?.thread;
             const isHighlighted = highlightedKey === threadKey;
             const isContinuation = isThreadContinuation(threads[index - 1], thread);
-            const canEdit = isOwn && decoded.kind === 'text';
+            const canEdit = canReviseMessageThread(thread, selfAddress) && decoded.kind === 'text';
             const isTimeExpanded = expandedTimeKey === threadKey;
             const textResources = decoded.kind === 'text'
               ? getMessageQdnResources(decoded.body, network).filter((resource) =>
@@ -1779,8 +1781,8 @@ export const MessageList = memo(function MessageList({
             // A revision whose outcome is pending or ambiguous owns this target
             // until it confirms or the user explicitly discards it. Do not let
             // the ordinary Edit/Delete buttons silently supersede that record.
-            const canEditOrDelete = canRevise && !!original.signature && !pendingRevision;
-            const canReact = canRevise && !!original.signature;
+            const canEditOrDelete = canRevise && canReviseMessageThread(thread, selfAddress) && !pendingRevision;
+            const canReact = canRevise && hasLoadedMessageThreadRoot(thread);
             const hasPublicResourceActions =
               hasImagePreviews || hasMediaActions || hasDocumentViewerActions || hasDocumentSaveActions;
             const actionButtons =
@@ -2058,7 +2060,7 @@ export const MessageList = memo(function MessageList({
       >
         <MessageReactionDetails
           avatarProfiles={avatarProfiles}
-          canReact={canRevise && !!detailsThread.original.signature}
+          canReact={canRevise && hasLoadedMessageThreadRoot(detailsThread)}
           now={now}
           onClose={closeReactionPopover}
           onReact={onReact}
