@@ -92,7 +92,9 @@ import {
   prunePendingSends,
   retainPendingForNetworkAccount,
   resolvePendingRevision,
+  resolvePendingRevisionAmbiguously,
   resolvePendingSend,
+  resolvePendingSendAmbiguously,
   retryPendingRevision,
   retryPendingSend,
   type PendingRevision,
@@ -100,6 +102,7 @@ import {
   type PendingSendTarget,
 } from './pendingSends';
 import { updatePendingStateRef } from './pendingState';
+import { isPrivateGroupRecoveryContextCurrent } from './privateGroupRecovery';
 import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupPreviews';
 import {
   getReactionPendingKey,
@@ -181,14 +184,22 @@ import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
 import {
   mergePersistedDirect,
   readLastChat,
+  readLastChatNetwork,
   readPersistedDirects,
+  readQortalLastChat,
+  readQortalReadWatermarks,
+  readQortalScrollBookmarks,
   readReadWatermarks,
   readScrollBookmarks,
   readSidebarCollapse,
   setChatStorageMode,
   toStoredSelectedChat,
   writeLastChat,
+  writeLastChatNetwork,
   writePersistedDirects,
+  writeQortalLastChat,
+  writeQortalReadWatermarks,
+  writeQortalScrollBookmarks,
   writeReadWatermarks,
   writeScrollBookmarks,
   writeSidebarCollapse,
@@ -1420,7 +1431,8 @@ export default function App() {
   // Skip the one render right after an account switch, where the watermark maps
   // still hold the previous account's values, so we never persist them under the
   // new account's key. The load effect raises this; the persist effect clears it.
-  const skipWatermarkPersistRef = useRef(true);
+  const skipQortiumWatermarkPersistRef = useRef(true);
+  const skipQortalWatermarkPersistRef = useRef(true);
   // Saved scroll position per chat key so the reading position is restored when
   // the user returns to a conversation after visiting another.
   const scrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
@@ -1429,7 +1441,7 @@ export default function App() {
   // (hide/unmount/account switch). The address is captured at schedule time so
   // a flush can never write one account's bookmarks under another's key.
   const scrollPersistTimerRef = useRef(0);
-  const scrollPersistAddressRef = useRef<string | null>(null);
+  const scrollPersistTargetRef = useRef<{ address: string; network: ChatNetwork } | null>(null);
   // Per-chat snapshot of the full loaded message view (live tail + any paged-in
   // older history). On returning to a chat this is restored so the saved scroll
   // bookmark resolves even when the user had read back beyond the latest window
@@ -1562,6 +1574,8 @@ export default function App() {
     () => new Set(memberGroups.value.filter((group) => !isGeneralChatGroup(group)).map((group) => group.groupId)),
     [memberGroups.value],
   );
+  const joinedIdsRef = useRef<ReadonlySet<number>>(joinedIds);
+  joinedIdsRef.current = joinedIds;
   const qortalJoinedIds = useMemo(
     () => new Set(qortalMemberGroups.value.map((group) => group.groupId)),
     [qortalMemberGroups.value],
@@ -2133,19 +2147,38 @@ export default function App() {
     window.clearTimeout(scrollPersistTimerRef.current);
     scrollPersistTimerRef.current = 0;
 
-    const address = scrollPersistAddressRef.current;
+    const target = scrollPersistTargetRef.current;
 
-    scrollPersistAddressRef.current = null;
+    scrollPersistTargetRef.current = null;
 
-    if (address) {
-      writeScrollBookmarks(address, scrollPositionsRef.current);
+    if (target?.network === 'qortal') {
+      writeQortalScrollBookmarks(target.address, scrollPositionsRef.current);
+    } else if (target) {
+      writeScrollBookmarks(target.address, scrollPositionsRef.current);
     }
   });
   const handleScrollPositionChange = useStableCallback((chatKey: string, position: ChatScrollPosition) => {
     scrollPositionsRef.current.set(chatKey, position);
 
-    if (!account) {
+    const network: ChatNetwork = chatKey.startsWith('qortal:') ? 'qortal' : 'qortium';
+    const address = network === 'qortal'
+      ? currentQortalAccountAddressRef.current
+      : currentAccountAddressRef.current;
+
+    if (!address) {
       return;
+    }
+
+    const pendingTarget = scrollPersistTargetRef.current;
+
+    // One debounce timer serves both chains. Land the prior chain/account's
+    // pending write before changing ownership of that timer, otherwise a quick
+    // cross-network switch could leave its newest bookmark unwritten.
+    if (
+      pendingTarget &&
+      (pendingTarget.address !== address || pendingTarget.network !== network)
+    ) {
+      flushScrollBookmarks();
     }
 
     // Persist the bookmark so the reading position survives a restart — on a
@@ -2153,7 +2186,7 @@ export default function App() {
     // synchronous localStorage JSON write per event janks the feed. The map
     // above is always current; the write catches up on a pause and is flushed
     // on hide/unmount/account switch.
-    scrollPersistAddressRef.current = account.address;
+    scrollPersistTargetRef.current = { address, network };
     window.clearTimeout(scrollPersistTimerRef.current);
     scrollPersistTimerRef.current = window.setTimeout(flushScrollBookmarks, 400);
   });
@@ -2815,10 +2848,7 @@ export default function App() {
     }
   }
 
-  function clearQortalAccountSessionState(
-    nextAccountAddress: string | null,
-    options: { restorePersistedReadState?: boolean } = {},
-  ) {
+  function clearQortalAccountSessionState(nextAccountAddress: string | null) {
     updatePendingSends((current) =>
       retainPendingForNetworkAccount(current, 'qortal', nextAccountAddress),
     );
@@ -2831,11 +2861,11 @@ export default function App() {
       return next.size === current.size ? current : next;
     });
     const currentQortiumAddress = currentAccountAddressRef.current;
-    const restoredQortalWatermarks =
-      options.restorePersistedReadState && currentQortiumAddress
-        ? readReadWatermarks(currentQortiumAddress).qortalGroups
-        : new Map<number, number>();
+    const restoredQortalWatermarks = nextAccountAddress
+      ? readQortalReadWatermarks(nextAccountAddress, currentQortiumAddress)
+      : new Map<number, number>();
 
+    skipQortalWatermarkPersistRef.current = true;
     setLastReadByQortalGroupId(restoredQortalWatermarks);
     setQortalGroupActivityById(new Map());
 
@@ -2851,11 +2881,15 @@ export default function App() {
       }
     }
 
-    if (!options.restorePersistedReadState) {
-      for (const key of scrollPositionsRef.current.keys()) {
-        if (key.startsWith('qortal:')) {
-          scrollPositionsRef.current.delete(key);
-        }
+    flushScrollBookmarks();
+    for (const key of scrollPositionsRef.current.keys()) {
+      if (key.startsWith('qortal:')) {
+        scrollPositionsRef.current.delete(key);
+      }
+    }
+    if (nextAccountAddress) {
+      for (const [key, position] of readQortalScrollBookmarks(nextAccountAddress, currentQortiumAddress)) {
+        scrollPositionsRef.current.set(key, position);
       }
     }
 
@@ -2877,6 +2911,7 @@ export default function App() {
       setUnreadDividerTimestamp(null);
       setUnreadDividerCeiling(null);
       setWriteError('');
+      userSelectedChatRef.current = false;
     }
 
     if (loadedChatKeyRef.current.startsWith('qortal:')) {
@@ -2917,9 +2952,7 @@ export default function App() {
 
       currentQortalAccountAddressRef.current = nextAccountAddress;
       if (previousAccountAddress !== nextAccountAddress) {
-        clearQortalAccountSessionState(nextAccountAddress, {
-          restorePersistedReadState: previousAccountAddress === null,
-        });
+        clearQortalAccountSessionState(nextAccountAddress);
       }
 
       if (snapshot.phase === 'membership-error') {
@@ -3554,12 +3587,28 @@ export default function App() {
     actionList: QdnAction[],
     options: { quiet?: boolean } = {},
   ) {
+    const recoveryContext = {
+      accountAddress: selectedAccount.address,
+      accountRefreshGeneration: accountRefreshGenerationRef.current,
+      chatKey: `group:${group.groupId}`,
+      groupId: group.groupId,
+    };
+    const isCurrentRecovery = () =>
+      isPrivateGroupRecoveryContextCurrent(recoveryContext, {
+        accountAddress: currentAccountAddressRef.current,
+        accountRefreshGeneration: accountRefreshGenerationRef.current,
+        accountRefreshPending: accountRefreshPendingRef.current,
+        joinedGroupIds: joinedIdsRef.current,
+        selectedChatKey: selectedChatKeyRef.current,
+        selectedGroupId: selectedGroupIdRef.current,
+      });
+
     // Belt-and-suspenders membership gate: key recovery publishes a request as
     // this account, so never fire it for a group the account hasn't joined even
     // if a caller's gate ever regresses. Callers already require membership, but
     // keeping the precondition local to the side-effecting function prevents a
     // future caller from prompting a non-member.
-    if (!joinedIds.has(group.groupId)) {
+    if (!isCurrentRecovery()) {
       return;
     }
 
@@ -3568,6 +3617,9 @@ export default function App() {
     // clear "needs a local/trusted node" notice instead of several futile
     // approval dialogs followed by silence.
     if (isPublicNodePrivateGroupKeyRecoveryUnsupported(bridge.value.isUsingPublicNode)) {
+      if (!isCurrentRecovery()) {
+        return;
+      }
       setPrivateGroupKeyStatus('');
       setPrivateGroupKeyError(t('action.publicNodeSendUnavailable'));
       return;
@@ -3576,6 +3628,9 @@ export default function App() {
     const missingKeyRequests = getMissingPrivateGroupKeyRequests(nextMessages, group.groupId);
 
     if (missingKeyRequests.length === 0) {
+      if (!isCurrentRecovery()) {
+        return;
+      }
       setPrivateGroupKeyStatus('');
       setPrivateGroupKeyError('');
       return;
@@ -3599,14 +3654,9 @@ export default function App() {
       return;
     }
 
-    for (const request of newKeyRequests) {
-      requestedPrivateGroupKeysRef.current.add(getPrivateGroupKeyRecoveryKey(selectedAccount.address, request));
+    if (!isCurrentRecovery()) {
+      return;
     }
-
-    if (shouldResolveKeyRequests) {
-      resolvedPrivateGroupKeyRequestsRef.current.add(resolveKey);
-    }
-
     if (!options.quiet) {
       setPrivateGroupKeyStatus(t('status.privateGroupKey.requesting'));
     }
@@ -3615,25 +3665,53 @@ export default function App() {
 
     try {
       for (const request of newKeyRequests) {
+        if (!isCurrentRecovery()) {
+          return;
+        }
+        requestedPrivateGroupKeysRef.current.add(
+          getPrivateGroupKeyRecoveryKey(selectedAccount.address, request),
+        );
         await requestPrivateGroupChatKey(request, actionList);
+        if (!isCurrentRecovery()) {
+          return;
+        }
       }
 
       if (shouldResolveKeyRequests) {
+        if (!isCurrentRecovery()) {
+          return;
+        }
+        resolvedPrivateGroupKeyRequestsRef.current.add(resolveKey);
         await resolvePrivateGroupChatKeyRequests(group.groupId, actionList);
+        if (!isCurrentRecovery()) {
+          return;
+        }
       }
 
+      if (!isCurrentRecovery()) {
+        return;
+      }
       if (newKeyRequests.length > 0) {
         setPrivateGroupKeyStatus(t('status.privateGroupKey.requested'));
       } else if (shouldResolveKeyRequests) {
         setPrivateGroupKeyStatus(t('status.privateGroupKey.recoveryChecked'));
       }
 
+      if (!isCurrentRecovery()) {
+        return;
+      }
       await loadMessages({ group, kind: 'group' }, actionList, {
         accountUnlocked: selectedAccount.isUnlocked,
         quiet: true,
         skipKeyRecovery: true,
       });
+      if (!isCurrentRecovery()) {
+        return;
+      }
     } catch (error) {
+      if (!isCurrentRecovery()) {
+        return;
+      }
       setPrivateGroupKeyError(
         getBridgeErrorMessage(error, t('status.loadingError.privateGroupKeyRecovery'), t),
       );
@@ -3898,10 +3976,20 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? resolvePendingSend(candidate, result)
+            ? result.outcome === 'ambiguous'
+              ? resolvePendingSendAmbiguously(
+                  candidate,
+                  result,
+                  result.error ?? t('message.delivery.ambiguous'),
+                )
+              : resolvePendingSend(candidate, result)
             : candidate,
         ),
       );
+
+      if (entry.kind === 'reaction' && result.outcome === 'ambiguous') {
+        setWriteError(t('message.delivery.ambiguous'));
+      }
 
       if (chat.kind === 'direct' && isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         void loadActiveChats(selectedAccount, actions, { quiet: true });
@@ -3977,7 +4065,13 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? resolvePendingRevision(candidate, result)
+            ? result.outcome === 'ambiguous'
+              ? resolvePendingRevisionAmbiguously(
+                  candidate,
+                  result,
+                  result.error ?? t('message.delivery.ambiguous'),
+                )
+              : resolvePendingRevision(candidate, result)
             : candidate,
         ),
       );
@@ -4703,11 +4797,21 @@ export default function App() {
   }
 
   // Persist the user's last explicit selection so the app reopens on it next time
-  // (per account). The provisional General Chat auto-select and restore do not
-  // call this, so they never overwrite a real choice.
+  // under the selected chain identity. A tiny app-wide network preference says
+  // which identity-specific record to restore; it contains no chat content.
   function rememberLastChat(chat: SelectedChat) {
-    if (account) {
-      writeLastChat(account.address, toStoredSelectedChat(chat));
+    const stored = toStoredSelectedChat(chat);
+
+    if (stored.network === 'qortal') {
+      const qortalAccountAddress = currentQortalAccountAddressRef.current;
+
+      if (qortalAccountAddress) {
+        writeQortalLastChat(qortalAccountAddress, stored);
+        writeLastChatNetwork('qortal');
+      }
+    } else if (account) {
+      writeLastChat(account.address, stored);
+      writeLastChatNetwork('qortium');
     }
   }
 
@@ -6108,7 +6212,7 @@ export default function App() {
     // Restore this account's read watermarks so unread state survives reloads;
     // unseen groups/directs still get baselined to "read" by the effects below.
     const watermarks = account ? readReadWatermarks(account.address) : null;
-    skipWatermarkPersistRef.current = true;
+    skipQortiumWatermarkPersistRef.current = true;
     setLastReadByGroupId(watermarks?.groups ?? new Map());
     setLastReadByAddress(watermarks?.directs ?? new Map());
     // Land any debounced bookmark write for the previous account before its map
@@ -6156,57 +6260,76 @@ export default function App() {
     userSelectedChatRef.current = selectedChatIsQortal;
   }, [account?.address]);
 
-  // Persist read watermarks as they advance. Runs after the load effect above, so
-  // on an account switch it skips the transitional render (stale maps) once and
-  // then writes the freshly loaded/advanced watermarks under the current account.
+  // Persist each chain's read state under that chain's selected identity. The
+  // skip refs protect the transitional render after an identity-specific load.
   useEffect(() => {
     if (!account) {
       return;
     }
 
-    if (skipWatermarkPersistRef.current) {
-      skipWatermarkPersistRef.current = false;
+    if (skipQortiumWatermarkPersistRef.current) {
+      skipQortiumWatermarkPersistRef.current = false;
       return;
     }
 
     writeReadWatermarks(account.address, {
       directs: lastReadByAddress,
       groups: lastReadByGroupId,
-      qortalGroups: lastReadByQortalGroupId,
     });
-  }, [account, lastReadByGroupId, lastReadByQortalGroupId, lastReadByAddress]);
+  }, [account, lastReadByGroupId, lastReadByAddress]);
+
+  useEffect(() => {
+    if (!qortalAccount) {
+      return;
+    }
+
+    if (skipQortalWatermarkPersistRef.current) {
+      skipQortalWatermarkPersistRef.current = false;
+      return;
+    }
+
+    writeQortalReadWatermarks(qortalAccount.address, lastReadByQortalGroupId);
+  }, [qortalAccount, lastReadByQortalGroupId]);
 
   // Load this account's persisted direct chats from storage.
   useEffect(() => {
     setPersistedDirects(account ? readPersistedDirects(account.address) : []);
   }, [account?.address]);
 
-  // Reopen on the account's last-selected chat (once per account), overriding the
-  // provisional General Chat default. Skips if the user already picked a chat for
-  // this account; falls back to General Chat when nothing usable is saved (the
-  // account-switch path does not re-run the group auto-select that mount uses).
+  // Reopen from the preferred chain's identity-specific record. Wait for the
+  // Qortal identity when that chain was last used; never derive its saved group
+  // from whichever Qortium identity happened to load first.
   useEffect(() => {
-    if (!account || restoredForAccountRef.current === account.address) {
+    if (!account) {
+      return;
+    }
+
+    const restoreKey = `${account.address}\0${qortalAccount?.address ?? ''}`;
+
+    if (restoredForAccountRef.current === restoreKey) {
       return;
     }
 
     if (userSelectedChatRef.current) {
-      restoredForAccountRef.current = account.address;
+      restoredForAccountRef.current = restoreKey;
       return;
     }
 
-    const saved = readLastChat(account.address);
+    const preferredNetwork = readLastChatNetwork(account.address) ?? 'qortium';
 
-    if (saved?.network === 'qortal' && (qortalBridge.phase === 'idle' || qortalBridge.phase === 'loading')) {
-      return;
-    }
-
-    restoredForAccountRef.current = account.address;
-
-    if (saved?.kind === 'direct') {
-      if (saved.network === 'qortal') {
+    if (preferredNetwork === 'qortal') {
+      if (qortalBridge.phase === 'idle' || qortalBridge.phase === 'loading' || !qortalAccount) {
         return;
       }
+    }
+
+    const saved = preferredNetwork === 'qortal'
+      ? readQortalLastChat(qortalAccount!.address, account.address)
+      : readLastChat(account.address);
+
+    restoredForAccountRef.current = restoreKey;
+
+    if (saved?.kind === 'direct') {
       selectDirect(saved.direct, {
         historyMode: 'replace',
         remember: false,
@@ -6217,9 +6340,6 @@ export default function App() {
     }
 
     if (saved?.kind === 'group') {
-      if (saved.network === 'qortal' && !qortalAvailable) {
-        return;
-      }
       const selectSavedGroup = saved.network === 'qortal' ? selectQortalGroup : selectGroup;
 
       selectSavedGroup(saved.group, {
@@ -6243,7 +6363,7 @@ export default function App() {
         userInitiated: false,
       });
     }
-  }, [account?.address, qortalAvailable, qortalBridge.phase]);
+  }, [account?.address, qortalAccount?.address, qortalAvailable, qortalBridge.phase]);
 
   useEffect(() => {
     if (groups.value.length === 0) {

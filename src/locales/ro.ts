@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Elimină înregistrarea locală',
   'label.resource.public': 'Resursă publică',
   'message.delivery.broadcast': 'Difuzare acceptată · se așteaptă confirmarea',
+  'message.delivery.ambiguous': 'Rezultatul trimiterii este necunoscut. Este posibil să fi fost deja trimis; nu încerca din nou.',
   'message.delivery.expired': 'Confirmarea nu a fost găsită în două minute. Este posibil ca acțiunea să fi fost deja aplicată; nu o reîncerca automat.',
   'message.sendStatus.sending': 'Se trimite…',
   'message.sendStatus.failed': 'Trimiterea a eșuat',

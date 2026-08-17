@@ -316,6 +316,7 @@ export const STRINGS = {
   'button.discardLocal': 'Forkast lokal oppføring',
   'label.resource.public': 'Offentlig ressurs',
   'message.delivery.broadcast': 'Kringkasting godtatt · venter på bekreftelse',
+  'message.delivery.ambiguous': 'Sendingsresultatet er ukjent. Det kan allerede være sendt; ikke prøv på nytt.',
   'message.delivery.expired': 'Ingen bekreftelse ble funnet innen to minutter. Handlingen kan allerede ha blitt utført; ikke prøv den automatisk på nytt.',
   'message.sendStatus.sending': 'Sender…',
   'message.sendStatus.failed': 'Sending mislyktes',

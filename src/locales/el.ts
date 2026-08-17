@@ -316,6 +316,7 @@ export const STRINGS = {
   'button.discardLocal': 'Απόρριψη τοπικής καταγραφής',
   'label.resource.public': 'Δημόσιος πόρος',
   'message.delivery.broadcast': 'Η μετάδοση έγινε αποδεκτή · αναμονή επιβεβαίωσης',
+  'message.delivery.ambiguous': 'Το αποτέλεσμα αποστολής είναι άγνωστο. Μπορεί να έχει ήδη σταλεί· μην προσπαθήσετε ξανά.',
   'message.delivery.expired': 'Δεν βρέθηκε επιβεβαίωση εντός δύο λεπτών. Η ενέργεια μπορεί να έχει ήδη εφαρμοστεί· μην την επαναλάβετε αυτόματα.',
   'message.sendStatus.sending': 'Αποστολή…',
   'message.sendStatus.failed': 'Η αποστολή απέτυχε',

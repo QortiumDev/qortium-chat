@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Lokale registratie verwijderen',
   'label.resource.public': 'Openbare bron',
   'message.delivery.broadcast': 'Broadcast geaccepteerd · wacht op bevestiging',
+  'message.delivery.ambiguous': 'Het verzendresultaat is onbekend. Het is mogelijk al verzonden; probeer het niet opnieuw.',
   'message.delivery.expired': 'Binnen twee minuten is geen bevestiging gevonden. Deze actie is mogelijk al uitgevoerd; probeer deze niet automatisch opnieuw.',
   'message.sendStatus.sending': 'Verzenden…',
   'message.sendStatus.failed': 'Verzenden mislukt',

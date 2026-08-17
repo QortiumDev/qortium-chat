@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Hylkää paikallinen tietue',
   'label.resource.public': 'Julkinen resurssi',
   'message.delivery.broadcast': 'Lähetys hyväksytty · odotetaan vahvistusta',
+  'message.delivery.ambiguous': 'Lähetyksen tulos on tuntematon. Se on ehkä jo lähetetty; älä yritä uudelleen.',
   'message.delivery.expired': 'Vahvistusta ei löytynyt kahden minuutin kuluessa. Toiminto on voitu jo toteuttaa; älä yritä sitä automaattisesti uudelleen.',
   'message.sendStatus.sending': 'Lähetetään…',
   'message.sendStatus.failed': 'Lähetys epäonnistui',

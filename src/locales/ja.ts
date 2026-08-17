@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'ローカル記録を破棄',
   'label.resource.public': '公開リソース',
   'message.delivery.broadcast': 'ブロードキャスト受理済み・確認待ち',
+  'message.delivery.ambiguous': '送信結果は不明です。すでに送信されている可能性があるため、再試行しないでください。',
   'message.delivery.expired': '2分以内に確認できませんでした。この操作はすでに適用されている可能性があります。自動的に再試行しないでください。',
   'message.sendStatus.sending': '送信中…',
   'message.sendStatus.failed': '送信に失敗しました',

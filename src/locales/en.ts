@@ -320,6 +320,7 @@ export const EN_STRINGS = {
   'label.newMessagesCount': '{count} new',
   'hint.olderMessagesExpired': 'Older messages may have expired and can vary by node.',
   'message.delivery.broadcast': 'Broadcast accepted · awaiting confirmation',
+  'message.delivery.ambiguous': 'Send outcome is unknown. It may already have been sent; do not retry it.',
   'message.delivery.expired': 'Confirmation was not found within two minutes. This action may already have been applied; do not retry it automatically.',
   'message.sendStatus.sending': 'Sending…',
   'message.sendStatus.failed': 'Failed to send',

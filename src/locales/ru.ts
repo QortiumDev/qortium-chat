@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Удалить локальную запись',
   'label.resource.public': 'Публичный ресурс',
   'message.delivery.broadcast': 'Трансляция принята · ожидание подтверждения',
+  'message.delivery.ambiguous': 'Результат отправки неизвестен. Сообщение могло быть уже отправлено; не повторяйте попытку.',
   'message.delivery.expired': 'Подтверждение не найдено в течение двух минут. Действие, возможно, уже выполнено; не повторяйте его автоматически.',
   'message.sendStatus.sending': 'Отправка…',
   'message.sendStatus.failed': 'Не удалось отправить',

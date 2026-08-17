@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Loobu kohalikust kirjest',
   'label.resource.public': 'Avalik ressurss',
   'message.delivery.broadcast': 'Leviedastus vastu võetud · kinnituse ootel',
+  'message.delivery.ambiguous': 'Saatmise tulemus pole teada. See võib olla juba saadetud; ära proovi uuesti.',
   'message.delivery.expired': 'Kinnitust ei leitud kahe minuti jooksul. Toiming võib olla juba rakendatud; ära proovi seda automaatselt uuesti.',
   'message.sendStatus.sending': 'Saatmine…',
   'message.sendStatus.failed': 'Saatmine ebaõnnestus',

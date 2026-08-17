@@ -22,7 +22,6 @@ export type PersistedDirect = StoredDirect;
 export type StoredReadWatermarks = {
   directs: ReadonlyMap<string, number>;
   groups: ReadonlyMap<number, number>;
-  qortalGroups: ReadonlyMap<number, number>;
 };
 
 const PREFIX = 'qortium-chat';
@@ -126,22 +125,28 @@ function readJson<T>(key: string): T | null {
   }
 }
 
-function writeJson(key: string, value: unknown): void {
+function writeJson(key: string, value: unknown): boolean {
   const storage = getStorage();
 
   if (!storage) {
-    return;
+    return false;
   }
 
   try {
     storage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
     // Ignore quota / access errors — persistence is best-effort.
+    return false;
   }
 }
 
 export function lastChatStorageKey(accountAddress: string) {
-  return `${PREFIX}:lastChat:${accountAddress}`;
+  return `${PREFIX}:v2:last:qortium:${accountAddress}`;
+}
+
+export function qortalLastChatStorageKey(accountAddress: string) {
+  return `${PREFIX}:v2:last:qortal:${accountAddress}`;
 }
 
 export function persistedDirectsStorageKey(accountAddress: string) {
@@ -149,7 +154,31 @@ export function persistedDirectsStorageKey(accountAddress: string) {
 }
 
 export function readWatermarksStorageKey(accountAddress: string) {
+  return `${PREFIX}:v2:read:qortium:${accountAddress}`;
+}
+
+export function qortalReadWatermarksStorageKey(accountAddress: string) {
+  return `${PREFIX}:v2:read:qortal:${accountAddress}`;
+}
+
+export function qortalLegacyOwnerStorageKey(qortiumAccountAddress: string) {
+  return `${PREFIX}:v2:legacy-qortal-owner:${qortiumAccountAddress}`;
+}
+
+export function lastChatNetworkStorageKey() {
+  return `${PREFIX}:v2:last-network`;
+}
+
+function legacyLastChatStorageKey(accountAddress: string) {
+  return `${PREFIX}:lastChat:${accountAddress}`;
+}
+
+function legacyReadWatermarksStorageKey(accountAddress: string) {
   return `${PREFIX}:read:${accountAddress}`;
+}
+
+function legacyScrollBookmarksStorageKey(accountAddress: string) {
+  return `${PREFIX}:scroll:${accountAddress}`;
 }
 
 function toTimestampMap<K extends string | number>(
@@ -174,18 +203,22 @@ function toTimestampMap<K extends string | number>(
 }
 
 export function readReadWatermarks(accountAddress: string): StoredReadWatermarks {
-  const value = readJson<{ directs?: unknown; groups?: unknown; qortalGroups?: unknown }>(
-    readWatermarksStorageKey(accountAddress),
-  );
+  let value = readJson<{ directs?: unknown; groups?: unknown }>(readWatermarksStorageKey(accountAddress));
+
+  if (!value) {
+    const legacy = readJson<{ directs?: unknown; groups?: unknown; qortalGroups?: unknown }>(
+      legacyReadWatermarksStorageKey(accountAddress),
+    );
+
+    if (legacy) {
+      value = { directs: legacy.directs, groups: legacy.groups };
+      writeJson(readWatermarksStorageKey(accountAddress), value);
+    }
+  }
 
   return {
     directs: toTimestampMap(value?.directs, (key) => (key.length > 0 ? key : null)),
     groups: toTimestampMap(value?.groups, (key) => {
-      const groupId = Number(key);
-
-      return Number.isInteger(groupId) ? groupId : null;
-    }),
-    qortalGroups: toTimestampMap(value?.qortalGroups, (key) => {
       const groupId = Number(key);
 
       return Number.isInteger(groupId) ? groupId : null;
@@ -197,7 +230,46 @@ export function writeReadWatermarks(accountAddress: string, watermarks: StoredRe
   writeJson(readWatermarksStorageKey(accountAddress), {
     directs: Object.fromEntries(watermarks.directs),
     groups: Object.fromEntries(watermarks.groups),
-    qortalGroups: Object.fromEntries(watermarks.qortalGroups),
+  });
+}
+
+export function readQortalReadWatermarks(
+  qortalAccountAddress: string,
+  legacyQortiumAccountAddress?: string | null,
+): Map<number, number> {
+  const value = readJson<{ groups?: unknown }>(qortalReadWatermarksStorageKey(qortalAccountAddress));
+
+  if (value) {
+    return toGroupTimestampMap(value.groups);
+  }
+
+  if (!legacyQortiumAccountAddress || !claimLegacyQortalStorage(qortalAccountAddress, legacyQortiumAccountAddress)) {
+    return new Map();
+  }
+
+  const legacy = readJson<{ qortalGroups?: unknown }>(
+    legacyReadWatermarksStorageKey(legacyQortiumAccountAddress),
+  );
+  const groups = toGroupTimestampMap(legacy?.qortalGroups);
+
+  writeQortalReadWatermarks(qortalAccountAddress, groups);
+  return groups;
+}
+
+export function writeQortalReadWatermarks(
+  qortalAccountAddress: string,
+  groups: ReadonlyMap<number, number>,
+): void {
+  writeJson(qortalReadWatermarksStorageKey(qortalAccountAddress), {
+    groups: Object.fromEntries(groups),
+  });
+}
+
+function toGroupTimestampMap(value: unknown) {
+  return toTimestampMap(value, (key) => {
+    const groupId = Number(key);
+
+    return Number.isInteger(groupId) ? groupId : null;
   });
 }
 
@@ -233,10 +305,103 @@ function isStoredSelectedChat(value: unknown): value is StoredSelectedChat {
   return false;
 }
 
-export function readLastChat(accountAddress: string): StoredSelectedChat | null {
-  const value = readJson<unknown>(lastChatStorageKey(accountAddress));
+function claimLegacyQortalStorage(qortalAccountAddress: string, qortiumAccountAddress: string) {
+  const ownerKey = qortalLegacyOwnerStorageKey(qortiumAccountAddress);
+  const owner = readJson<{ qortalAccountAddress?: unknown; version?: unknown }>(ownerKey);
 
-  return isStoredSelectedChat(value) ? { ...value, network: value.network ?? 'qortium' } : null;
+  if (owner) {
+    return owner.version === 1 && owner.qortalAccountAddress === qortalAccountAddress;
+  }
+
+  const legacyLastChat = readJson<unknown>(legacyLastChatStorageKey(qortiumAccountAddress));
+  const legacyWatermarks = readJson<{ qortalGroups?: unknown }>(legacyReadWatermarksStorageKey(qortiumAccountAddress));
+  const legacyScroll = readJson<Record<string, unknown>>(legacyScrollBookmarksStorageKey(qortiumAccountAddress));
+  const hasLegacySelection = isStoredSelectedChat(legacyLastChat) && legacyLastChat.network === 'qortal';
+  const hasLegacyWatermarks =
+    !!legacyWatermarks?.qortalGroups &&
+    typeof legacyWatermarks.qortalGroups === 'object' &&
+    Object.keys(legacyWatermarks.qortalGroups as Record<string, unknown>).length > 0;
+  const hasLegacyScroll =
+    !!legacyScroll && Object.keys(legacyScroll).some((chatKey) => chatKey.startsWith('qortal:'));
+
+  if (!hasLegacySelection && !hasLegacyWatermarks && !hasLegacyScroll) {
+    return false;
+  }
+
+  // Claim before copying: if quota is exhausted between writes, losing a
+  // best-effort migration is safer than exposing one legacy Qortal identity's
+  // state to a different Qortal identity later.
+  if (!writeJson(ownerKey, { qortalAccountAddress, version: 1 })) {
+    return false;
+  }
+
+  const confirmedOwner = readJson<{ qortalAccountAddress?: unknown; version?: unknown }>(ownerKey);
+
+  return confirmedOwner?.version === 1 && confirmedOwner.qortalAccountAddress === qortalAccountAddress;
+}
+
+export function readLastChat(accountAddress: string): StoredSelectedChat | null {
+  let value = readJson<unknown>(lastChatStorageKey(accountAddress));
+
+  if (!value) {
+    const legacy = readJson<unknown>(legacyLastChatStorageKey(accountAddress));
+
+    if (isStoredSelectedChat(legacy) && (legacy.network === undefined || legacy.network === 'qortium')) {
+      value = { ...legacy, network: 'qortium' };
+      writeJson(lastChatStorageKey(accountAddress), value);
+    }
+  }
+
+  return isStoredSelectedChat(value) && (value.network === undefined || value.network === 'qortium')
+    ? { ...value, network: 'qortium' }
+    : null;
+}
+
+export function readQortalLastChat(
+  qortalAccountAddress: string,
+  legacyQortiumAccountAddress?: string | null,
+): StoredSelectedChat | null {
+  const value = readJson<unknown>(qortalLastChatStorageKey(qortalAccountAddress));
+
+  if (isStoredSelectedChat(value) && value.network === 'qortal') {
+    return value;
+  }
+
+  if (!legacyQortiumAccountAddress || !claimLegacyQortalStorage(qortalAccountAddress, legacyQortiumAccountAddress)) {
+    return null;
+  }
+
+  const legacy = readJson<unknown>(legacyLastChatStorageKey(legacyQortiumAccountAddress));
+
+  if (!isStoredSelectedChat(legacy) || legacy.network !== 'qortal') {
+    return null;
+  }
+
+  writeQortalLastChat(qortalAccountAddress, legacy);
+  return legacy;
+}
+
+export function readLastChatNetwork(legacyQortiumAccountAddress?: string | null): ChatNetwork | null {
+  const value = readJson<unknown>(lastChatNetworkStorageKey());
+
+  if (value === 'qortal' || value === 'qortium') {
+    return value;
+  }
+
+  if (!legacyQortiumAccountAddress) {
+    return null;
+  }
+
+  const legacy = readJson<unknown>(legacyLastChatStorageKey(legacyQortiumAccountAddress));
+
+  if (!isStoredSelectedChat(legacy)) {
+    return null;
+  }
+
+  const network = legacy.network ?? 'qortium';
+
+  writeLastChatNetwork(network);
+  return network;
 }
 
 export function toStoredSelectedChat(
@@ -256,7 +421,19 @@ export function toStoredSelectedChat(
 }
 
 export function writeLastChat(accountAddress: string, chat: StoredSelectedChat): void {
-  writeJson(lastChatStorageKey(accountAddress), chat);
+  if (chat.network === 'qortium') {
+    writeJson(lastChatStorageKey(accountAddress), chat);
+  }
+}
+
+export function writeQortalLastChat(accountAddress: string, chat: StoredSelectedChat): void {
+  if (chat.network === 'qortal') {
+    writeJson(qortalLastChatStorageKey(accountAddress), chat);
+  }
+}
+
+export function writeLastChatNetwork(network: ChatNetwork): void {
+  writeJson(lastChatNetworkStorageKey(), network);
 }
 
 export function readPersistedDirects(accountAddress: string): PersistedDirect[] {
@@ -335,11 +512,17 @@ export type StoredScrollBookmark =
   | { atBottom: false; anchorKey: string; anchorOffset: number; anchorTimestamp: number };
 
 export function scrollBookmarksStorageKey(accountAddress: string) {
-  return `${PREFIX}:scroll:${accountAddress}`;
+  return `${PREFIX}:v2:scroll:qortium:${accountAddress}`;
 }
 
-export function readScrollBookmarks(accountAddress: string): Map<string, StoredScrollBookmark> {
-  const value = readJson<Record<string, unknown>>(scrollBookmarksStorageKey(accountAddress));
+export function qortalScrollBookmarksStorageKey(accountAddress: string) {
+  return `${PREFIX}:v2:scroll:qortal:${accountAddress}`;
+}
+
+function parseScrollBookmarks(
+  value: Record<string, unknown> | null,
+  includeChatKey: (chatKey: string) => boolean,
+) {
   const map = new Map<string, StoredScrollBookmark>();
 
   if (!value || typeof value !== 'object') {
@@ -347,7 +530,7 @@ export function readScrollBookmarks(accountAddress: string): Map<string, StoredS
   }
 
   for (const [chatKey, raw] of Object.entries(value)) {
-    if (!raw || typeof raw !== 'object') {
+    if (!includeChatKey(chatKey) || !raw || typeof raw !== 'object') {
       continue;
     }
 
@@ -372,6 +555,57 @@ export function readScrollBookmarks(accountAddress: string): Map<string, StoredS
   return map;
 }
 
+export function readScrollBookmarks(accountAddress: string): Map<string, StoredScrollBookmark> {
+  const value = readJson<Record<string, unknown>>(scrollBookmarksStorageKey(accountAddress));
+
+  if (value) {
+    return parseScrollBookmarks(value, (chatKey) => !chatKey.startsWith('qortal:'));
+  }
+
+  const legacy = readJson<Record<string, unknown>>(legacyScrollBookmarksStorageKey(accountAddress));
+  const bookmarks = parseScrollBookmarks(legacy, (chatKey) => !chatKey.startsWith('qortal:'));
+
+  if (legacy) {
+    writeScrollBookmarks(accountAddress, bookmarks);
+  }
+
+  return bookmarks;
+}
+
+export function readQortalScrollBookmarks(
+  qortalAccountAddress: string,
+  legacyQortiumAccountAddress?: string | null,
+): Map<string, StoredScrollBookmark> {
+  const value = readJson<Record<string, unknown>>(qortalScrollBookmarksStorageKey(qortalAccountAddress));
+
+  if (value) {
+    return parseScrollBookmarks(value, (chatKey) => chatKey.startsWith('qortal:'));
+  }
+
+  if (!legacyQortiumAccountAddress || !claimLegacyQortalStorage(qortalAccountAddress, legacyQortiumAccountAddress)) {
+    return new Map();
+  }
+
+  const legacy = readJson<Record<string, unknown>>(legacyScrollBookmarksStorageKey(legacyQortiumAccountAddress));
+  const bookmarks = parseScrollBookmarks(legacy, (chatKey) => chatKey.startsWith('qortal:'));
+
+  writeQortalScrollBookmarks(qortalAccountAddress, bookmarks);
+  return bookmarks;
+}
+
 export function writeScrollBookmarks(accountAddress: string, bookmarks: ReadonlyMap<string, StoredScrollBookmark>): void {
-  writeJson(scrollBookmarksStorageKey(accountAddress), Object.fromEntries(bookmarks));
+  writeJson(
+    scrollBookmarksStorageKey(accountAddress),
+    Object.fromEntries([...bookmarks].filter(([chatKey]) => !chatKey.startsWith('qortal:'))),
+  );
+}
+
+export function writeQortalScrollBookmarks(
+  accountAddress: string,
+  bookmarks: ReadonlyMap<string, StoredScrollBookmark>,
+): void {
+  writeJson(
+    qortalScrollBookmarksStorageKey(accountAddress),
+    Object.fromEntries([...bookmarks].filter(([chatKey]) => chatKey.startsWith('qortal:'))),
+  );
 }

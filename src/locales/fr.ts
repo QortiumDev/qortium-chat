@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Ignorer l’enregistrement local',
   'label.resource.public': 'Ressource publique',
   'message.delivery.broadcast': 'Diffusion acceptée · en attente de confirmation',
+  'message.delivery.ambiguous': 'Le résultat de l’envoi est inconnu. Il a peut-être déjà été envoyé ; ne réessayez pas.',
   'message.delivery.expired': 'Aucune confirmation n’a été trouvée dans les deux minutes. Cette action a peut-être déjà été appliquée ; ne la réessayez pas automatiquement.',
   'message.sendStatus.sending': 'Envoi…',
   'message.sendStatus.failed': 'Échec de l\'envoi',

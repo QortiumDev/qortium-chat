@@ -316,6 +316,7 @@ export const STRINGS = {
   'button.discardLocal': 'स्थानीय रिकॉर्ड हटाएँ',
   'label.resource.public': 'सार्वजनिक संसाधन',
   'message.delivery.broadcast': 'प्रसारण स्वीकार हुआ · पुष्टि की प्रतीक्षा',
+  'message.delivery.ambiguous': 'भेजने का परिणाम अज्ञात है। यह पहले ही भेजा जा सकता है; फिर से प्रयास न करें।',
   'message.delivery.expired': 'दो मिनट के भीतर पुष्टि नहीं मिली। यह कार्रवाई पहले ही लागू हो सकती है; इसे अपने-आप फिर से न आज़माएँ।',
   'message.sendStatus.sending': 'भेजा जा रहा है…',
   'message.sendStatus.failed': 'भेजने में विफल',

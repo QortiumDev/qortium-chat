@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Lokalen Eintrag verwerfen',
   'label.resource.public': 'Öffentliche Ressource',
   'message.delivery.broadcast': 'Broadcast akzeptiert · Bestätigung ausstehend',
+  'message.delivery.ambiguous': 'Das Sendeergebnis ist unbekannt. Die Nachricht wurde möglicherweise bereits gesendet; nicht erneut versuchen.',
   'message.delivery.expired': 'Innerhalb von zwei Minuten wurde keine Bestätigung gefunden. Diese Aktion wurde möglicherweise bereits ausgeführt; nicht automatisch erneut versuchen.',
   'message.sendStatus.sending': 'Wird gesendet …',
   'message.sendStatus.failed': 'Senden fehlgeschlagen',

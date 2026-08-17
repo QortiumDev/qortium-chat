@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Odrzuć lokalny wpis',
   'label.resource.public': 'Zasób publiczny',
   'message.delivery.broadcast': 'Transmisja zaakceptowana · oczekiwanie na potwierdzenie',
+  'message.delivery.ambiguous': 'Wynik wysyłania jest nieznany. Wiadomość mogła już zostać wysłana; nie próbuj ponownie.',
   'message.delivery.expired': 'Nie znaleziono potwierdzenia w ciągu dwóch minut. Ta czynność mogła już zostać zastosowana; nie próbuj jej ponownie automatycznie.',
   'message.sendStatus.sending': 'Wysyłanie…',
   'message.sendStatus.failed': 'Wysyłanie nie powiodło się',

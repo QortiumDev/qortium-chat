@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': '丢弃本地记录',
   'label.resource.public': '公开资源',
   'message.delivery.broadcast': '广播已接受 · 等待确认',
+  'message.delivery.ambiguous': '发送结果未知。消息可能已经发送；请勿重试。',
   'message.delivery.expired': '两分钟内未找到确认。此操作可能已生效；请勿自动重试。',
   'message.sendStatus.sending': '发送中…',
   'message.sendStatus.failed': '发送失败',

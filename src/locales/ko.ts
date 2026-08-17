@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': '로컬 기록 버리기',
   'label.resource.public': '공개 리소스',
   'message.delivery.broadcast': '브로드캐스트 승인됨 · 확인 대기 중',
+  'message.delivery.ambiguous': '전송 결과를 알 수 없습니다. 이미 전송되었을 수 있으므로 다시 시도하지 마세요.',
   'message.delivery.expired': '2분 안에 확인되지 않았습니다. 이 작업이 이미 적용되었을 수 있으므로 자동으로 다시 시도하지 마세요.',
   'message.sendStatus.sending': '보내는 중…',
   'message.sendStatus.failed': '전송하지 못했습니다',

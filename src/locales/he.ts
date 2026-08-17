@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'התעלמות מהרשומה המקומית',
   'label.resource.public': 'משאב ציבורי',
   'message.delivery.broadcast': 'השידור התקבל · ממתין לאישור',
+  'message.delivery.ambiguous': 'תוצאת השליחה אינה ידועה. ייתכן שההודעה כבר נשלחה; אין לנסות שוב.',
   'message.delivery.expired': 'לא נמצא אישור בתוך שתי דקות. ייתכן שהפעולה כבר הוחלה; אין לנסות אותה שוב אוטומטית.',
   'message.sendStatus.sending': 'שולח…',
   'message.sendStatus.failed': 'השליחה נכשלה',

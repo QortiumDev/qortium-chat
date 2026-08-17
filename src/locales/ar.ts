@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'تجاهل السجل المحلي',
   'label.resource.public': 'مورد عام',
   'message.delivery.broadcast': 'تم قبول البث · في انتظار التأكيد',
+  'message.delivery.ambiguous': 'نتيجة الإرسال غير معروفة. ربما تم الإرسال بالفعل؛ لا تُعِد المحاولة.',
   'message.delivery.expired': 'لم يتم العثور على التأكيد خلال دقيقتين. ربما تم تطبيق هذا الإجراء بالفعل؛ لا تُعِد المحاولة تلقائيًا.',
   'message.sendStatus.sending': 'جارٍ الإرسال…',
   'message.sendStatus.failed': 'فشل الإرسال',

@@ -242,6 +242,21 @@ export function failPendingSendAmbiguously(
   };
 }
 
+/** Home may return a signed transaction together with a post-broadcast error.
+ * Preserve that signature so polling can still reconcile the local echo, while
+ * keeping the entry duplicate-blocking and non-retryable until confirmation. */
+export function resolvePendingSendAmbiguously(
+  pending: PendingSend,
+  result: { signature: string },
+  error: string,
+  timestamp: number = Date.now(),
+): PendingSend {
+  return {
+    ...failPendingSendAmbiguously(pending, error, timestamp),
+    resolvedSignature: result.signature,
+  };
+}
+
 /** Re-arm a failed entry for another attempt: same text/target/chatReference, fresh timestamp so it re-sorts to "now". */
 export function retryPendingSend(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
   if (!canRetryPendingDelivery(pending.delivery)) {
@@ -456,6 +471,18 @@ export function failPendingRevisionAmbiguously(
   timestamp: number = Date.now(),
 ): PendingRevision {
   return { ...pending, delivery: { phase: 'ambiguous', updatedAt: timestamp }, error, status: 'failed' };
+}
+
+export function resolvePendingRevisionAmbiguously(
+  pending: PendingRevision,
+  result: { signature: string },
+  error: string,
+  timestamp: number = Date.now(),
+): PendingRevision {
+  return {
+    ...failPendingRevisionAmbiguously(pending, error, timestamp),
+    resolvedSignature: result.signature,
+  };
 }
 
 export function retryPendingRevision(pending: PendingRevision, timestamp: number = Date.now()): PendingRevision {

@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Ta bort lokal post',
   'label.resource.public': 'Offentlig resurs',
   'message.delivery.broadcast': 'Sändningen godkänd · väntar på bekräftelse',
+  'message.delivery.ambiguous': 'Sändningsresultatet är okänt. Det kan redan ha skickats; försök inte igen.',
   'message.delivery.expired': 'Ingen bekräftelse hittades inom två minuter. Åtgärden kan redan ha utförts; försök inte automatiskt igen.',
   'message.sendStatus.sending': 'Skickar…',
   'message.sendStatus.failed': 'Det gick inte att skicka',

@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': '捨棄本機記錄',
   'label.resource.public': '公開資源',
   'message.delivery.broadcast': '廣播已接受 · 等待確認',
+  'message.delivery.ambiguous': '傳送結果不明。訊息可能已經送出；請勿重試。',
   'message.delivery.expired': '兩分鐘內未找到確認。此操作可能已生效；請勿自動重試。',
   'message.sendStatus.sending': '傳送中…',
   'message.sendStatus.failed': '傳送失敗',

@@ -1,17 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   lastChatStorageKey,
+  lastChatNetworkStorageKey,
   mergePersistedDirect,
   persistedDirectsStorageKey,
   readLastChat,
+  readLastChatNetwork,
   readPersistedDirects,
+  readQortalLastChat,
+  readQortalReadWatermarks,
+  readQortalScrollBookmarks,
   readReadWatermarks,
+  readScrollBookmarks,
   readWatermarksStorageKey,
+  qortalLastChatStorageKey,
+  qortalLegacyOwnerStorageKey,
+  qortalReadWatermarksStorageKey,
+  qortalScrollBookmarksStorageKey,
+  scrollBookmarksStorageKey,
   setChatStorageMode,
   toStoredSelectedChat,
   writeLastChat,
+  writeLastChatNetwork,
   writePersistedDirects,
+  writeQortalLastChat,
+  writeQortalReadWatermarks,
+  writeQortalScrollBookmarks,
   writeReadWatermarks,
+  writeScrollBookmarks,
   type PersistedDirect,
 } from './chatStorage';
 import type { GroupData } from './types';
@@ -139,16 +155,21 @@ describe('storage round-trips', () => {
   });
   afterEach(removeStorage);
 
-  it('persists and reads back the last chat', () => {
-    writeLastChat(ADDRESS, { kind: 'group', group, network: 'qortal' });
-    expect(readLastChat(ADDRESS)).toEqual({ kind: 'group', group, network: 'qortal' });
-
+  it('persists Qortium and Qortal last-chat records under independent chain identities', () => {
     writeLastChat(ADDRESS, { kind: 'direct', direct: { address: 'Qalice', name: 'alice' }, network: 'qortium' });
+    writeQortalLastChat('Qortal-one', { kind: 'group', group, network: 'qortal' });
+    writeLastChatNetwork('qortal');
+
     expect(readLastChat(ADDRESS)).toEqual({
       kind: 'direct',
       direct: { address: 'Qalice', name: 'alice' },
       network: 'qortium',
     });
+    expect(readQortalLastChat('Qortal-one')).toEqual({ kind: 'group', group, network: 'qortal' });
+    expect(readQortalLastChat('Qortal-two')).toBeNull();
+    expect(readLastChatNetwork()).toBe('qortal');
+    expect(window.localStorage.getItem(qortalLastChatStorageKey('Qortal-one'))).not.toBeNull();
+    expect(window.localStorage.getItem(lastChatNetworkStorageKey())).toBe('"qortal"');
   });
 
   it('rejects malformed last-chat values', () => {
@@ -163,9 +184,10 @@ describe('storage round-trips', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
   });
 
-  it('migrates legacy selections to Qortium and rejects unknown networks', () => {
-    window.localStorage.setItem(lastChatStorageKey(ADDRESS), JSON.stringify({ kind: 'group', group }));
+  it('migrates a legacy Qortium selection and rejects unknown networks', () => {
+    window.localStorage.setItem(`qortium-chat:lastChat:${ADDRESS}`, JSON.stringify({ kind: 'group', group }));
     expect(readLastChat(ADDRESS)).toEqual({ kind: 'group', group, network: 'qortium' });
+    expect(window.localStorage.getItem(lastChatStorageKey(ADDRESS))).not.toBeNull();
 
     window.localStorage.setItem(
       lastChatStorageKey(ADDRESS),
@@ -189,18 +211,20 @@ describe('storage round-trips', () => {
     writeReadWatermarks(ADDRESS, {
       directs: new Map([['Qalice', 1000]]),
       groups: new Map([[42, 2000]]),
-      qortalGroups: new Map([[42, 3000]]),
     });
+    writeQortalReadWatermarks('Qortal-one', new Map([[42, 3000]]));
 
     const restored = readReadWatermarks(ADDRESS);
 
     expect([...restored.groups]).toEqual([[42, 2000]]);
     expect([...restored.directs]).toEqual([['Qalice', 1000]]);
-    expect([...restored.qortalGroups]).toEqual([[42, 3000]]);
+    expect([...readQortalReadWatermarks('Qortal-one')]).toEqual([[42, 3000]]);
+    expect([...readQortalReadWatermarks('Qortal-two')]).toEqual([]);
+    expect(window.localStorage.getItem(qortalReadWatermarksStorageKey('Qortal-one'))).not.toBeNull();
   });
 
   it('drops malformed watermark entries and defaults to empty maps', () => {
-    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), qortalGroups: new Map(), directs: new Map() });
+    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), directs: new Map() });
 
     window.localStorage.setItem(
       readWatermarksStorageKey(ADDRESS),
@@ -211,7 +235,78 @@ describe('storage round-trips', () => {
 
     expect([...restored.groups]).toEqual([[42, 2000]]);
     expect([...restored.directs]).toEqual([['Qalice', 1000]]);
-    expect([...restored.qortalGroups]).toEqual([]);
+  });
+
+  it('migrates legacy mixed-chain state once and binds its Qortal portion to one Qortal identity', () => {
+    const qortalChat = { kind: 'group' as const, group, network: 'qortal' as const };
+
+    window.localStorage.setItem(`qortium-chat:lastChat:${ADDRESS}`, JSON.stringify(qortalChat));
+    window.localStorage.setItem(
+      `qortium-chat:read:${ADDRESS}`,
+      JSON.stringify({ directs: { Qalice: 1000 }, groups: { 7: 2000 }, qortalGroups: { 42: 3000 } }),
+    );
+    window.localStorage.setItem(
+      `qortium-chat:scroll:${ADDRESS}`,
+      JSON.stringify({
+        'group:7': { atBottom: true },
+        'qortal:group:42': { anchorKey: 'message-1', anchorOffset: 12, anchorTimestamp: 3000, atBottom: false },
+      }),
+    );
+
+    expect(readLastChatNetwork(ADDRESS)).toBe('qortal');
+    expect(readQortalLastChat('Qortal-one', ADDRESS)).toEqual(qortalChat);
+    expect([...readQortalReadWatermarks('Qortal-one', ADDRESS)]).toEqual([[42, 3000]]);
+    expect([...readQortalScrollBookmarks('Qortal-one', ADDRESS)]).toEqual([
+      ['qortal:group:42', { anchorKey: 'message-1', anchorOffset: 12, anchorTimestamp: 3000, atBottom: false }],
+    ]);
+
+    // The legacy Qortium record is claimed once. A later Qortal identity gets
+    // a clean state rather than another copy of the first identity's history.
+    expect(readQortalLastChat('Qortal-two', ADDRESS)).toBeNull();
+    expect(readQortalReadWatermarks('Qortal-two', ADDRESS)).toEqual(new Map());
+    expect(readQortalScrollBookmarks('Qortal-two', ADDRESS)).toEqual(new Map());
+    expect(JSON.parse(window.localStorage.getItem(qortalLegacyOwnerStorageKey(ADDRESS)) ?? '{}')).toEqual({
+      qortalAccountAddress: 'Qortal-one',
+      version: 1,
+    });
+
+    // Qortium migrates only its own portions from the same legacy records.
+    expect(readReadWatermarks(ADDRESS)).toEqual({
+      directs: new Map([['Qalice', 1000]]),
+      groups: new Map([[7, 2000]]),
+    });
+    expect(window.localStorage.getItem(readWatermarksStorageKey(ADDRESS))).not.toContain('qortalGroups');
+    expect(readScrollBookmarks(ADDRESS)).toEqual(new Map([['group:7', { atBottom: true }]]));
+  });
+
+  it('keeps a fixed Qortal identity stable across Qortium identity changes', () => {
+    writeQortalLastChat('Qortal-one', { kind: 'group', group, network: 'qortal' });
+    writeQortalReadWatermarks('Qortal-one', new Map([[42, 3000]]));
+    writeQortalScrollBookmarks('Qortal-one', new Map([['qortal:group:42', { atBottom: true }]]));
+
+    expect(readQortalLastChat('Qortal-one', 'Qortium-one')).toEqual({ kind: 'group', group, network: 'qortal' });
+    expect(readQortalLastChat('Qortal-one', 'Qortium-two')).toEqual({ kind: 'group', group, network: 'qortal' });
+    expect([...readQortalReadWatermarks('Qortal-one', 'Qortium-two')]).toEqual([[42, 3000]]);
+    expect(readQortalScrollBookmarks('Qortal-one', 'Qortium-two')).toEqual(
+      new Map([['qortal:group:42', { atBottom: true }]]),
+    );
+  });
+
+  it('filters cross-network bookmark keys on every versioned write', () => {
+    const mixed = new Map([
+      ['group:7', { atBottom: true } as const],
+      ['qortal:group:42', { atBottom: true } as const],
+    ]);
+
+    writeScrollBookmarks(ADDRESS, mixed);
+    writeQortalScrollBookmarks('Qortal-one', mixed);
+
+    expect(readScrollBookmarks(ADDRESS)).toEqual(new Map([['group:7', { atBottom: true }]]));
+    expect(readQortalScrollBookmarks('Qortal-one')).toEqual(
+      new Map([['qortal:group:42', { atBottom: true }]]),
+    );
+    expect(window.localStorage.getItem(scrollBookmarksStorageKey(ADDRESS))).not.toContain('qortal:');
+    expect(window.localStorage.getItem(qortalScrollBookmarksStorageKey('Qortal-one'))).not.toContain('"group:7"');
   });
 });
 
@@ -224,11 +319,14 @@ describe('without storage', () => {
   it('degrades to empty reads and silent writes', () => {
     expect(readLastChat(ADDRESS)).toBeNull();
     expect(readPersistedDirects(ADDRESS)).toEqual([]);
-    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), qortalGroups: new Map(), directs: new Map() });
+    expect(readReadWatermarks(ADDRESS)).toEqual({ groups: new Map(), directs: new Map() });
+    expect(readQortalLastChat('Qortal-one', ADDRESS)).toBeNull();
+    expect(readQortalReadWatermarks('Qortal-one', ADDRESS)).toEqual(new Map());
+    expect(readQortalScrollBookmarks('Qortal-one', ADDRESS)).toEqual(new Map());
     expect(() => writeLastChat(ADDRESS, { kind: 'group', group, network: 'qortium' })).not.toThrow();
     expect(() => writePersistedDirects(ADDRESS, [{ address: 'Qalice' }])).not.toThrow();
     expect(() =>
-      writeReadWatermarks(ADDRESS, { directs: new Map(), groups: new Map([[1, 2]]), qortalGroups: new Map() }),
+      writeReadWatermarks(ADDRESS, { directs: new Map(), groups: new Map([[1, 2]]) }),
     ).not.toThrow();
   });
 });

@@ -191,12 +191,14 @@ export type ChatMessage = {
   txGroupId: number;
 };
 
-// What SEND_CHAT_MESSAGE resolves with once the Home v2 bridge accepts the
-// broadcast (see docs/CHAT_2_0_PLAN.md in qortium-home: "Returns the signature
-// immediately after broadcast acceptance"). This is the actual live shape —
-// distinct from the legacy accepted/action/result envelope ChatActionResult
-// models for the other chat actions.
+// What SEND_CHAT_MESSAGE resolves with after a normal accepted broadcast, or
+// after a legacy host returns a signed post-broadcast failure whose outcome can
+// no longer be proven. This is distinct from the accepted/action/result
+// envelope ChatActionResult models for the other chat actions.
 export type ChatSendResult = {
+  error?: string;
+  errorType?: string;
+  outcome?: 'ambiguous';
   signature: string;
   timestamp: number;
 };

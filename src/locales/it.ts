@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Scarta record locale',
   'label.resource.public': 'Risorsa pubblica',
   'message.delivery.broadcast': 'Trasmissione accettata · in attesa di conferma',
+  'message.delivery.ambiguous': 'L’esito dell’invio è sconosciuto. Potrebbe essere già stato inviato; non riprovare.',
   'message.delivery.expired': 'Nessuna conferma trovata entro due minuti. L’azione potrebbe essere già stata applicata; non riprovarla automaticamente.',
   'message.sendStatus.sending': 'Invio in corso…',
   'message.sendStatus.failed': 'Invio non riuscito',

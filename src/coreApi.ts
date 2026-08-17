@@ -778,13 +778,11 @@ export async function approveGroupJoinRequest(groupId: number, joiner: string) {
   });
 }
 
-// The Home v2 bridge resolves SEND_CHAT_MESSAGE with the bare broadcast
-// result `{ signature, timestamp }` (docs/CHAT_2_0_PLAN.md in qortium-home) —
-// not the accepted/action/result envelope ChatActionResult models for the
-// other chat actions. Read defensively (top-level fields first, falling back
-// to a `result`-wrapped or `transactionSignature` shape) so a caller on an
-// older/legacy bridge still gets a usable signature instead of `undefined`
-// silently breaking optimistic reconciliation.
+// The Home v2 bridge normally resolves SEND_CHAT_MESSAGE with the bare
+// `{ signature, timestamp }` broadcast result, rather than the envelope used
+// by other chat actions. Read defensively for legacy envelopes too. A signed
+// failure is outcome-unknown: legacy Home can catch a timeout after the node
+// accepted the transaction, so retain its signature for reconciliation.
 export class ChatSendRejectedError extends Error {
   constructor(message: string) {
     super(message);
@@ -804,21 +802,6 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
     (typeof nestedResult.errorType === 'string' && nestedResult.errorType) ||
     '';
 
-  // Home can return the signed transaction's signature alongside an explicit
-  // broadcast rejection. A signature alone therefore does not prove the node
-  // accepted it. Preserve this structured rejection as a distinct error type:
-  // callers may offer a retry only for this known-not-broadcast outcome, while
-  // timeouts/transport/normalization failures remain ambiguous.
-  if (record.accepted === false || nestedResult.accepted === false || errorType) {
-    const detail =
-      (typeof record.error === 'string' && record.error) ||
-      (typeof nestedResult.error === 'string' && nestedResult.error) ||
-      errorType ||
-      'Chat send was rejected before broadcast.';
-
-    throw new ChatSendRejectedError(detail.slice(0, 200));
-  }
-
   const signature =
     (typeof record.signature === 'string' && record.signature) ||
     (typeof record.transactionSignature === 'string' && record.transactionSignature) ||
@@ -828,9 +811,36 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
     (typeof record.timestamp === 'number' && record.timestamp) ||
     (typeof nestedResult.timestamp === 'number' && nestedResult.timestamp) ||
     Date.now();
+  const detail =
+    (typeof record.error === 'string' && record.error) ||
+    (typeof nestedResult.error === 'string' && nestedResult.error) ||
+    errorType ||
+    'Chat send outcome is unknown.';
+  const canceled = record.canceled === true || nestedResult.canceled === true;
+  const reason =
+    (typeof record.reason === 'string' && record.reason) ||
+    (typeof nestedResult.reason === 'string' && nestedResult.reason) ||
+    '';
+  const isExplicitFailure = record.accepted === false || nestedResult.accepted === false || !!errorType;
+  const isDefinitelyPreBroadcast =
+    errorType === 'VALIDATION_FAILED' || (canceled && reason === 'USER_CANCELLED');
+
+  if (isExplicitFailure && isDefinitelyPreBroadcast) {
+    throw new ChatSendRejectedError(detail.slice(0, 200));
+  }
 
   if (!signature) {
-    throw new Error('Chat send did not return a transaction signature.');
+    throw new Error(isExplicitFailure ? detail.slice(0, 200) : 'Chat send did not return a transaction signature.');
+  }
+
+  if (isExplicitFailure) {
+    return {
+      error: detail.slice(0, 200),
+      errorType: errorType || undefined,
+      outcome: 'ambiguous',
+      signature,
+      timestamp,
+    };
   }
 
   return { signature, timestamp };

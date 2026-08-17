@@ -19,7 +19,9 @@ import {
   prunePendingSends,
   retainPendingForNetworkAccount,
   resolvePendingRevision,
+  resolvePendingRevisionAmbiguously,
   resolvePendingSend,
+  resolvePendingSendAmbiguously,
   retryPendingRevision,
   retryPendingSend,
   type PendingRevision,
@@ -132,6 +134,29 @@ describe('resolvePendingSend / failPendingSend / retryPendingSend', () => {
     expect(ambiguous.message.sendState).toBe('failed');
     expect(canRetryPendingDelivery(ambiguous.delivery)).toBe(false);
     expect(hasActiveDuplicateSend([ambiguous], candidate)).toBe(true);
+  });
+
+  it('keeps an ambiguous bridge signature for reconciliation without enabling retry', () => {
+    const ambiguous = resolvePendingSendAmbiguously(
+      pendingMessage(),
+      { signature: 'possibly-broadcast' },
+      'Node response timed out.',
+      200,
+    );
+
+    expect(ambiguous).toMatchObject({
+      delivery: { phase: 'ambiguous', updatedAt: 200 },
+      error: 'Node response timed out.',
+      resolvedSignature: 'possibly-broadcast',
+      status: 'failed',
+    });
+    expect(canRetryPendingDelivery(ambiguous.delivery)).toBe(false);
+    expect(
+      prunePendingSends(
+        [ambiguous],
+        new Set([getPendingSignatureIdentity('qortium', 'possibly-broadcast')]),
+      ),
+    ).toEqual([]);
   });
 
   it('models confirmation and expiry as explicit terminal delivery phases', () => {
@@ -393,6 +418,29 @@ describe('pending revisions (edit/delete side channel)', () => {
     expect(failed.delivery).toEqual({ phase: 'ambiguous', updatedAt: 200 });
     expect(failed.status).toBe('failed');
     expect(canRetryPendingDelivery(failed.delivery)).toBe(false);
+  });
+
+  it('keeps an ambiguous revision signature for reconciliation without enabling retry', () => {
+    const ambiguous = resolvePendingRevisionAmbiguously(
+      pendingRevision(),
+      { signature: 'possibly-revised' },
+      'Node response timed out.',
+      200,
+    );
+
+    expect(ambiguous).toMatchObject({
+      delivery: { phase: 'ambiguous', updatedAt: 200 },
+      error: 'Node response timed out.',
+      resolvedSignature: 'possibly-revised',
+      status: 'failed',
+    });
+    expect(canRetryPendingDelivery(ambiguous.delivery)).toBe(false);
+    expect(
+      prunePendingRevisions(
+        [ambiguous],
+        new Set([getPendingSignatureIdentity('qortium', 'possibly-revised')]),
+      ),
+    ).toEqual([]);
   });
 
   it('retryPendingRevision re-arms a failed revision to sending', () => {

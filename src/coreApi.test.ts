@@ -758,7 +758,7 @@ describe('Core API path builders', () => {
     });
   });
 
-  it('rejects an explicit Home broadcast failure even when it includes a signed transaction signature', async () => {
+  it('preserves a signed Home broadcast failure as an ambiguous, reconcilable outcome', async () => {
     qdnRequestMock.mockResolvedValueOnce({
       accepted: false,
       error: 'Node rejected the chat transaction.',
@@ -766,20 +766,48 @@ describe('Core API path builders', () => {
       signature: 'signed-but-not-broadcast',
     });
 
-    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toMatchObject({
-      message: 'Node rejected the chat transaction.',
-      name: 'ChatSendRejectedError',
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
+      error: 'Node rejected the chat transaction.',
+      errorType: 'BROADCAST_REJECTED',
+      outcome: 'ambiguous',
+      signature: 'signed-but-not-broadcast',
+      timestamp: expect.any(Number),
     });
   });
 
-  it('rejects an errorType result even if a legacy host omits accepted', async () => {
+  it('preserves a signed legacy errorType result as an ambiguous, reconcilable outcome', async () => {
     qdnRequestMock.mockResolvedValueOnce({
       errorType: 'BROADCAST_REJECTED',
       signature: 'signed-but-not-broadcast',
     });
 
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
+      error: 'BROADCAST_REJECTED',
+      errorType: 'BROADCAST_REJECTED',
+      outcome: 'ambiguous',
+      signature: 'signed-but-not-broadcast',
+      timestamp: expect.any(Number),
+    });
+  });
+
+  it('allows retry for exact pre-broadcast validation and user-cancel results', async () => {
+    qdnRequestMock
+      .mockResolvedValueOnce({
+        accepted: false,
+        error: 'Message is required.',
+        errorType: 'VALIDATION_FAILED',
+      })
+      .mockResolvedValueOnce({
+        accepted: false,
+        canceled: true,
+        reason: 'USER_CANCELLED',
+      });
+
     await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toMatchObject({
-      message: 'BROADCAST_REJECTED',
+      message: 'Message is required.',
+      name: 'ChatSendRejectedError',
+    });
+    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toMatchObject({
       name: 'ChatSendRejectedError',
     });
   });
@@ -1157,6 +1185,29 @@ describe('Core API path builders', () => {
         groupId: 0,
         message: 'hi all',
         txGroupId: 0,
+      });
+    });
+
+    it('treats Home 1.7 Qortal BROADCAST_REJECTED with a signature as outcome unknown', async () => {
+      qortalRequestMock.mockResolvedValueOnce({
+        accepted: false,
+        error: 'Qortal node request timed out.',
+        errorType: 'BROADCAST_REJECTED',
+        signature: 'possibly-accepted-qortal-signature',
+      });
+
+      await expect(sendChatMessage('qortal', 7, 'hello')).resolves.toEqual({
+        error: 'Qortal node request timed out.',
+        errorType: 'BROADCAST_REJECTED',
+        outcome: 'ambiguous',
+        signature: 'possibly-accepted-qortal-signature',
+        timestamp: expect.any(Number),
+      });
+      expect(qortalRequestMock).toHaveBeenCalledWith({
+        action: 'SEND_CHAT_MESSAGE',
+        groupId: 7,
+        message: 'hello',
+        txGroupId: 7,
       });
     });
 

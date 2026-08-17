@@ -318,6 +318,7 @@ export const STRINGS = {
   'button.discardLocal': 'Descartar registro local',
   'label.resource.public': 'Recurso público',
   'message.delivery.broadcast': 'Transmissão aceita · aguardando confirmação',
+  'message.delivery.ambiguous': 'O resultado do envio é desconhecido. Pode já ter sido enviado; não tente novamente.',
   'message.delivery.expired': 'A confirmação não foi encontrada em dois minutos. Esta ação pode já ter sido aplicada; não tente novamente de forma automática.',
   'message.sendStatus.sending': 'Enviando…',
   'message.sendStatus.failed': 'Falha ao enviar',

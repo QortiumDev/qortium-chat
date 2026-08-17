@@ -489,7 +489,7 @@ function MessageReactionChips({
   );
 }
 
-function getMessageDeliveryLabel(phase: SendDeliveryPhase, t: TranslateFunction) {
+export function getMessageDeliveryLabel(phase: SendDeliveryPhase, t: TranslateFunction) {
   switch (phase) {
     case 'broadcast':
       return t('message.delivery.broadcast');
@@ -498,7 +498,7 @@ function getMessageDeliveryLabel(phase: SendDeliveryPhase, t: TranslateFunction)
     case 'expired':
       return t('message.sendStatus.failed');
     case 'ambiguous':
-      return t('message.sendStatus.failed');
+      return t('message.delivery.ambiguous');
     case 'rejected':
       return t('message.sendStatus.failed');
     default:
@@ -506,7 +506,7 @@ function getMessageDeliveryLabel(phase: SendDeliveryPhase, t: TranslateFunction)
   }
 }
 
-function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunction) {
+export function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunction) {
   if (revision.kind === 'edit') {
     switch (revision.delivery.phase) {
       case 'broadcast':
@@ -516,7 +516,7 @@ function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunctio
       case 'expired':
         return t('message.editStatus.failed');
       case 'ambiguous':
-        return t('message.editStatus.failed');
+        return t('message.delivery.ambiguous');
       case 'rejected':
         return t('message.editStatus.failed');
       default:
@@ -532,7 +532,7 @@ function getRevisionDeliveryLabel(revision: PendingRevision, t: TranslateFunctio
     case 'expired':
       return t('message.deleteStatus.failed');
     case 'ambiguous':
-      return t('message.deleteStatus.failed');
+      return t('message.delivery.ambiguous');
     case 'rejected':
       return t('message.deleteStatus.failed');
     default:

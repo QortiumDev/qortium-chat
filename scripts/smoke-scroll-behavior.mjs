@@ -165,9 +165,10 @@ const bridgeBootstrap = `
     };
 
     localStorage.setItem(
-      'qortium-chat:lastChat:' + selfAddress,
-      JSON.stringify({ kind: 'direct', direct: { address: peerAddress, name: 'Scroll Peer' } })
+      'qortium-chat:v2:last:qortium:' + selfAddress,
+      JSON.stringify({ kind: 'direct', direct: { address: peerAddress, name: 'Scroll Peer' }, network: 'qortium' })
     );
+    localStorage.setItem('qortium-chat:v2:last-network', JSON.stringify('qortium'));
     window.__scrollSmoke = { directSearches: 0, olderSearches: 0 };
     window.qdnRequest = async (request) => {
       switch (String(request.action || '').toUpperCase()) {
