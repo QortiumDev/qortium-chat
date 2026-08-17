@@ -48,6 +48,7 @@ export type PendingSendTarget =
 export type PendingSendKind = 'message' | 'reaction';
 
 export type PendingSend = {
+  readonly accountAddress: string;
   readonly chatKey: string;
   readonly chatReference?: string;
   readonly error?: string;
@@ -66,6 +67,7 @@ export type PendingSend = {
 export type PendingRevisionKind = 'delete' | 'edit';
 
 export type PendingRevision = {
+  readonly accountAddress: string;
   readonly chatKey: string;
   /** The original message's real signature — the tx-level chatReference this revision targets. */
   readonly chatReference: string;
@@ -138,6 +140,7 @@ function buildOptimisticChatMessage(input: {
 }
 
 export function createPendingSend(input: {
+  accountAddress: string;
   chatKey: string;
   chatReference?: string;
   kind: PendingSendKind;
@@ -152,6 +155,7 @@ export function createPendingSend(input: {
   txGroupId: number;
 }): PendingSend {
   return {
+    accountAddress: input.accountAddress,
     chatKey: input.chatKey,
     chatReference: input.chatReference,
     kind: input.kind,
@@ -230,11 +234,12 @@ function targetsEqual(first: PendingSendTarget, second: PendingSendTarget) {
  * expired attempts are terminal and may be explicitly retried. */
 export function hasActiveDuplicateSend(
   pending: readonly PendingSend[],
-  candidate: Pick<PendingSend, 'chatReference' | 'target' | 'text'>,
+  candidate: Pick<PendingSend, 'accountAddress' | 'chatReference' | 'target' | 'text'>,
 ) {
   return pending.some(
     (entry) =>
       (entry.delivery.phase === 'pending' || entry.delivery.phase === 'broadcast') &&
+      entry.accountAddress === candidate.accountAddress &&
       entry.text === candidate.text &&
       entry.chatReference === candidate.chatReference &&
       targetsEqual(entry.target, candidate.target),
@@ -356,6 +361,7 @@ export function prunePendingSends(pending: PendingSend[], confirmedSignatures: R
 }
 
 export function createPendingRevision(input: {
+  accountAddress: string;
   chatKey: string;
   chatReference: string;
   kind: PendingRevisionKind;
@@ -367,6 +373,7 @@ export function createPendingRevision(input: {
   const timestamp = input.timestamp ?? Date.now();
 
   return {
+    accountAddress: input.accountAddress,
     chatKey: input.chatKey,
     chatReference: input.chatReference,
     kind: input.kind,

@@ -38,6 +38,7 @@ function confirmedMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
 
 function pendingMessage(overrides: Partial<PendingSend> = {}): PendingSend {
   return createPendingSend({
+    accountAddress: 'Qaccount',
     chatKey: 'group:7',
     kind: 'message',
     localId: 'pending-1',
@@ -145,6 +146,13 @@ describe('duplicate prevention', () => {
     expect(hasActiveDuplicateSend([qortium], qortal)).toBe(false);
     expect(hasActiveDuplicateSend([qortium], reply)).toBe(false);
   });
+
+  it('does not treat another account session as a duplicate send', () => {
+    const firstAccount = pendingMessage({ accountAddress: 'Qaccount-one' });
+    const secondAccount = pendingMessage({ accountAddress: 'Qaccount-two' });
+
+    expect(hasActiveDuplicateSend([firstAccount], secondAccount)).toBe(false);
+  });
 });
 
 describe('mergeOptimisticMessages', () => {
@@ -242,6 +250,7 @@ describe('prunePendingSends', () => {
 
 function pendingRevision(overrides: Partial<Parameters<typeof createPendingRevision>[0]> = {}): PendingRevision {
   return createPendingRevision({
+    accountAddress: 'Qaccount',
     chatKey: 'group:7',
     chatReference: 'original-sig',
     kind: 'edit',
