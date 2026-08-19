@@ -149,6 +149,18 @@ export function qortalLastChatStorageKey(accountAddress: string) {
   return `${PREFIX}:v2:last:qortal:${accountAddress}`;
 }
 
+export function groupOnboardingDismissalStorageKey(network: ChatNetwork, accountAddress: string) {
+  return `${PREFIX}:v2:onboarding:groups:${network}:${accountAddress}`;
+}
+
+export function readGroupOnboardingDismissed(network: ChatNetwork, accountAddress: string): boolean {
+  return readJson<unknown>(groupOnboardingDismissalStorageKey(network, accountAddress)) === true;
+}
+
+export function writeGroupOnboardingDismissed(network: ChatNetwork, accountAddress: string): void {
+  writeJson(groupOnboardingDismissalStorageKey(network, accountAddress), true);
+}
+
 export function persistedDirectsStorageKey(accountAddress: string) {
   return `${PREFIX}:directs:${accountAddress}`;
 }

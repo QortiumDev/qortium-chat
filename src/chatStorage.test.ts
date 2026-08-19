@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   initializeQortalUiStorage,
+  groupOnboardingDismissalStorageKey,
   lastChatStorageKey,
   lastChatNetworkStorageKey,
   mergePersistedDirect,
   persistedDirectsStorageKey,
   qortalPersistedDirectsStorageKey,
   qortiumPersistedDirectsStorageKey,
+  readGroupOnboardingDismissed,
   readLastChat,
   readLastChatNetwork,
   readPersistedDirects,
@@ -28,6 +30,7 @@ import {
   setChatStorageMode,
   toStoredSelectedChat,
   writeLastChat,
+  writeGroupOnboardingDismissed,
   writeLastChatNetwork,
   writePersistedDirects,
   writePersistedDirectsForNetwork,
@@ -180,6 +183,18 @@ describe('storage round-trips', () => {
     expect(readLastChatNetwork()).toBe('qortal');
     expect(window.localStorage.getItem(qortalLastChatStorageKey('Qortal-one'))).not.toBeNull();
     expect(window.localStorage.getItem(lastChatNetworkStorageKey())).toBe('"qortal"');
+  });
+
+  it('persists the group-onboarding dismissal per chain account', () => {
+    expect(readGroupOnboardingDismissed('qortium', ADDRESS)).toBe(false);
+    expect(readGroupOnboardingDismissed('qortal', ADDRESS)).toBe(false);
+
+    writeGroupOnboardingDismissed('qortal', ADDRESS);
+
+    expect(readGroupOnboardingDismissed('qortal', ADDRESS)).toBe(true);
+    expect(readGroupOnboardingDismissed('qortium', ADDRESS)).toBe(false);
+    expect(readGroupOnboardingDismissed('qortal', 'Qother')).toBe(false);
+    expect(window.localStorage.getItem(groupOnboardingDismissalStorageKey('qortal', ADDRESS))).toBe('true');
   });
 
   it('rejects malformed last-chat values', () => {

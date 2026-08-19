@@ -90,6 +90,10 @@ export function hasQortalChatBridgeActions(actions: readonly string[], host?: Br
   );
 }
 
+export function isQortalChatBridgeAvailable(bridge: BridgeState | null | undefined) {
+  return !!bridge && hasQortalChatBridgeActions(bridge.actions, bridge.host);
+}
+
 async function requestLegacyQortal<T>(request: QortalRequestPayload): Promise<T> {
   const action = request.action.toUpperCase();
 
@@ -199,10 +203,10 @@ function getContentLength(response: Response, bodyLength: number) {
   return Number.isFinite(contentLength) ? contentLength : undefined;
 }
 
-async function fetchLocalNodeApi(request: QortalRequestPayload): Promise<NodeApiFetchResult> {
+async function fetchNodeApiAt(request: QortalRequestPayload, baseUrl: string): Promise<NodeApiFetchResult> {
   const method = sanitizeReadMethod(request.method);
   const apiPath = sanitizeNodePath(request.path);
-  const response = await fetch(`${getNodeApiUrl()}${apiPath}`, { method });
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${apiPath}`, { method });
   const contentType = response.headers.get('content-type') ?? '';
   const body = method === 'HEAD' ? '' : await response.text();
   const bodyLength = new TextEncoder().encode(body).byteLength;
@@ -221,6 +225,37 @@ async function fetchLocalNodeApi(request: QortalRequestPayload): Promise<NodeApi
     status: response.status,
     statusText: response.statusText,
   };
+}
+
+async function fetchLocalNodeApi(request: QortalRequestPayload): Promise<NodeApiFetchResult> {
+  return fetchNodeApiAt(request, getNodeApiUrl());
+}
+
+async function requestDedicatedQortal<T>(
+  bridgeRequest: <R = unknown>(request: Record<string, unknown>) => Promise<R>,
+  request: QortalRequestPayload,
+): Promise<T> {
+  if (request.action.toUpperCase() === 'FETCH_NODE_API') {
+    try {
+      const ui = await bridgeRequest<unknown>({ action: 'WHICH_UI' });
+
+      // Classic Hub does not advertise a generic node-fetch action, but a
+      // rendered Q-App is same-origin with its Core API. Preserve the same
+      // GET/HEAD/path/size checks as every other fallback while avoiding an
+      // unsupported bridge request that would otherwise time out.
+      if (
+        (ui === 'HUB_ELECTRON' || ui === 'HUB_WEB') &&
+        typeof window !== 'undefined' &&
+        typeof window.location?.origin === 'string'
+      ) {
+        return (await fetchNodeApiAt(request, window.location.origin)) as T;
+      }
+    } catch {
+      // Let Home or another dedicated bridge handle the original request.
+    }
+  }
+
+  return bridgeRequest<T>(request);
 }
 
 async function fallbackQortalRequest<T>(request: QortalRequestPayload): Promise<T> {
@@ -286,7 +321,7 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
       });
     }
 
-    return bridgeRequest<T>(request);
+    return requestDedicatedQortal<T>(bridgeRequest, request);
   }
 
   if (hasLegacyQortalBridgeCandidate()) {
