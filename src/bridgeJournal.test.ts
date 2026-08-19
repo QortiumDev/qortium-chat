@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clearNetworkKeyedEntries,
   filterChatJournalEntries,
   getForgettableJournalSignatures,
   getJournalConversationKey,
@@ -199,5 +200,59 @@ describe('shouldFetchPendingJournal', () => {
         bridgeReady: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe('clearNetworkKeyedEntries', () => {
+  it('drops only qortal-prefixed keys when clearing the qortal network', () => {
+    const map = new Map([
+      ['group:1', 'qortium-a'],
+      ['direct:QAddress', 'qortium-b'],
+      ['qortal:group:1', 'qortal-a'],
+      ['qortal:direct:QOtherAddress', 'qortal-b'],
+    ]);
+
+    const next = clearNetworkKeyedEntries(map, 'qortal');
+
+    expect([...next.keys()]).toEqual(['group:1', 'direct:QAddress']);
+  });
+
+  it('drops only unprefixed (qortium) keys when clearing the qortium network', () => {
+    const map = new Map([
+      ['group:1', 'qortium-a'],
+      ['qortal:group:1', 'qortal-a'],
+    ]);
+
+    const next = clearNetworkKeyedEntries(map, 'qortium');
+
+    expect([...next.keys()]).toEqual(['qortal:group:1']);
+  });
+
+  it('returns the same reference when nothing for that network is present', () => {
+    const map = new Map([['group:1', 'qortium-a']]);
+
+    expect(clearNetworkKeyedEntries(map, 'qortal')).toBe(map);
+  });
+
+  it('never mutates the input map', () => {
+    const map = new Map([
+      ['group:1', 'qortium-a'],
+      ['qortal:group:1', 'qortal-a'],
+    ]);
+
+    clearNetworkKeyedEntries(map, 'qortium');
+
+    expect(map.size).toBe(2);
+  });
+
+  it('empties a map that is entirely one network', () => {
+    const map = new Map([
+      ['qortal:group:1', 'qortal-a'],
+      ['qortal:direct:QAddress', 'qortal-b'],
+    ]);
+
+    const next = clearNetworkKeyedEntries(map, 'qortal');
+
+    expect(next.size).toBe(0);
   });
 });

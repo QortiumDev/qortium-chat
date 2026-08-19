@@ -11,6 +11,7 @@ import {
   getAttachmentServiceFromMime,
   getFirstTransferFile,
   isSourceAttachmentExpired,
+  shouldClearStagedAttachmentOnAccountLock,
 } from './attachments';
 
 describe('attachment helpers', () => {
@@ -109,5 +110,47 @@ describe('attachment helpers', () => {
     expect(isSourceAttachmentExpired({ selectedAt }, selectedAt + SOURCE_TOKEN_EXPIRY_MS - 1)).toBe(false);
     expect(isSourceAttachmentExpired({ selectedAt }, selectedAt + SOURCE_TOKEN_EXPIRY_MS)).toBe(true);
     expect(isSourceAttachmentExpired({ selectedAt }, selectedAt + SOURCE_TOKEN_EXPIRY_MS + 1)).toBe(true);
+  });
+
+  describe('shouldClearStagedAttachmentOnAccountLock', () => {
+    it('clears when the Qortium account locks with a Qortium chat selected and something staged', () => {
+      expect(
+        shouldClearStagedAttachmentOnAccountLock({
+          hasStagedAttachment: true,
+          isAccountUnlocked: false,
+          selectedChatIsQortal: false,
+        }),
+      ).toBe(true);
+    });
+
+    it('does not clear while the account is unlocked', () => {
+      expect(
+        shouldClearStagedAttachmentOnAccountLock({
+          hasStagedAttachment: true,
+          isAccountUnlocked: true,
+          selectedChatIsQortal: false,
+        }),
+      ).toBe(false);
+    });
+
+    it('does not clear a Qortal chat\'s stage — Qortal has no lock concept of its own', () => {
+      expect(
+        shouldClearStagedAttachmentOnAccountLock({
+          hasStagedAttachment: true,
+          isAccountUnlocked: false,
+          selectedChatIsQortal: true,
+        }),
+      ).toBe(false);
+    });
+
+    it('does not clear when nothing is staged', () => {
+      expect(
+        shouldClearStagedAttachmentOnAccountLock({
+          hasStagedAttachment: false,
+          isAccountUnlocked: false,
+          selectedChatIsQortal: false,
+        }),
+      ).toBe(false);
+    });
   });
 });

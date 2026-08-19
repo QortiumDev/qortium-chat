@@ -83,3 +83,29 @@ export function shouldFetchPendingJournal(input: {
 
   return hasAction([...input.actions], 'GET_PENDING_TRANSACTIONS');
 }
+
+/** P6b identity-isolation audit: drops every entry of a network-prefixed
+ * key→value map that belongs to `network` (same `${network}:...` convention
+ * as getJournalConversationKey/App.tsx's getPrivateGroupChatStateKey — the
+ * default network's keys carry no prefix, Qortal's start with `qortal:`).
+ * Used to clear an account-relative snapshot map — e.g. the P3
+ * GET_PRIVATE_GROUP_CHAT_STATE store (isMember/keys/rotationRequired) — when
+ * that network's selected account changes, so a stale snapshot from the
+ * previous account can never render for the new one. Returns the same map
+ * reference when nothing matched, matching every other update-if-changed
+ * setState pattern in App.tsx (avoids a needless re-render). */
+export function clearNetworkKeyedEntries<V>(map: Map<string, V>, network: ChatNetwork): Map<string, V> {
+  let changed = false;
+  const next = new Map(map);
+
+  for (const key of next.keys()) {
+    const belongsToNetwork = network === 'qortal' ? key.startsWith('qortal:') : !key.startsWith('qortal:');
+
+    if (belongsToNetwork) {
+      next.delete(key);
+      changed = true;
+    }
+  }
+
+  return changed ? next : map;
+}

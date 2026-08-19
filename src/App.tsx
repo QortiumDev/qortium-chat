@@ -15,6 +15,7 @@ import {
   getFirstTransferFile,
   isSourceAttachmentExpired,
   QDN_PUBLISH_SOURCE_MAX_BYTES,
+  shouldClearStagedAttachmentOnAccountLock,
 } from './attachments';
 import {
   buildActiveChatsWebSocketUrl,
@@ -63,6 +64,7 @@ import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
 import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
 import { getBridgeErrorCode, isPendingReconciliationRequired } from './bridgeErrors';
 import {
+  clearNetworkKeyedEntries,
   filterChatJournalEntries,
   getForgettableJournalSignatures,
   getJournalConversationKey,
@@ -1390,6 +1392,15 @@ export default function App() {
   const qortalAccountRefreshPendingRef = useRef(false);
   const refreshingQortalAccountAddressRef = useRef<string | null>(null);
   const qortalActiveChatsRequestGuardRef = useRef(new LatestRequestGuard());
+  // Item D / P6b: fetchPendingJournal has no per-network in-flight tracking
+  // of its own — a slow response from the account that was selected when the
+  // fetch started must never land after a switch to a different account (or
+  // network availability being pulled), overwriting that account's own
+  // journal snapshot. One guard per network, invalidated whenever the owning
+  // account changes (see the Qortium account-reset effect and
+  // clearQortalAccountSessionState below).
+  const journalRequestGuardRef = useRef(new LatestRequestGuard());
+  const qortalJournalRequestGuardRef = useRef(new LatestRequestGuard());
   const groupDiscoveryRequestRef = useRef(0);
   const qortalGroupDiscoveryRequestRef = useRef(0);
   const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
@@ -3401,6 +3412,20 @@ export default function App() {
     setLastReadByQortalAddress(restoredQortalDirectWatermarks);
     setQortalLoadedDirectActivityByAddress(new Map());
 
+    // Item D / P6b: the Qortal pending-transaction journal is account-scoped
+    // (see journalRequestGuardRef's declaration) — drop the previous
+    // account's snapshot and invalidate any fetch still in flight for it so
+    // a late response cannot land under the new account.
+    qortalJournalRequestGuardRef.current.begin();
+    setQortalJournalEntries(emptyJournalEntries);
+
+    // P6b target 3: GET_PRIVATE_GROUP_CHAT_STATE snapshots (isMember, keys,
+    // rotationRequired) are account-relative. Drop every Qortal-network entry
+    // so a stale membership/key snapshot from the previous account can never
+    // render — even transiently while the fetch effect's own request guard
+    // reloads the currently-selected group's state — under the new one.
+    setPrivateGroupChatStateByKey((current) => clearNetworkKeyedEntries(current, 'qortal'));
+
     for (const key of draftsByChatKeyRef.current.keys()) {
       if (key.startsWith('qortal:')) {
         draftsByChatKeyRef.current.delete(key);
@@ -3438,6 +3463,13 @@ export default function App() {
       draftChatKeyRef.current = selectedChatKeyRef.current;
       setDraft('');
       setComposeContext(null);
+      // P6b target 2: a staged attachment's Home-issued source token is
+      // bound to the account that requested it — the Qortium counterpart of
+      // this reset (below, keyed on account?.address) already drops the
+      // stage the same way; this mirrors it for a Qortal identity change so
+      // a stale token cannot survive to fail confusingly at publish time.
+      setStagedAttachment(null);
+      setAttachmentError('');
       setLiveAnnouncement('');
       lastAnnouncedRef.current = { chatKey: '', signature: '' };
       setUnreadDividerTimestamp(null);
@@ -4835,8 +4867,18 @@ export default function App() {
       return;
     }
 
+    // Guard against a response arriving after the owning account has already
+    // changed (see journalRequestGuardRef's declaration) — an in-flight fetch
+    // started for account A must never commit its result once B is current.
+    const guard = network === 'qortal' ? qortalJournalRequestGuardRef.current : journalRequestGuardRef.current;
+    const requestId = guard.begin();
+
     try {
       const result = await getPendingBridgeTransactions(network, networkActions);
+
+      if (!guard.isLatest(requestId)) {
+        return;
+      }
 
       setNetworkJournalEntries(network, result.entries);
     } catch {
@@ -7645,6 +7687,15 @@ export default function App() {
     setApprovalVotes(createState(emptyApprovalVotes));
     setTrackedTransactions({});
     setLoadedDirectActivityByAddress(new Map());
+    // Item D / P6b: mirrors clearQortalAccountSessionState's Qortal-side
+    // reset — the Qortium pending-transaction journal is account-scoped too.
+    journalRequestGuardRef.current.begin();
+    setJournalEntries(emptyJournalEntries);
+    // P6b target 3: drop every Qortium-network GET_PRIVATE_GROUP_CHAT_STATE
+    // snapshot (isMember, keys, rotationRequired are account-relative) so a
+    // stale membership/key snapshot from the previous account can never
+    // render for the new one, even transiently.
+    setPrivateGroupChatStateByKey((current) => clearNetworkKeyedEntries(current, 'qortium'));
     // Restore this account's read watermarks so unread state survives reloads;
     // unseen groups/directs still get baselined to "read" by the effects below.
     const watermarks = account ? readReadWatermarks(account.address) : null;
@@ -7695,6 +7746,31 @@ export default function App() {
     // account's saved chat in the normal effect below.
     userSelectedChatRef.current = selectedChatIsQortal;
   }, [account?.address]);
+
+  // P6b target 2: the reset effect above clears a staged attachment on a
+  // Qortium account SWITCH (address change), and clearQortalAccountSessionState
+  // mirrors that for Qortal — but LOCKING the very same account (address
+  // unchanged, only account.isUnlocked flipping) fires neither, so a token
+  // staged before the lock would otherwise survive and fail confusingly at
+  // publish time. Reuse the same "expired, reselect" notice the reactive
+  // publish-time expiry check already shows for the equivalent stale-token
+  // case. Qortal accounts carry no lock state in this app (qortalAccount has
+  // no isUnlocked field — see types.ts), so this only needs to watch the
+  // Qortium side.
+  useEffect(() => {
+    if (
+      !shouldClearStagedAttachmentOnAccountLock({
+        hasStagedAttachment: !!stagedAttachment,
+        isAccountUnlocked,
+        selectedChatIsQortal: selectedChatKeyRef.current.startsWith('qortal:'),
+      })
+    ) {
+      return;
+    }
+
+    setStagedAttachment(null);
+    setAttachmentError(t('status.attachment.reselect'));
+  }, [isAccountUnlocked]);
 
   // Persist each chain's read state under that chain's selected identity. The
   // skip refs protect the transitional render after an identity-specific load.

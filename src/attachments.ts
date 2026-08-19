@@ -132,3 +132,22 @@ export function formatAttachmentSize(bytes: number) {
 export function isSourceAttachmentExpired(staged: Pick<StagedSourceAttachment, 'selectedAt'>, now: number) {
   return now - staged.selectedAt >= SOURCE_TOKEN_EXPIRY_MS;
 }
+
+// P6b identity-isolation audit: a staged source token is bound to the
+// Qortium account that requested it (Home's SELECT_QDN_PUBLISH_SOURCE picker
+// scopes it to account+tab+route — review/schemas-publish-attachments.md
+// § 1). App.tsx's chat-switch effect already drops the stage on a
+// conversation change, and its account-reset effect drops it on a Qortium
+// account SWITCH — but LOCKING the very same account (address unchanged,
+// only isUnlocked flipping false) triggers neither. This is the decision for
+// a third effect that watches exactly that transition: only fires while a
+// Qortium chat is selected (a Qortal chat's stage is unaffected by the
+// Qortium account's lock state — Qortal has no lock concept of its own in
+// this app) and only when there is actually something staged to drop.
+export function shouldClearStagedAttachmentOnAccountLock(input: {
+  hasStagedAttachment: boolean;
+  isAccountUnlocked: boolean;
+  selectedChatIsQortal: boolean;
+}): boolean {
+  return input.hasStagedAttachment && !input.isAccountUnlocked && !input.selectedChatIsQortal;
+}
