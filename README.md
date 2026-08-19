@@ -10,17 +10,18 @@ errors, so the same build degrades cleanly on hosts with a smaller action
 surface. The app follows Home's display settings, including the Classic,
 Modern, and Fun UI styles.
 
-On Home versions that expose app notifications, the bell beside the selected
-account opens separate choices for direct chat activity, mentions, and replies.
-Chat registers a durable incoming-direct rule only when that choice is selected,
-re-registers it after an account change, and removes it when direct notifications
-are turned off. Direct activity can include edits, reactions, or app-to-app data
-messages because Core's background event deliberately excludes message content,
-so nothing outside Chat can tell those apart from human chat. While Chat is loaded,
-the mention and reply choices independently control notifications from the
-selected group when the app is not focused. Existing bell preferences migrate
-without changing behavior. The app feature-detects the notification actions, so
-older Home versions and browser development remain unaffected.
+The bell beside the selected account opens separate choices for direct chat
+activity, mentions, and replies. On Home 2 those choices drive foreground
+notifications: while Chat is running it detects new activity itself and asks
+Home to show a chain-qualified notification (`SHOW_NOTIFICATION`), so machine
+messages, reactions, and edit/delete revisions are correctly excluded. On
+legacy hosts that still expose the durable subscription actions, Chat keeps
+registering the background incoming-direct rule exactly as before — there,
+direct activity can include edits, reactions, or app-to-app data messages
+because Core's background event deliberately excludes message content.
+Existing bell preferences migrate without changing behavior, and the app
+feature-detects the notification actions, so older Home versions and browser
+development remain unaffected.
 
 For minting groups, the selected group header shows whether the selected
 account is currently minting on the connected node, and joined members who are
@@ -69,11 +70,12 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 1.4.13, where the `1.4` prefix declares the minimum Qortium platform
-level the app is built against and the last number is the app's own release
-counter. The build emits a `qortium-app.json` manifest (see `vite.config.ts`)
-that Qortium Home reads from the published root to show the compatibility
-badge.
+version is 2.0.0, where the `2.0` prefix declares the minimum Qortium platform
+level the app is built against (Qortium Home 2) and the last number is the
+app's own release counter. The build emits a `qortium-app.json` manifest (see
+`vite.config.ts`) that Qortium Home reads from the published root to show the
+compatibility badge. The manifest is ignored by Qortal Hub, where the same
+bundle runs against the classic `qortalRequest` surface.
 
 ## Qortium Home Smoke Check
 
@@ -111,14 +113,18 @@ error (for example a missing-capability or unavailable-route notice) is
 shown. Ambiguous broadcast outcomes are reconciled through Home 2's
 restart-safe pending-transaction journal when the host provides it. Browser
 development remains read-only and cannot decrypt or send direct private chat
-without Home. Background direct-message notifications require Home to remain
-running; Android delivery currently requires Home to remain in the
-foreground. Closed-tab group mention detection is not available because Core
-deliberately excludes message content from notification events.
+without Home. On Home 2, notifications are foreground-only: Chat must be
+running (in a tab) to detect activity and ask Home to show a notification —
+Home 2 deliberately does not provide the legacy background subscription
+system. On legacy hosts, background direct-message notifications require
+Home to remain running, and Android delivery requires Home in the
+foreground. Closed-tab group mention detection is not available on any host
+because Core deliberately excludes message content from notification events.
 
 App-to-app data messages are hidden from the message feed, unread counts, and
-in-app mention/reply notifications, but a direct one can still raise Home's
-background "New direct message" notification. That rule is evaluated by Core,
+in-app mention/reply notifications. On legacy hosts a direct one can still
+raise Home's background "New direct message" notification. That rule is
+evaluated by Core,
 whose CHAT_MESSAGE event carries only addresses and envelope metadata and whose
 filters are address-scoped, so Chat has no way to exclude a message it has not
 seen yet. Suppressing it requires Home to fetch, decrypt, and classify the
