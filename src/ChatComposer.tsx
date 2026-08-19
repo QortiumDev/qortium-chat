@@ -7,14 +7,15 @@ import {
 } from 'react';
 import type { EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 
-import { formatAttachmentSize, type PreparedAttachment } from './attachments';
+import { formatAttachmentSize, type StagedSourceAttachment } from './attachments';
 import { CloseIcon } from './icons';
 
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
-export type ComposerAttachment =
-  | { filename: string; phase: 'processing' }
-  | ({ phase: 'ready' } & PreparedAttachment);
+// 'selecting' covers the round trip to Home's native file picker
+// (SELECT_QDN_PUBLISH_SOURCE) — there is no local file to process any more,
+// only a wait for the user's choice and Home's response.
+export type ComposerAttachment = { phase: 'selecting' } | ({ phase: 'ready' } & StagedSourceAttachment);
 
 export type ComposerContext = {
   label: string;
@@ -26,7 +27,6 @@ export function ChatComposer({
   attachTitle,
   attachment,
   attachmentError,
-  attachmentInputRef,
   canAttach,
   canCompose,
   canSubmit,
@@ -38,7 +38,7 @@ export function ChatComposer({
   loadingLabel,
   messageLabel,
   messagePlaceholder,
-  onAttachmentSelected,
+  onAttachClick,
   onCancelContext,
   onClearAttachment,
   onDraftChange,
@@ -46,7 +46,7 @@ export function ChatComposer({
   onPaste,
   onSubmit,
   onToggleEmoji,
-  processingLabel,
+  selectingLabel,
   remainingBytesLabel,
   remainingBytesOverLimit,
   removeAttachmentLabel,
@@ -62,7 +62,6 @@ export function ChatComposer({
   attachTitle: string;
   attachment: ComposerAttachment | null;
   attachmentError: string;
-  attachmentInputRef: RefObject<HTMLInputElement | null>;
   canAttach: boolean;
   canCompose: boolean;
   canSubmit: boolean;
@@ -74,7 +73,7 @@ export function ChatComposer({
   loadingLabel: string;
   messageLabel: string;
   messagePlaceholder: string;
-  onAttachmentSelected: (file: File) => void;
+  onAttachClick: () => void;
   onCancelContext: () => void;
   onClearAttachment: () => void;
   onDraftChange: (value: string) => void;
@@ -82,7 +81,8 @@ export function ChatComposer({
   onPaste: ClipboardEventHandler<HTMLTextAreaElement>;
   onSubmit: (event: SubmitEvent<HTMLFormElement>) => void;
   onToggleEmoji: () => void;
-  processingLabel: string;
+  /** Shown in the composer chip while awaiting Home's native picker. */
+  selectingLabel: string;
   /** A closed group's live byte-remaining counter (e.g. "1801 of 2225
    * bytes"), or null for any other chat — see App.tsx's
    * selectedGroupPrivatePlaintextMaxBytes. Advisory only: the actual cap is
@@ -123,10 +123,14 @@ export function ChatComposer({
       {attachment ? (
         <div className="composer__attachment">
           <span aria-hidden="true">📎</span>
-          <span className="composer__attachment-name">{attachment.filename}</span>
-          <span className="composer__attachment-size">
-            {attachment.phase === 'processing' ? processingLabel : formatAttachmentSize(attachment.size)}
-          </span>
+          {attachment.phase === 'selecting' ? (
+            <span className="composer__attachment-name">{selectingLabel}</span>
+          ) : (
+            <>
+              <span className="composer__attachment-name">{attachment.fileName}</span>
+              <span className="composer__attachment-size">{formatAttachmentSize(attachment.size)}</span>
+            </>
+          )}
           <button
             aria-label={removeAttachmentLabel}
             className="icon-button composer__attachment-remove"
@@ -171,25 +175,13 @@ export function ChatComposer({
           {remainingBytesLabel}
         </p>
       ) : null}
-      {showAttachment ? (
-        <input
-          hidden
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) onAttachmentSelected(file);
-            event.target.value = '';
-          }}
-          ref={attachmentInputRef}
-          type="file"
-        />
-      ) : null}
       <div className="composer__toolbar">
         {showAttachment ? (
           <button
             aria-label={attachLabel}
             className="icon-button composer__attach"
-            disabled={!canAttach || sendPending || attachment?.phase === 'processing'}
-            onClick={() => attachmentInputRef.current?.click()}
+            disabled={!canAttach || sendPending || attachment?.phase === 'selecting'}
+            onClick={onAttachClick}
             title={attachTitle}
             type="button"
           >

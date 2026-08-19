@@ -435,21 +435,26 @@ describe('message link helpers', () => {
     qdnRequestMock.mockResolvedValueOnce({ canceled: false });
 
     await expect(
-      saveQdnResource({
-        identifier: 'whitepaper.pdf',
-        name: 'Alice',
-        network: 'qortium',
-        path: '',
-        qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
-        service: 'DOCUMENT',
-      }),
+      saveQdnResource(
+        {
+          identifier: 'whitepaper.pdf',
+          name: 'Alice',
+          network: 'qortium',
+          path: '',
+          qdnUrl: 'qdn://DOCUMENT/Alice/whitepaper.pdf',
+          service: 'DOCUMENT',
+        },
+        ['SAVE_QDN_RESOURCE'],
+      ),
     ).resolves.toEqual({ canceled: false });
+    // Routed through coreApi's P4a SAVE_QDN_RESOURCE wrapper now — it only
+    // forwards a truthy `path`, so an empty one (as here) is omitted rather
+    // than sent as ''.
     expect(qdnRequestMock).toHaveBeenCalledWith({
       action: 'SAVE_QDN_RESOURCE',
       service: 'DOCUMENT',
       name: 'Alice',
       identifier: 'whitepaper.pdf',
-      path: '',
     });
   });
 
@@ -496,7 +501,7 @@ describe('message link helpers', () => {
 
     await openQdnMediaPlayer(media);
     await openQdnDocumentViewer(document);
-    await saveQdnResource(document);
+    await saveQdnResource(document, ['SAVE_QDN_RESOURCE']);
 
     expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
       action: 'OPEN_QDN_MEDIA_PLAYER',
@@ -512,11 +517,11 @@ describe('message link helpers', () => {
       path: '',
       service: 'DOCUMENT',
     });
+    // Routed through coreApi's wrapper now — a falsy path is omitted.
     expect(qortalRequestMock).toHaveBeenNthCalledWith(3, {
       action: 'SAVE_QDN_RESOURCE',
       identifier: 'notes',
       name: 'Alice',
-      path: '',
       service: 'DOCUMENT',
     });
     expect(qdnRequestMock).not.toHaveBeenCalled();

@@ -28,6 +28,20 @@ describe('Qortal Hub group-chat payloads', () => {
     });
   });
 
+  it('extracts attachments from Chat\'s own envelope, with or without a reply', () => {
+    const descriptor = { resource: { identifier: 'id-1', name: 'Alice', service: 'IMAGE' } };
+
+    expect(
+      normalizeQortalOutgoingMessage(JSON.stringify({ message: 'a file', attachments: [descriptor] })),
+    ).toEqual({ attachments: [descriptor], repliedTo: null, text: 'a file' });
+
+    expect(
+      normalizeQortalOutgoingMessage(
+        JSON.stringify({ message: 'a file', repliedTo: 'reply-sig', attachments: [descriptor] }),
+      ),
+    ).toEqual({ attachments: [descriptor], repliedTo: 'reply-sig', text: 'a file' });
+  });
+
   it('builds the Hub v3 Tiptap envelope with line breaks and reply metadata', () => {
     const payload = JSON.parse(
       buildQortalHubGroupChatPayload(
@@ -58,6 +72,15 @@ describe('Qortal Hub group-chat payloads', () => {
       version: 3,
     });
   });
+
+  it('embeds a private attachment into the images[] array when supplied', () => {
+    const descriptor = { identifier: 'id-1', name: 'Alice', service: 'IMAGE' };
+    const payload = JSON.parse(
+      buildQortalHubGroupChatPayload({ repliedTo: null, text: 'a photo' }, 'sid', [descriptor]),
+    ) as Record<string, unknown>;
+
+    expect(payload.images).toEqual([descriptor]);
+  });
 });
 
 describe('Qortal direct-chat payloads', () => {
@@ -75,6 +98,22 @@ describe('Qortal direct-chat payloads', () => {
     expect(payload).toMatchObject({ message: '<p>hi</p>', repliedTo: '', type: '', version: 2 });
     expect(typeof payload.specialId).toBe('string');
     expect((payload.specialId as string).length).toBeGreaterThan(0);
+  });
+
+  it('embeds attachments as an extra key alongside the paragraph-HTML envelope', () => {
+    const descriptor = { resource: { identifier: 'id-1', name: 'Alice', service: 'QCHAT_ATTACHMENT_PRIVATE' } };
+    const payload = JSON.parse(
+      buildQortalDirectChatPayload({ attachments: [descriptor], repliedTo: null, text: 'a file' }, 'sid'),
+    ) as Record<string, unknown>;
+
+    expect(payload).toEqual({
+      message: '<p>a file</p>',
+      version: 2,
+      specialId: 'sid',
+      repliedTo: '',
+      type: '',
+      attachments: [descriptor],
+    });
   });
 
   it('carries a reply target through to repliedTo', () => {
