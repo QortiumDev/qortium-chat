@@ -44,9 +44,20 @@ export function canRetryPendingDelivery(delivery: SendDeliveryState) {
 // `network` is optional and defaults to 'qortium' at every read site (see
 // App.tsx's dispatchChatSend) — slice-1 callers that never set it keep
 // behaving exactly as they did before Chat 2.0 slice 2.
+//
+// `isPrivate` (group target only) is the P3 safety-routing flag: it is set
+// once, at target-construction time, from the selected group's `isOpen`
+// field (see App.tsx's pendingSendTargetFor) — never re-derived from live
+// group state when a queued send/revision is finally dispatched, which would
+// be a stale-lookup hazard (a group could close between queueing and
+// dispatch, or the reverse). Absent/undefined means open, for backward
+// compatibility with every pre-P3 target literal (tests included). See
+// chatDispatch.ts for the routing this flag drives: a `true` value must
+// dispatch through the private-group wrapper family and never through the
+// generic SEND_CHAT_MESSAGE path (P3-design.md's safety invariant).
 export type PendingSendTarget =
   | { kind: 'direct'; address: string; network?: ChatNetwork }
-  | { kind: 'group'; groupId: number; network?: ChatNetwork };
+  | { kind: 'group'; groupId: number; isPrivate?: boolean; network?: ChatNetwork };
 
 // A plain new message and a reaction both go out through SEND_CHAT_MESSAGE
 // and share this shape; 'reaction' entries are excluded from the merged

@@ -653,10 +653,11 @@ export async function getGroupMessages(
   };
 
   if (group.isOpen === false && shouldDecryptPrivate) {
-    // Neither protocol's Home 2.0 v2 bridge advertises
-    // SEARCH_PRIVATE_GROUP_CHAT_MESSAGES for qortalRequest (no private-group
-    // decryption on Qortal in this slice), so a closed Qortal group hits this
-    // same gate a closed Qortium group hits on an older/legacy bridge.
+    // Both protocols' Home 2 bridge can advertise SEARCH_PRIVATE_GROUP_CHAT_
+    // MESSAGES (review/schemas-private-group-actions.md — Qortal's private-
+    // bundle reads are network-routed the same as Qortium's QPGC reads); a
+    // closed group on either chain hits this same gate only on an older/
+    // legacy bridge that does not advertise it.
     if (!hasBridgeAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')) {
       throw new Error('Closed group chat reads require Qortium Home private group chat support.');
     }
@@ -1205,8 +1206,11 @@ export async function sendChatReaction(
 // § "Message, edit, delete, reaction actions"); the Qortium/QPGC cap has no
 // fixed constant — it comes from GET_PRIVATE_GROUP_CHAT_STATE's
 // maxMessagePlaintextBytes and is enforced here only when a caller supplies
-// it (P3-design.md: "Qortium cap accepted as an optional param").
-const QORTAL_PRIVATE_GROUP_MAX_PLAINTEXT_BYTES = 2225;
+// it (P3-design.md: "Qortium cap accepted as an optional param"). Exported so
+// the composer (App.tsx, via privateGroupComposer.ts) can show/enforce the
+// same fixed cap client-side for a closed Qortal group without duplicating
+// the literal.
+export const QORTAL_PRIVATE_GROUP_MAX_PLAINTEXT_BYTES = 2225;
 
 function assertPrivateGroupPlaintextByteLimit(network: ChatNetwork, wireMessage: string, maxPlaintextBytes?: number) {
   const byteLength = new TextEncoder().encode(wireMessage).byteLength;
