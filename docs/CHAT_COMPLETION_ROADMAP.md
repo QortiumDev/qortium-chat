@@ -80,9 +80,9 @@ operation defaults a Qortal object to Qortium.
 
 ## Delivery phases
 
-### P1 — host adapters and capability cutover (this tranche)
+### P1 — host adapters and capability cutover (shipped, PR #85)
 
-Done in this branch:
+Delivered:
 
 - Bridge host classification (`home2` / `hub` / `legacy-home` / `gateway` /
   `browser-dev`) and Hub-safe detection of the lexical `qortalRequest` global.
@@ -100,7 +100,7 @@ Done in this branch:
   network-tagged transaction tracking.
 - Pending-transaction journal consumption and reconciliation.
 
-### P2 — direct messages on both chains
+### P2 — direct messages on both chains (shipped, PR #86)
 
 Qortal direct rail/list/history/send through the exact direct family on
 T1/T2. DMs stay hidden on T3 (Hub exposes no way to decrypt DM history).
@@ -109,14 +109,14 @@ interop vectors. Preserve network/account-qualified storage, pagination,
 unread state, avatars, replies, missing-public-key errors, and ambiguous-send
 handling.
 
-### P3 — private groups on both chains
+### P3 — private groups on both chains (shipped, PR #87)
 
 Consume private active/history/state, send/revision, key request, resolve,
 and rotation actions per network on T1/T2; surface structured missing-key,
 recovery, membership, retention-gap, and operator-policy states without
 exposing keys. Unjoined private groups stay hidden; T3 shows none.
 
-### P4 — public and private resource completion
+### P4 — public and private resource completion (shipped, PR #88)
 
 Route viewer/stream/save/publish/navigation through the selected network's
 advertised actions; adopt Home source tokens (`SELECT_QDN_PUBLISH_SOURCE`)
@@ -125,14 +125,14 @@ failure states). Wire the Qortal publisher identity so attachments stop being
 Qortium-only. Ordinary QDN links stay visibly public even inside encrypted
 conversations.
 
-### P5 — UI/UX redesign to the Home 2 design system
+### P5 — UI/UX redesign to the Home 2 design system (shipped, PR #89)
 
 Extract the layout shell from `App.tsx`; move Chat's token values to Home 2's
 palette and finish the `modern` UI style (including a `clay` accent); keep
 the app fully usable on phones. Requires a small Home change so hosted apps
 receive `uiStyle: 'modern'` and an unmapped `clay` accent.
 
-### P6 — notifications and operational completion
+### P6 — notifications and operational completion (shipped, PR #90)
 
 Chain-qualified `SHOW_NOTIFICATION`/`NOTIFICATION_HAS_PERMISSION` where
 advertised; retain separate user choices for direct activity, mentions, and
@@ -141,7 +141,7 @@ changes without leaking another identity's transcript, drafts, or
 notifications; finish consistent empty/locked/missing-key/read-only/pending/
 ambiguous/retry states on desktop and mobile.
 
-### P7 — version 2.0.0, docs, dual-chain publication
+### P7 — version 2.0.0, docs, dual-chain publication (in progress)
 
 Version bump (2.0.0 = requires platform 2.0 under QAVS), final capability
 matrix and README limits, then publication of the identical built tree to
