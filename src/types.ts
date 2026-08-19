@@ -352,6 +352,11 @@ export type TrackedTransaction = {
   id: string;
   joiner?: string;
   message: string;
+  /** Which chain this transaction rides. Absent means 'qortium' (every
+   * pre-dual-chain tracked transaction predates this field) — read sites
+   * must treat a missing network as 'qortium', never as "unknown", so a
+   * same-numeric groupId on Qortal never reads as a pending Qortium tx. */
+  network?: ChatNetwork;
   phase: 'confirmed' | 'failed' | 'pending';
   signature?: string;
 };

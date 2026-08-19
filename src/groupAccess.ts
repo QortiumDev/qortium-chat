@@ -26,30 +26,3 @@ export function shouldDecryptGroupMessages(group: GroupData, state: GroupReadAcc
 export function isOpenGroup(group: GroupData) {
   return isGeneralChatGroup(group) || group.isOpen !== false;
 }
-
-export type SendChatTarget = { kind: 'group'; group: GroupData } | { kind: 'direct' };
-
-// On a public/network node, Home performs a keyless broadcast that the network
-// only accepts for open groups; direct (1:1) and closed/private group sends are
-// rejected and need a local Core or a trusted custom node. On a trusted node
-// (isUsingPublicNode === false) nothing is blocked here.
-export function isPublicNodeSendUnsupported(isUsingPublicNode: boolean, target: SendChatTarget) {
-  if (!isUsingPublicNode) {
-    return false;
-  }
-
-  if (target.kind === 'direct') {
-    return true;
-  }
-
-  return !isOpenGroup(target.group);
-}
-
-// Private group chat key recovery publishes a key request and relays the
-// announced key back — both are chain broadcasts to a closed group. On a
-// public/network node those broadcasts are rejected (the same rule that blocks
-// closed-group sends), so the prompts dead-end without ever decrypting history.
-// A local Core or trusted custom node is required. Mirrors isPublicNodeSendUnsupported.
-export function isPublicNodePrivateGroupKeyRecoveryUnsupported(isUsingPublicNode: boolean) {
-  return isUsingPublicNode;
-}

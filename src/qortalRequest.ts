@@ -270,10 +270,12 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
 
   if (typeof bridgeRequest === 'function') {
     if (request.action.toUpperCase() === 'SEND_CHAT_MESSAGE') {
-      if (typeof request.chatReference === 'string' && request.chatReference) {
-        throw new Error('Qortal edits and reactions require a newer Home bridge.');
-      }
-
+      // A chatReference here is the generic-envelope revision fallback (edit/
+      // delete/reaction routed through sendChatMessage when the exact Home 2
+      // SEND_CHAT_EDIT/DELETE/REACTION action is not advertised) — no longer
+      // blanket-rejected; Hub serializes chatReference on this same envelope
+      // (review/schemas-home2-actions.md "Public group chat"), so validity is
+      // decided by the capability tier the caller already checked, not here.
       if (typeof request.message !== 'string') {
         throw new Error('Qortal chat messages require text.');
       }

@@ -167,7 +167,7 @@ describe('qortalRequest bridge adapter', () => {
     });
   });
 
-  it('builds a Hub v3 payload for Home 2 and refuses unsupported Qortal revisions', async () => {
+  it('builds a Hub v3 payload for Home 2, including the generic-envelope revision fallback', async () => {
     const qortalRequestMock = vi.fn().mockResolvedValueOnce({ signature: 'sent-sig' });
 
     vi.stubGlobal('window', { qdnRequest: vi.fn(), qortalRequest: qortalRequestMock });
@@ -181,10 +181,17 @@ describe('qortalRequest bridge adapter', () => {
     expect(payload.specialId).toEqual(expect.any(String));
     expect(request.txGroupId).toBe(12);
 
-    await expect(
-      qortalRequest({ action: 'SEND_CHAT_MESSAGE', chatReference: 'edit-sig', message: 'edited', txGroupId: 12 }),
-    ).rejects.toThrow('Qortal edits and reactions require a newer Home bridge.');
-    expect(qortalRequestMock).toHaveBeenCalledTimes(1);
+    // A chatReference (edit/delete/reaction routed through the generic
+    // SEND_CHAT_MESSAGE envelope, when the exact Home 2 action is not
+    // advertised) is no longer blanket-rejected — it forwards unchanged
+    // alongside the same Hub v3 payload wrapping.
+    qortalRequestMock.mockResolvedValueOnce({ signature: 'edit-sig' });
+    await qortalRequest({ action: 'SEND_CHAT_MESSAGE', chatReference: 'edit-sig', message: 'edited', txGroupId: 12 });
+
+    const revisionRequest = qortalRequestMock.mock.calls[1]?.[0] as Record<string, unknown>;
+
+    expect(revisionRequest.chatReference).toBe('edit-sig');
+    expect(qortalRequestMock).toHaveBeenCalledTimes(2);
   });
 
   it('uses local fallback actions outside Home, distinct from GET_SELECTED_ACCOUNT', async () => {
