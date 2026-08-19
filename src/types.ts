@@ -243,6 +243,32 @@ export type ChatActionResult = {
   transactionSignature?: string;
 };
 
+// Result of JOIN_GROUP/LEAVE_GROUP/APPROVE_GROUP_JOIN_REQUEST through
+// bridgeRequest. Both the legacy qdnRequest-only shape (ChatActionResult
+// above: `result`, `invitee`, no `network`/`changed`/`membership`) and Home
+// 2's exact-action shape (review/schemas-home2-actions.md "Group membership"
+// / "Approve group join request") are possible depending on the host that
+// answers, so every Home-2-only field stays optional here.
+export type GroupMembershipActionResult = {
+  accepted: boolean;
+  action: 'APPROVE_GROUP_JOIN_REQUEST' | 'JOIN_GROUP' | 'LEAVE_GROUP';
+  changed?: boolean;
+  direct?: boolean;
+  encrypted?: boolean;
+  groupId?: number;
+  groupName?: string | null;
+  invitee?: string;
+  memberAddress?: string;
+  membership?: 'joined' | 'left' | 'requested';
+  network?: ChatNetwork;
+  recipientAddress?: string;
+  result?: unknown;
+  signature?: string;
+  timestamp?: number;
+  transactionSignature?: string;
+  wireAction?: 'GROUP_INVITE';
+};
+
 export type PrivateGroupChatKeyRequest = {
   epochId?: string;
   groupId: number;
@@ -337,6 +363,31 @@ export type ApprovalProgress = {
   approvalsNeeded: number; // votes required to cross the group's approval threshold
   totalAuthorities: number; // eligible approvers (non-null members for a null-owner group)
   myVote: 'approve' | 'oppose' | null; // current account's latest confirmed vote
+};
+
+// GET_PENDING_TRANSACTIONS / FORGET_PENDING_TRANSACTION — the Home 2 pending
+// journal (review/schemas-home2-actions.md "Pending transactions"). One entry
+// per not-yet-reconciled bridge write; `target` distinguishes what kind of
+// write it was so the UI can render/dedupe it against the right local state.
+export type PendingBridgeTransactionTarget =
+  | { kind: 'operation' }
+  | { groupId: number; kind: 'group' }
+  | { kind: 'direct'; otherAddress: string }
+  | { identifier: string | null; kind: 'resource'; name: string; service: string };
+
+export type PendingBridgeTransactionEntry = {
+  action: string;
+  createdAt: number;
+  network: ChatNetwork;
+  signature: string;
+  target: PendingBridgeTransactionTarget;
+  timestamp: number;
+};
+
+export type PendingBridgeTransactionsResult = {
+  entries: PendingBridgeTransactionEntry[];
+  network: ChatNetwork;
+  version: 1;
 };
 
 // Per-chat saved reading position ("bookmark"). Anchored to a specific message

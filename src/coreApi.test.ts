@@ -20,6 +20,8 @@ import {
   buildSelfRewardSharesPath,
   buildTransactionStatusPath,
   approveGroupJoinRequest,
+  forgetPendingBridgeTransaction,
+  getPendingBridgeTransactions,
   getPendingGroupApprovals,
   submitGroupApproval,
   getActiveChats,
@@ -48,8 +50,14 @@ import {
   resolveIdentities,
   resolvePrivateGroupChatKeyRequests,
   searchGroups,
+  sendChatDelete,
+  sendChatEdit,
   sendChatMessage,
+  sendChatReaction,
+  sendDirectChatDelete,
+  sendDirectChatEdit,
   sendDirectChatMessage,
+  sendDirectChatReaction,
   startMinting,
 } from './coreApi';
 
@@ -734,6 +742,7 @@ describe('Core API path builders', () => {
       action: 'APPROVE_GROUP_JOIN_REQUEST',
       groupId: 9,
       joiner: 'Qjoiner',
+      timeToLive: 0,
     });
 
     await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
@@ -1269,6 +1278,456 @@ describe('Core API path builders', () => {
         publicKey: null,
       });
       expect(qortalRequestMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // P1 item B: typed Home 2 action wrappers (review/schemas-home2-actions.md).
+  describe('Home 2 typed action wrappers (P1 item B)', () => {
+    describe('public group revisions', () => {
+      it('passes an edit through unchanged when SEND_CHAT_EDIT is advertised on Qortium', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ signature: 'edit-sig', timestamp: 1700000000100 });
+
+        await expect(
+          sendChatEdit('qortium', 9, '{"message":"fixed","repliedTo":"reply-sig"}', 'orig-sig', ['SEND_CHAT_EDIT']),
+        ).resolves.toEqual({ signature: 'edit-sig', timestamp: 1700000000100 });
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'SEND_CHAT_EDIT',
+          chatReference: 'orig-sig',
+          message: '{"message":"fixed","repliedTo":"reply-sig"}',
+          txGroupId: 9,
+        });
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('falls back to the generic SEND_CHAT_MESSAGE envelope for an edit when SEND_CHAT_EDIT is not advertised', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ signature: 'fallback-edit-sig', timestamp: 1700000000110 });
+
+        await expect(sendChatEdit('qortium', 9, 'fixed typo', 'orig-sig', [])).resolves.toEqual({
+          signature: 'fallback-edit-sig',
+          timestamp: 1700000000110,
+        });
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'SEND_CHAT_MESSAGE',
+          chatReference: 'orig-sig',
+          groupId: 9,
+          message: 'fixed typo',
+          txGroupId: 9,
+        });
+      });
+
+      it('builds the exact SEND_CHAT_EDIT Hub v3 envelope for Qortal with a bounded specialId', async () => {
+        qortalRequestMock.mockResolvedValueOnce({ signature: 'hub-edit-sig', timestamp: 1700000000120 });
+
+        await expect(
+          sendChatEdit('qortal', 7, 'Hello\nQortal', 'orig-sig', ['SEND_CHAT_EDIT']),
+        ).resolves.toEqual({ signature: 'hub-edit-sig', timestamp: 1700000000120 });
+
+        expect(qortalRequestMock).toHaveBeenCalledTimes(1);
+        const call = qortalRequestMock.mock.calls[0][0];
+
+        expect(call.action).toBe('SEND_CHAT_EDIT');
+        expect(call.chatReference).toBe('orig-sig');
+        expect(call.txGroupId).toBe(7);
+
+        const payload = JSON.parse(call.message);
+
+        expect(payload).toMatchObject({
+          images: [],
+          isEdited: true,
+          messageText: {
+            content: [
+              {
+                content: [{ text: 'Hello', type: 'text' }, { type: 'hardBreak' }, { text: 'Qortal', type: 'text' }],
+                type: 'paragraph',
+              },
+            ],
+            type: 'doc',
+          },
+          repliedTo: '',
+          type: 'edit',
+          version: 3,
+        });
+        expect(typeof payload.specialId).toBe('string');
+        expect(payload.specialId.length).toBeGreaterThan(0);
+        expect(payload.specialId.length).toBeLessThanOrEqual(128);
+      });
+
+      it('builds the Qortium JSON delete envelope, optionally carrying repliedTo, on both the exact and fallback paths', async () => {
+        qdnRequestMock
+          .mockResolvedValueOnce({ signature: 'delete-sig', timestamp: 1700000000130 })
+          .mockResolvedValueOnce({ signature: 'delete-sig-2', timestamp: 1700000000131 })
+          .mockResolvedValueOnce({ signature: 'delete-sig-fallback', timestamp: 1700000000132 });
+
+        await sendChatDelete('qortium', 9, 'orig-sig', ['SEND_CHAT_DELETE']);
+        expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+          action: 'SEND_CHAT_DELETE',
+          chatReference: 'orig-sig',
+          message: JSON.stringify({ message: '' }),
+          txGroupId: 9,
+        });
+
+        await sendChatDelete('qortium', 9, 'orig-sig', ['SEND_CHAT_DELETE'], 'reply-target-sig');
+        expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+          action: 'SEND_CHAT_DELETE',
+          chatReference: 'orig-sig',
+          message: JSON.stringify({ message: '', repliedTo: 'reply-target-sig' }),
+          txGroupId: 9,
+        });
+
+        await sendChatDelete('qortium', 9, 'orig-sig', []);
+        expect(qdnRequestMock).toHaveBeenNthCalledWith(3, {
+          action: 'SEND_CHAT_MESSAGE',
+          chatReference: 'orig-sig',
+          groupId: 9,
+          message: JSON.stringify({ message: '' }),
+          txGroupId: 9,
+        });
+      });
+
+      it('builds the canonical Hub v3 empty-edit envelope (exactly 7 keys) for a Qortal delete', async () => {
+        qortalRequestMock.mockResolvedValueOnce({ signature: 'hub-delete-sig', timestamp: 1700000000140 });
+
+        await sendChatDelete('qortal', 7, 'orig-sig', ['SEND_CHAT_DELETE']);
+
+        const call = qortalRequestMock.mock.calls[0][0];
+        const payload = JSON.parse(call.message);
+
+        expect(payload).toMatchObject({
+          images: [],
+          isEdited: true,
+          messageText: '<p></p>',
+          repliedTo: '',
+          type: 'edit',
+          version: 3,
+        });
+        expect(Object.keys(payload).sort()).toEqual(
+          ['images', 'isEdited', 'messageText', 'repliedTo', 'specialId', 'type', 'version'].sort(),
+        );
+        expect(payload.specialId.length).toBeGreaterThan(0);
+        expect(payload.specialId.length).toBeLessThanOrEqual(128);
+      });
+
+      it('builds the reaction envelope inside message on both the exact and fallback paths for Qortium', async () => {
+        qdnRequestMock
+          .mockResolvedValueOnce({ signature: 'reaction-sig', timestamp: 1700000000150 })
+          .mockResolvedValueOnce({ signature: 'reaction-sig-fallback', timestamp: 1700000000151 });
+
+        await sendChatReaction('qortium', 9, 'target-sig', '👍', true, ['SEND_CHAT_REACTION']);
+        expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+          action: 'SEND_CHAT_REACTION',
+          chatReference: 'target-sig',
+          message: JSON.stringify({ message: '', type: 'reaction', content: '👍', contentState: true }),
+          txGroupId: 9,
+        });
+
+        await sendChatReaction('qortium', 9, 'target-sig', '👍', true, []);
+        expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+          action: 'SEND_CHAT_MESSAGE',
+          chatReference: 'target-sig',
+          groupId: 9,
+          message: JSON.stringify({ message: '', type: 'reaction', content: '👍', contentState: true }),
+          txGroupId: 9,
+        });
+      });
+
+      it('builds the reaction envelope with a bounded specialId for Qortal', async () => {
+        qortalRequestMock.mockResolvedValueOnce({ signature: 'hub-reaction-sig', timestamp: 1700000000160 });
+
+        await sendChatReaction('qortal', 7, 'target-sig', '❤️', false, ['SEND_CHAT_REACTION']);
+
+        const call = qortalRequestMock.mock.calls[0][0];
+        const payload = JSON.parse(call.message);
+
+        expect(payload).toMatchObject({ content: '❤️', contentState: false, message: '', type: 'reaction' });
+        expect(typeof payload.specialId).toBe('string');
+        expect(payload.specialId.length).toBeGreaterThan(0);
+        expect(payload.specialId.length).toBeLessThanOrEqual(128);
+      });
+
+      it('rejects empty or over-length reaction content before any bridge call', async () => {
+        await expect(
+          sendChatReaction('qortium', 9, 'target-sig', '', true, ['SEND_CHAT_REACTION']),
+        ).rejects.toThrow('Reaction content must be a short emoji string.');
+        await expect(
+          sendChatReaction('qortium', 9, 'target-sig', 'x'.repeat(33), true, ['SEND_CHAT_REACTION']),
+        ).rejects.toThrow('Reaction content must be a short emoji string.');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('rejects Qortal group 0 for edit/delete/reaction, same as sendChatMessage', async () => {
+        await expect(sendChatEdit('qortal', 0, 'x', 'ref', ['SEND_CHAT_EDIT'])).rejects.toThrow(
+          'Qortal has no general chat group.',
+        );
+        await expect(sendChatDelete('qortal', 0, 'ref', ['SEND_CHAT_DELETE'])).rejects.toThrow(
+          'Qortal has no general chat group.',
+        );
+        await expect(
+          sendChatReaction('qortal', 0, 'ref', '👍', true, ['SEND_CHAT_REACTION']),
+        ).rejects.toThrow('Qortal has no general chat group.');
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('direct chat', () => {
+      it('keeps sendDirectChatMessage byte-identical when no network/actions are passed', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ signature: 'legacy-direct-sig', timestamp: 1700000000200 });
+
+        await expect(sendDirectChatMessage('Qpeer', 'hi there')).resolves.toEqual({
+          signature: 'legacy-direct-sig',
+          timestamp: 1700000000200,
+        });
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'SEND_CHAT_MESSAGE',
+          message: 'hi there',
+          recipientAddress: 'Qpeer',
+        });
+      });
+
+      it('uses the exact SEND_DIRECT_CHAT_MESSAGE action when advertised, with no chatReference sent', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ signature: 'exact-direct-sig', timestamp: 1700000000210 });
+
+        await expect(
+          sendDirectChatMessage('Qpeer', 'hi there', undefined, 'qortium', ['SEND_DIRECT_CHAT_MESSAGE']),
+        ).resolves.toEqual({ signature: 'exact-direct-sig', timestamp: 1700000000210 });
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'SEND_DIRECT_CHAT_MESSAGE',
+          message: 'hi there',
+          otherAddress: 'Qpeer',
+        });
+      });
+
+      it('routes the exact SEND_DIRECT_CHAT_MESSAGE action to Qortal when network is qortal', async () => {
+        qortalRequestMock.mockResolvedValueOnce({ signature: 'qortal-direct-sig', timestamp: 1700000000220 });
+
+        await sendDirectChatMessage('QortalPeer', 'hi there', undefined, 'qortal', ['SEND_DIRECT_CHAT_MESSAGE']);
+
+        expect(qortalRequestMock).toHaveBeenCalledWith({
+          action: 'SEND_DIRECT_CHAT_MESSAGE',
+          message: 'hi there',
+          otherAddress: 'QortalPeer',
+        });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('rejects a direct message over the 3984 UTF-8 byte cap before any bridge call, and allows exactly the cap', async () => {
+        await expect(sendDirectChatMessage('Qpeer', 'x'.repeat(3985))).rejects.toThrow(
+          'Direct chat messages must be at most 3984 UTF-8 bytes.',
+        );
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+
+        qdnRequestMock.mockResolvedValueOnce({ signature: 'boundary-sig', timestamp: 1700000000230 });
+        await expect(sendDirectChatMessage('Qpeer', 'x'.repeat(3984))).resolves.toMatchObject({
+          signature: 'boundary-sig',
+        });
+      });
+
+      it('throws a clear error for direct revisions when the exact action is not advertised (no generic fallback)', async () => {
+        await expect(sendDirectChatEdit('qortium', 'Qpeer', 'fixed', 'ref', [])).rejects.toThrow(
+          'Direct chat edits require Qortium Home direct chat revision support.',
+        );
+        await expect(sendDirectChatDelete('qortium', 'Qpeer', 'ref', [])).rejects.toThrow(
+          'Direct chat deletes require Qortium Home direct chat revision support.',
+        );
+        await expect(
+          sendDirectChatReaction('qortium', 'Qpeer', 'ref', '👍', true, []),
+        ).rejects.toThrow('Direct chat reactions require Qortium Home direct chat revision support.');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('builds the exact Qortium direct edit/delete envelopes (JSON, no type key)', async () => {
+        qdnRequestMock
+          .mockResolvedValueOnce({ signature: 'direct-edit-sig', timestamp: 1700000000240 })
+          .mockResolvedValueOnce({ signature: 'direct-delete-sig', timestamp: 1700000000241 });
+
+        await sendDirectChatEdit('qortium', 'Qpeer', 'fixed typo', 'ref', ['SEND_DIRECT_CHAT_EDIT']);
+        expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+          action: 'SEND_DIRECT_CHAT_EDIT',
+          chatReference: 'ref',
+          message: JSON.stringify({ message: 'fixed typo' }),
+          otherAddress: 'Qpeer',
+        });
+
+        await sendDirectChatDelete('qortium', 'Qpeer', 'ref', ['SEND_DIRECT_CHAT_DELETE']);
+        expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+          action: 'SEND_DIRECT_CHAT_DELETE',
+          chatReference: 'ref',
+          message: JSON.stringify({ message: '' }),
+          otherAddress: 'Qpeer',
+        });
+      });
+
+      it('rejects an over-length direct edit before any bridge call', async () => {
+        await expect(
+          sendDirectChatEdit('qortium', 'Qpeer', 'x'.repeat(3985), 'ref', ['SEND_DIRECT_CHAT_EDIT']),
+        ).rejects.toThrow('Direct chat messages must be at most 3984 UTF-8 bytes.');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('builds the exact Qortal direct edit/delete/reaction envelopes (version 2, bounded specialId)', async () => {
+        qortalRequestMock
+          .mockResolvedValueOnce({ signature: 'hub-direct-edit-sig', timestamp: 1700000000250 })
+          .mockResolvedValueOnce({ signature: 'hub-direct-delete-sig', timestamp: 1700000000251 })
+          .mockResolvedValueOnce({ signature: 'hub-direct-reaction-sig', timestamp: 1700000000252 });
+
+        await sendDirectChatEdit('qortal', 'QortalPeer', 'fixed typo', 'ref', ['SEND_DIRECT_CHAT_EDIT']);
+        let payload = JSON.parse(qortalRequestMock.mock.calls[0][0].message);
+
+        expect(payload).toMatchObject({ isEdited: true, message: 'fixed typo', repliedTo: '', type: 'edit', version: 2 });
+        expect(Object.keys(payload).sort()).toEqual(
+          ['isEdited', 'message', 'repliedTo', 'specialId', 'type', 'version'].sort(),
+        );
+
+        await sendDirectChatDelete('qortal', 'QortalPeer', 'ref', ['SEND_DIRECT_CHAT_DELETE']);
+        payload = JSON.parse(qortalRequestMock.mock.calls[1][0].message);
+
+        expect(payload).toMatchObject({ isEdited: true, message: '<p></p>', repliedTo: '', type: 'edit', version: 2 });
+        expect(Object.keys(payload).sort()).toEqual(
+          ['isEdited', 'message', 'repliedTo', 'specialId', 'type', 'version'].sort(),
+        );
+
+        await sendDirectChatReaction('qortal', 'QortalPeer', 'ref', '🙏', true, ['SEND_DIRECT_CHAT_REACTION']);
+        payload = JSON.parse(qortalRequestMock.mock.calls[2][0].message);
+
+        expect(payload).toMatchObject({ content: '🙏', contentState: true, message: '', type: 'reaction', version: 2 });
+        expect(Object.keys(payload).sort()).toEqual(
+          ['content', 'contentState', 'message', 'specialId', 'type', 'version'].sort(),
+        );
+      });
+
+      it('routes getDirectMessages and getPrivateDirectActiveChats through the Qortal bridge when network is qortal', async () => {
+        qortalRequestMock
+          .mockResolvedValueOnce([{ sender: 'Qb', signature: 'sig-b', timestamp: 20, txGroupId: 0 }])
+          .mockResolvedValueOnce([{ address: 'QortalPeer', timestamp: 40 }]);
+
+        await expect(
+          getDirectMessages('QortalPeer', ['SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES'], {}, 'qortal'),
+        ).resolves.toEqual([{ sender: 'Qb', signature: 'sig-b', timestamp: 20, txGroupId: 0 }]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+          action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
+          encoding: 'BASE64',
+          limit: 100,
+          otherAddress: 'QortalPeer',
+          reverse: true,
+        });
+
+        await expect(getPrivateDirectActiveChats(['GET_PRIVATE_DIRECT_ACTIVE_CHATS'], 'qortal')).resolves.toEqual([
+          { address: 'QortalPeer', timestamp: 40 },
+        ]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+          action: 'GET_PRIVATE_DIRECT_ACTIVE_CHATS',
+          encoding: 'BASE64',
+          hasChatReference: false,
+        });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('membership/admin network routing', () => {
+      it('routes joinGroup/leaveGroup/approveGroupJoinRequest through the Qortal bridge, sending timeToLive: 0 on approve', async () => {
+        qortalRequestMock
+          .mockResolvedValueOnce({
+            accepted: true,
+            action: 'JOIN_GROUP',
+            changed: true,
+            groupId: 12,
+            groupName: 'Qortal group',
+            membership: 'joined',
+            network: 'qortal',
+          })
+          .mockResolvedValueOnce({
+            accepted: true,
+            action: 'LEAVE_GROUP',
+            changed: true,
+            groupId: 12,
+            groupName: 'Qortal group',
+            membership: 'left',
+            network: 'qortal',
+          })
+          .mockResolvedValueOnce({
+            accepted: true,
+            action: 'APPROVE_GROUP_JOIN_REQUEST',
+            changed: true,
+            groupId: 12,
+            groupName: 'Qortal group',
+            memberAddress: 'QortalJoiner',
+            network: 'qortal',
+            wireAction: 'GROUP_INVITE',
+          });
+
+        await expect(joinGroup(12, 'qortal')).resolves.toMatchObject({ membership: 'joined' });
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(1, { action: 'JOIN_GROUP', groupId: 12 });
+
+        await expect(leaveGroup(12, 'qortal')).resolves.toMatchObject({ membership: 'left' });
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(2, { action: 'LEAVE_GROUP', groupId: 12 });
+
+        await expect(approveGroupJoinRequest(12, 'QortalJoiner', 'qortal')).resolves.toMatchObject({
+          wireAction: 'GROUP_INVITE',
+        });
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(3, {
+          action: 'APPROVE_GROUP_JOIN_REQUEST',
+          groupId: 12,
+          joiner: 'QortalJoiner',
+          timeToLive: 0,
+        });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('defaults joinGroup/leaveGroup/approveGroupJoinRequest to Qortium when no network is passed', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ accepted: true, action: 'JOIN_GROUP', groupId: 3 });
+
+        await joinGroup(3);
+        expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'JOIN_GROUP', groupId: 3 });
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('pending transaction journal', () => {
+      it('returns the empty default shape when GET_PENDING_TRANSACTIONS is not advertised', async () => {
+        await expect(getPendingBridgeTransactions('qortium', [])).resolves.toEqual({
+          entries: [],
+          network: 'qortium',
+          version: 1,
+        });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('reads the pending journal through the advertised bridge action', async () => {
+        const result = {
+          entries: [
+            {
+              action: 'JOIN_GROUP',
+              createdAt: 1,
+              network: 'qortium',
+              signature: 'sig-a',
+              target: { groupId: 9, kind: 'group' as const },
+              timestamp: 2,
+            },
+          ],
+          network: 'qortium' as const,
+          version: 1 as const,
+        };
+
+        qdnRequestMock.mockResolvedValueOnce(result);
+
+        await expect(getPendingBridgeTransactions('qortium', ['GET_PENDING_TRANSACTIONS'])).resolves.toEqual(result);
+        expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'GET_PENDING_TRANSACTIONS' });
+      });
+
+      it('forgets a pending transaction through the advertised bridge action, and throws a clear error otherwise', async () => {
+        await expect(forgetPendingBridgeTransaction('qortium', 'sig-a', [])).rejects.toThrow(
+          'Pending transaction journal support requires a newer Qortium Home bridge.',
+        );
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+
+        qdnRequestMock.mockResolvedValueOnce({ forgotten: true, network: 'qortium', signature: 'sig-a' });
+        await expect(
+          forgetPendingBridgeTransaction('qortium', 'sig-a', ['FORGET_PENDING_TRANSACTION']),
+        ).resolves.toEqual({ forgotten: true, network: 'qortium', signature: 'sig-a' });
+        expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'FORGET_PENDING_TRANSACTION', signature: 'sig-a' });
+      });
     });
   });
 });

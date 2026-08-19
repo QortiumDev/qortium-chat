@@ -71,3 +71,96 @@ export function buildQortalHubGroupChatPayload(
     version: 3,
   });
 }
+
+// SEND_CHAT_EDIT on the Qortal Hub protocol: the same v3 envelope as a new
+// message, but `isEdited: true` and `type: 'edit'` — see review/
+// schemas-home2-actions.md "Public group chat" (Qortal exact-action edit).
+export function buildQortalHubGroupChatEditPayload(
+  outgoing: QortalOutgoingMessage,
+  specialId: string = globalThis.crypto.randomUUID(),
+) {
+  return JSON.stringify({
+    images: [],
+    isEdited: true,
+    messageText: buildTiptapDocFromPlainText(outgoing.text),
+    repliedTo: outgoing.repliedTo ?? '',
+    specialId,
+    type: 'edit',
+    version: 3,
+  });
+}
+
+// SEND_CHAT_DELETE on the Qortal Hub protocol: the canonical empty-edit
+// envelope — `messageText` is the literal string '<p></p>' (not a Tiptap doc
+// object), `repliedTo` is always cleared, and no extra keys are accepted.
+export function buildQortalHubGroupChatDeletePayload(specialId: string = globalThis.crypto.randomUUID()) {
+  return JSON.stringify({
+    images: [],
+    isEdited: true,
+    messageText: '<p></p>',
+    repliedTo: '',
+    specialId,
+    type: 'edit',
+    version: 3,
+  });
+}
+
+// SEND_CHAT_REACTION on the Qortal Hub protocol: the same reaction envelope
+// as Consortium/Qortium, plus a required `specialId`.
+export function buildQortalHubGroupChatReactionPayload(
+  content: string,
+  contentState: boolean,
+  specialId: string = globalThis.crypto.randomUUID(),
+) {
+  return JSON.stringify({
+    content,
+    contentState,
+    message: '',
+    specialId,
+    type: 'reaction',
+  });
+}
+
+// Direct-chat Qortal envelopes carry the same fields under `message` (not
+// `messageText`) and `version: 2` (not 3) — see review/schemas-home2-
+// actions.md "Direct chat" (Qortal exact-action shapes).
+export function buildQortalDirectChatEditPayload(
+  outgoing: QortalOutgoingMessage,
+  specialId: string = globalThis.crypto.randomUUID(),
+) {
+  return JSON.stringify({
+    isEdited: true,
+    message: outgoing.text,
+    repliedTo: outgoing.repliedTo ?? '',
+    specialId,
+    type: 'edit',
+    version: 2,
+  });
+}
+
+// The canonical direct-chat delete envelope only accepts these six keys.
+export function buildQortalDirectChatDeletePayload(specialId: string = globalThis.crypto.randomUUID()) {
+  return JSON.stringify({
+    isEdited: true,
+    message: '<p></p>',
+    repliedTo: '',
+    specialId,
+    type: 'edit',
+    version: 2,
+  });
+}
+
+export function buildQortalDirectChatReactionPayload(
+  content: string,
+  contentState: boolean,
+  specialId: string = globalThis.crypto.randomUUID(),
+) {
+  return JSON.stringify({
+    content,
+    contentState,
+    message: '',
+    specialId,
+    type: 'reaction',
+    version: 2,
+  });
+}

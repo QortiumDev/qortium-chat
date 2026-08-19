@@ -1,9 +1,18 @@
 import { buildNodeWebSocketUrl, qdnRequest } from './qdnRequest';
 import { bridgeRequest } from './chatNetwork';
 import { sortMessagesByTimestamp } from './messageThreads';
+import { buildDeletedMessageText, buildReactionMessageText } from './chatText';
+import {
+  buildQortalDirectChatDeletePayload,
+  buildQortalDirectChatEditPayload,
+  buildQortalDirectChatReactionPayload,
+  buildQortalHubGroupChatDeletePayload,
+  buildQortalHubGroupChatEditPayload,
+  buildQortalHubGroupChatReactionPayload,
+  normalizeQortalOutgoingMessage,
+} from './qortalChatPayload';
 import type {
   ActiveChats,
-  ChatActionResult,
   ChatNetwork,
   ChatSendResult,
   QdnPublishResult,
@@ -15,6 +24,7 @@ import type {
   GroupJoinRequest,
   GroupMember,
   GroupMembersResponse,
+  GroupMembershipActionResult,
   GroupWithJoinRequests,
   MintingStatus,
   NameSummary,
@@ -22,6 +32,7 @@ import type {
   NodeMintingAccount,
   NodeStatus,
   PendingApprovalTransaction,
+  PendingBridgeTransactionsResult,
   PrivateGroupChatKeyRequest,
   PrivateGroupChatKeyRequestRecoveryResult,
   PrivateGroupChatKeyRequestResult,
@@ -569,12 +580,12 @@ export async function getActiveChats(network: ChatNetwork, address: string, acti
   return fetchNodeApiDataFor<ActiveChats>(network, buildActiveChatsPath(address), 'Active chats');
 }
 
-export async function getPrivateDirectActiveChats(actions?: QdnAction[]) {
+export async function getPrivateDirectActiveChats(actions?: QdnAction[], network: ChatNetwork = 'qortium') {
   if (!hasBridgeAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')) {
     return [];
   }
 
-  return qdnRequest<NonNullable<ActiveChats['direct']>>({
+  return bridgeRequest<NonNullable<ActiveChats['direct']>>(network, {
     action: 'GET_PRIVATE_DIRECT_ACTIVE_CHATS',
     encoding: 'BASE64',
     hasChatReference: false,
@@ -710,9 +721,10 @@ export async function getDirectMessages(
   otherAddress: string,
   actions?: QdnAction[],
   options: { before?: number; limit?: number } = {},
+  network: ChatNetwork = 'qortium',
 ) {
   if (hasBridgeAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
-    const messages = await qdnRequest<ChatMessage[]>({
+    const messages = await bridgeRequest<ChatMessage[]>(network, {
       action: 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES',
       encoding: 'BASE64',
       // `limit` lets cheap callers (the sidebar activity sweep) request a
@@ -756,25 +768,34 @@ export async function publishQdnAttachment({
   });
 }
 
-export async function joinGroup(groupId: number) {
-  return qdnRequest<ChatActionResult>({
+// `network` picks Qortium vs Qortal (default 'qortium' keeps every
+// pre-dual-chain call site byte-identical). Home 2 advertises JOIN_GROUP/
+// LEAVE_GROUP on both bridge globals with the same request shape (review/
+// schemas-home2-actions.md "Group membership"), so no action gating is
+// needed here — only the dispatch target changes.
+export async function joinGroup(groupId: number, network: ChatNetwork = 'qortium') {
+  return bridgeRequest<GroupMembershipActionResult>(network, {
     action: 'JOIN_GROUP',
     groupId,
   });
 }
 
-export async function leaveGroup(groupId: number) {
-  return qdnRequest<ChatActionResult>({
+export async function leaveGroup(groupId: number, network: ChatNetwork = 'qortium') {
+  return bridgeRequest<GroupMembershipActionResult>(network, {
     action: 'LEAVE_GROUP',
     groupId,
   });
 }
 
-export async function approveGroupJoinRequest(groupId: number, joiner: string) {
-  return qdnRequest<ChatActionResult>({
+// `joiner` is an accepted alias for `memberAddress` in Home 2's validator, so
+// the existing field name keeps working unchanged. `timeToLive` is required
+// by Home 2 (schema doc "Approve group join request"); 0 means no expiry.
+export async function approveGroupJoinRequest(groupId: number, joiner: string, network: ChatNetwork = 'qortium') {
+  return bridgeRequest<GroupMembershipActionResult>(network, {
     action: 'APPROVE_GROUP_JOIN_REQUEST',
     groupId,
     joiner,
+    timeToLive: 0,
   });
 }
 
@@ -886,6 +907,122 @@ export async function sendChatMessage(
   );
 }
 
+function assertQortalGeneralChatAllowed(network: ChatNetwork, txGroupId: number) {
+  // Same guard as sendChatMessage: fail fast on a caller mistake instead of
+  // round-tripping to Home first (Qortal has no general/txGroupId-0 chat).
+  if (network === 'qortal' && txGroupId === 0) {
+    throw new Error('Qortal has no general chat group.');
+  }
+}
+
+// Public group message revisions (edit/delete/reaction) all ride the same
+// SEND_CHAT_MESSAGE + chatReference envelope as today's behavior when the
+// exact Home 2 action is not advertised — see review/schemas-home2-
+// actions.md "Public group chat". `message`/`content` here are the same
+// already-composed values the existing send path expects (Chat's own
+// {message, repliedTo} reply envelope, when present, is composed by the
+// caller before this — see docs on dispatchChatSend in App.tsx); only the
+// exact-action path needs a protocol-specific envelope built here.
+//
+// `message` is the edited body exactly as the fallback SEND_CHAT_MESSAGE
+// path expects it (plain text, or Chat's own JSON {message, repliedTo} reply
+// envelope) — item C passes it pre-composed the same way App.tsx already
+// builds it today (buildChatMessageText), so this wrapper's fallback bytes
+// stay byte-identical to the current dispatchChatSend path.
+export async function sendChatEdit(
+  network: ChatNetwork,
+  groupId: number | string,
+  message: string,
+  chatReference: string,
+  actions?: QdnAction[],
+) {
+  const txGroupId = normalizeChatGroupId(groupId);
+
+  assertQortalGeneralChatAllowed(network, txGroupId);
+
+  if (hasBridgeAction(actions, 'SEND_CHAT_EDIT')) {
+    const wireMessage =
+      network === 'qortal' ? buildQortalHubGroupChatEditPayload(normalizeQortalOutgoingMessage(message)) : message;
+
+    return normalizeChatSendResult(
+      await bridgeRequest<unknown>(network, {
+        action: 'SEND_CHAT_EDIT',
+        chatReference,
+        message: wireMessage,
+        txGroupId,
+      }),
+    );
+  }
+
+  return sendChatMessage(network, txGroupId, message, chatReference);
+}
+
+// `repliedTo` (the reply-thread target the deleted message itself was
+// replying to, if any) is optional and trailing here because sendChatDelete
+// is a new wrapper with no existing call sites to stay compatible with —
+// item C supplies it from the same `decodeChatMessage(original).repliedTo`
+// App.tsx already reads today, so the tombstone stays threaded exactly as it
+// does now.
+export async function sendChatDelete(
+  network: ChatNetwork,
+  groupId: number | string,
+  chatReference: string,
+  actions?: QdnAction[],
+  repliedTo?: string | null,
+) {
+  const txGroupId = normalizeChatGroupId(groupId);
+
+  assertQortalGeneralChatAllowed(network, txGroupId);
+
+  if (hasBridgeAction(actions, 'SEND_CHAT_DELETE')) {
+    const wireMessage =
+      network === 'qortal' ? buildQortalHubGroupChatDeletePayload() : buildDeletedMessageText(repliedTo);
+
+    return normalizeChatSendResult(
+      await bridgeRequest<unknown>(network, {
+        action: 'SEND_CHAT_DELETE',
+        chatReference,
+        message: wireMessage,
+        txGroupId,
+      }),
+    );
+  }
+
+  return sendChatMessage(network, txGroupId, buildDeletedMessageText(repliedTo), chatReference);
+}
+
+export async function sendChatReaction(
+  network: ChatNetwork,
+  groupId: number | string,
+  chatReference: string,
+  content: string,
+  contentState: boolean,
+  actions?: QdnAction[],
+) {
+  const txGroupId = normalizeChatGroupId(groupId);
+
+  assertQortalGeneralChatAllowed(network, txGroupId);
+
+  // Throws for empty/>32-char content before any bridge call, on both paths.
+  const qortiumReactionMessage = buildReactionMessageText(content, contentState);
+
+  if (hasBridgeAction(actions, 'SEND_CHAT_REACTION')) {
+    const wireMessage =
+      network === 'qortal' ? buildQortalHubGroupChatReactionPayload(content, contentState) : qortiumReactionMessage;
+
+    return normalizeChatSendResult(
+      await bridgeRequest<unknown>(network, {
+        action: 'SEND_CHAT_REACTION',
+        chatReference,
+        message: wireMessage,
+        txGroupId,
+      }),
+    );
+  }
+
+  return sendChatMessage(network, txGroupId, qortiumReactionMessage, chatReference);
+}
+
 // Qortal's identity shape (docs/HOME_V2_BRIDGE_COMPATIBILITY.md in
 // qortium-home): GET_USER_ACCOUNT returns address + publicKey only, with no
 // name or lock state (unlike Qortium's GET_SELECTED_ACCOUNT) — the display
@@ -934,7 +1071,45 @@ export async function getQortalUserAccount(actions?: QdnAction[]): Promise<Qorta
   return { address: account.address, name, publicKey: account.publicKey ?? null };
 }
 
-export async function sendDirectChatMessage(recipientAddress: string, message: string, chatReference?: string) {
+// Direct messages cap at 3984 UTF-8 bytes (review/schemas-home2-actions.md
+// "Direct chat" DirectChatRequest.message) — enforced client-side before any
+// bridge round trip so an oversized draft fails with a clear message instead
+// of a bridge-side rejection.
+const DIRECT_MESSAGE_MAX_BYTES = 3984;
+
+function assertDirectMessageByteLimit(message: string) {
+  const byteLength = new TextEncoder().encode(message).byteLength;
+
+  if (byteLength > DIRECT_MESSAGE_MAX_BYTES) {
+    throw new Error(`Direct chat messages must be at most ${DIRECT_MESSAGE_MAX_BYTES} UTF-8 bytes.`);
+  }
+}
+
+// `network` is trailing and defaults to 'qortium' so every existing call site
+// (all of which predate Qortal direct chat) keeps dispatching through
+// qdnRequest exactly as before. When SEND_DIRECT_CHAT_MESSAGE is advertised,
+// `chatReference` must not be sent on an initial message (schema doc "Direct
+// chat"); the generic qdnRequest fallback (`legacy-home` hosts only, per the
+// design brief) is unchanged.
+export async function sendDirectChatMessage(
+  recipientAddress: string,
+  message: string,
+  chatReference?: string,
+  network: ChatNetwork = 'qortium',
+  actions?: QdnAction[],
+) {
+  assertDirectMessageByteLimit(message);
+
+  if (hasBridgeAction(actions, 'SEND_DIRECT_CHAT_MESSAGE')) {
+    return normalizeChatSendResult(
+      await bridgeRequest<unknown>(network, {
+        action: 'SEND_DIRECT_CHAT_MESSAGE',
+        message,
+        otherAddress: recipientAddress,
+      }),
+    );
+  }
+
   const request = {
     action: 'SEND_CHAT_MESSAGE',
     message,
@@ -942,4 +1117,121 @@ export async function sendDirectChatMessage(recipientAddress: string, message: s
   };
 
   return normalizeChatSendResult(await qdnRequest<unknown>(chatReference ? { ...request, chatReference } : request));
+}
+
+// Direct-chat revisions have no legacy/generic fallback — they require the
+// fine-grained Home 2 action family (review/schemas-home2-actions.md
+// "Direct chat"); a host that does not advertise the exact action cannot
+// revise a direct message at all, so these throw rather than silently
+// falling back to a plain SEND_CHAT_MESSAGE (which would create a new
+// unrelated message instead of a revision).
+export async function sendDirectChatEdit(
+  network: ChatNetwork,
+  otherAddress: string,
+  message: string,
+  chatReference: string,
+  actions?: QdnAction[],
+) {
+  if (!hasBridgeAction(actions, 'SEND_DIRECT_CHAT_EDIT')) {
+    throw new Error('Direct chat edits require Qortium Home direct chat revision support.');
+  }
+
+  assertDirectMessageByteLimit(message);
+
+  const wireMessage =
+    network === 'qortal'
+      ? buildQortalDirectChatEditPayload(normalizeQortalOutgoingMessage(message))
+      : JSON.stringify({ message });
+
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, {
+      action: 'SEND_DIRECT_CHAT_EDIT',
+      chatReference,
+      message: wireMessage,
+      otherAddress,
+    }),
+  );
+}
+
+export async function sendDirectChatDelete(
+  network: ChatNetwork,
+  otherAddress: string,
+  chatReference: string,
+  actions?: QdnAction[],
+) {
+  if (!hasBridgeAction(actions, 'SEND_DIRECT_CHAT_DELETE')) {
+    throw new Error('Direct chat deletes require Qortium Home direct chat revision support.');
+  }
+
+  const wireMessage =
+    network === 'qortal' ? buildQortalDirectChatDeletePayload() : JSON.stringify({ message: '' });
+
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, {
+      action: 'SEND_DIRECT_CHAT_DELETE',
+      chatReference,
+      message: wireMessage,
+      otherAddress,
+    }),
+  );
+}
+
+export async function sendDirectChatReaction(
+  network: ChatNetwork,
+  otherAddress: string,
+  chatReference: string,
+  content: string,
+  contentState: boolean,
+  actions?: QdnAction[],
+) {
+  if (!hasBridgeAction(actions, 'SEND_DIRECT_CHAT_REACTION')) {
+    throw new Error('Direct chat reactions require Qortium Home direct chat revision support.');
+  }
+
+  // Throws for empty/>32-char content before any bridge call.
+  const qortiumReactionMessage = buildReactionMessageText(content, contentState);
+  const wireMessage =
+    network === 'qortal' ? buildQortalDirectChatReactionPayload(content, contentState) : qortiumReactionMessage;
+
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, {
+      action: 'SEND_DIRECT_CHAT_REACTION',
+      chatReference,
+      message: wireMessage,
+      otherAddress,
+    }),
+  );
+}
+
+// GET_PENDING_TRANSACTIONS / FORGET_PENDING_TRANSACTION — the Home 2 pending
+// journal (review/schemas-home2-actions.md "Pending transactions"). Reads
+// return the empty/default shape (never throw) when the host does not
+// advertise the action, since every caller treats "no journal support" the
+// same as "no pending entries" rather than a hard error.
+export async function getPendingBridgeTransactions(
+  network: ChatNetwork,
+  actions?: QdnAction[],
+): Promise<PendingBridgeTransactionsResult> {
+  if (!hasBridgeAction(actions, 'GET_PENDING_TRANSACTIONS')) {
+    return { entries: [], network, version: 1 };
+  }
+
+  return bridgeRequest<PendingBridgeTransactionsResult>(network, {
+    action: 'GET_PENDING_TRANSACTIONS',
+  });
+}
+
+export async function forgetPendingBridgeTransaction(
+  network: ChatNetwork,
+  signature: string,
+  actions?: QdnAction[],
+): Promise<{ forgotten: boolean; network: ChatNetwork; signature: string }> {
+  if (!hasBridgeAction(actions, 'FORGET_PENDING_TRANSACTION')) {
+    throw new Error('Pending transaction journal support requires a newer Qortium Home bridge.');
+  }
+
+  return bridgeRequest<{ forgotten: boolean; network: ChatNetwork; signature: string }>(network, {
+    action: 'FORGET_PENDING_TRANSACTION',
+    signature,
+  });
 }
