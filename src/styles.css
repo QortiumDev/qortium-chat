@@ -589,44 +589,6 @@
   --qc-shadow-pop: 0 18px 44px rgb(0 0 0 / 40%);
 }
 
-/* Default accent inside Modern is clay (Home 2's default), even though the
-   resolved accent value from a host that hasn't adopted clay yet may still
-   be the legacy default 'green'. A 3-attribute selector beats both
-   `:root[data-ui='modern']` (2 attrs) and `:root[data-accent='green']`
-   (2 attrs) regardless of source order, so this wins deterministically —
-   while `[data-accent='blue'][data-ui='modern']` etc. simply don't match
-   here and fall through to the normal accent block, so an explicit
-   non-green accent choice still renders as chosen.
-   TEMPORARY: remove this override (and its dark twin below) once Home
-   passes `clay` through to apps (planned after Chat 2.0.0 publishes) —
-   clay then arrives natively as data-accent='clay' and green must become
-   selectable in Modern again. */
-:root[data-ui='modern'][data-accent='green'] {
-  --qc-color-accent: #9a6750;
-  --qc-color-accent-hover: #7f523f;
-  --qc-color-accent-readable: #7f523f;
-  --qc-color-accent-text: #ffffff;
-  --qc-color-accent-ring: rgb(154 103 80 / 20%);
-  --qc-color-accent-soft: rgb(154 103 80 / 10%);
-  --qc-color-accent-glow: rgb(154 103 80 / 22%);
-  --qc-gradient-primary: #9a6750;
-  --qc-gradient-primary-hover: #7f523f;
-  --qc-gradient-primary-active: #6c4433;
-}
-
-:root[data-theme='dark'][data-ui='modern'][data-accent='green'] {
-  --qc-color-accent: #c18b72;
-  --qc-color-accent-hover: #d09b80;
-  --qc-color-accent-readable: #c18b72;
-  --qc-color-accent-text: #2a1a10;
-  --qc-color-accent-ring: rgb(193 139 114 / 20%);
-  --qc-color-accent-soft: rgb(193 139 114 / 12%);
-  --qc-color-accent-glow: rgb(193 139 114 / 22%);
-  --qc-gradient-primary: #c18b72;
-  --qc-gradient-primary-hover: #d09b80;
-  --qc-gradient-primary-active: #a97557;
-}
-
 * {
   box-sizing: border-box;
   scrollbar-color: var(--qc-color-scrollbar-thumb) transparent;
