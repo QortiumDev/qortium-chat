@@ -310,16 +310,39 @@ export async function getAccountNames(address: string, actions?: QdnAction[]) {
 }
 
 // Resolve a registered name to its owner address so a direct chat can be opened
-// by name. Returns null when the name is unregistered (Core answers 404). This is
-// a keyless, CORS-open read that works through the Home bridge and in browser dev.
-export async function getNameOwnerAddress(name: string): Promise<string | null> {
+// by name. Returns null when the name is unregistered (Core answers 404, or a
+// Qortal GET_NAME_DATA lookup throws — Home's Qortal bridge has no reserved
+// "not found" shape of its own to check against). Qortium always reads through
+// FETCH_NODE_API (its Home bridge never advertises a GET_NAME_DATA-equivalent
+// exact action); Qortal prefers the exact GET_NAME_DATA action when Home
+// advertises it, else falls back to the same FETCH_NODE_API path Qortium uses,
+// against the Qortal node. Both paths are keyless, CORS-open reads that work
+// through the Home bridge and in browser dev.
+export async function getNameOwnerAddressForNetwork(
+  network: ChatNetwork,
+  name: string,
+  actions?: QdnAction[],
+): Promise<string | null> {
   const trimmedName = name.trim();
 
   if (!trimmedName) {
     return null;
   }
 
-  const result = await qdnRequest<NodeApiFetchResult<NameSummary | null>>({
+  if (network === 'qortal' && hasBridgeAction(actions, 'GET_NAME_DATA')) {
+    try {
+      const data = await bridgeRequest<NameSummary | null>('qortal', {
+        action: 'GET_NAME_DATA',
+        name: trimmedName,
+      });
+
+      return data && typeof data.owner === 'string' && data.owner ? data.owner : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const result = await bridgeRequest<NodeApiFetchResult<NameSummary | null>>(network, {
     action: 'FETCH_NODE_API',
     maxBytes: DEFAULT_MAX_BYTES,
     path: buildNameInfoPath(trimmedName),
@@ -332,6 +355,10 @@ export async function getNameOwnerAddress(name: string): Promise<string | null> 
   const data = assertOk(result, 'Name lookup');
 
   return data && typeof data.owner === 'string' && data.owner ? data.owner : null;
+}
+
+export async function getNameOwnerAddress(name: string): Promise<string | null> {
+  return getNameOwnerAddressForNetwork('qortium', name);
 }
 
 // Home's RESOLVE_IDENTITIES resolves a batch of addresses to their registered

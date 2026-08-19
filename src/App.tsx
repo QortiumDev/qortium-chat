@@ -34,7 +34,7 @@ import {
   getMemberGroups,
   getMissingPrivateGroupKeyRequests,
   getMintingStatus,
-  getNameOwnerAddress,
+  getNameOwnerAddressForNetwork,
   getPendingBridgeTransactions,
   getPendingGroupApprovals,
   getTransactionStatus,
@@ -200,7 +200,8 @@ import {
   initializeQortalUiStorage,
   readLastChat,
   readLastChatNetwork,
-  readPersistedDirects,
+  readPersistedDirectsForNetwork,
+  readQortalDirectReadWatermarks,
   readQortalLastChat,
   readReadWatermarks,
   readScrollBookmarks,
@@ -209,7 +210,8 @@ import {
   toStoredSelectedChat,
   writeLastChat,
   writeLastChatNetwork,
-  writePersistedDirects,
+  writePersistedDirectsForNetwork,
+  writeQortalDirectReadWatermarks,
   writeQortalLastChat,
   writeQortalReadWatermarks,
   writeQortalScrollBookmarks,
@@ -306,9 +308,8 @@ const DEV_GROUP_IDS = new Set(
 // `network` is optional and defaults to 'qortium' wherever it is read below —
 // every slice-1 construction site that never sets it (there are many, spread
 // across this file) keeps behaving exactly as it did before Chat 2.0 slice 2.
-// Direct chats are Qortium-only in this slice (Qortal DM is deferred — see
-// docs/HOME_V2_BRIDGE_COMPATIBILITY.md in qortium-home), so only the 'group'
-// arm is ever constructed with network: 'qortal'.
+// Both arms can now carry network: 'qortal' — Qortal direct chat (P2) mirrors
+// the qortium 'direct' arm the same way selectQortalGroup mirrors selectGroup.
 type SelectedChat =
   | {
       group: GroupData;
@@ -1475,6 +1476,22 @@ export default function App() {
   const [directLookupPending, setDirectLookupPending] = useState(false);
   const [directLookupError, setDirectLookupError] = useState('');
   const directSearchInputRef = useRef<HTMLInputElement>(null);
+  // Qortal counterparts of the direct-open form state above. A separate
+  // section-scoped form (mirrors qortalSearch/isQortalGroupSearchOpen), not a
+  // shared one with a network selector — the Qortal Direct panel renders its
+  // own open-by-name form, same as the Qortal Groups panel already does.
+  const [qortalDirectAddress, setQortalDirectAddress] = useState('');
+  const [isQortalDirectSearchOpen, setQortalDirectSearchOpen] = useState(false);
+  const [qortalDirectLookupPending, setQortalDirectLookupPending] = useState(false);
+  const [qortalDirectLookupError, setQortalDirectLookupError] = useState('');
+  const qortalDirectSearchInputRef = useRef<HTMLInputElement>(null);
+  const [isQortalDirectCollapsed, setQortalDirectCollapsed] = useState(false);
+  // Qortal counterpart of persistedDirects — kept in the sidebar after their
+  // messages expire off the active-chats list, persisted per Qortal account.
+  const [qortalPersistedDirects, setQortalPersistedDirects] = useState<PersistedDirect[]>([]);
+  const [qortalLoadedDirectActivityByAddress, setQortalLoadedDirectActivityByAddress] =
+    useState<ReadonlyMap<string, number | null>>(() => new Map());
+  const loadedQortalDirectActivityRef = useRef<ReadonlyMap<string, number | null>>(new Map());
   // Per-chat read watermark (latest activity timestamp the user has seen). Held in
   // memory for the session: baselined to current activity when a chat is first
   // discovered so existing history is not flagged, then advanced as chats are read.
@@ -1482,16 +1499,20 @@ export default function App() {
   const [lastReadByQortalGroupId, setLastReadByQortalGroupId] =
     useState<ReadonlyMap<number, number>>(() => new Map());
   const [lastReadByAddress, setLastReadByAddress] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const [lastReadByQortalAddress, setLastReadByQortalAddress] =
+    useState<ReadonlyMap<string, number>>(() => new Map());
   // Mirrors of the read watermarks, read synchronously when a chat opens to
   // snapshot the divider position before the "mark read" effect advances them.
   const lastReadByGroupIdRef = useRef(lastReadByGroupId);
   const lastReadByQortalGroupIdRef = useRef(lastReadByQortalGroupId);
   const lastReadByAddressRef = useRef(lastReadByAddress);
+  const lastReadByQortalAddressRef = useRef(lastReadByQortalAddress);
   // Skip the one render right after an account switch, where the watermark maps
   // still hold the previous account's values, so we never persist them under the
   // new account's key. The load effect raises this; the persist effect clears it.
   const skipQortiumWatermarkPersistRef = useRef(true);
   const skipQortalWatermarkPersistRef = useRef(true);
+  const skipQortalDirectWatermarkPersistRef = useRef(true);
   // Qortal can resolve before the parallel initial Qortium account lookup.
   // Track the unfinished migration independently from the shorter write block:
   // a denied Qortium share releases new Qortal persistence while retaining the
@@ -1663,7 +1684,14 @@ export default function App() {
   const selectedGroup = selectedChat?.kind === 'group' ? selectedChat.group : null;
   const selectedDirect = selectedChat?.kind === 'direct' ? selectedChat.direct : null;
   const selectedGroupId = selectedGroup?.groupId ?? null;
-  const selectedDirectAddress = selectedDirect?.address ?? null;
+  // Network-qualified: Qortium and Qortal addresses can collide (the same
+  // wallet often has the same address on both chains), so an open Qortal
+  // direct chat must never read as the open Qortium one (or vice versa) in
+  // sidebar exclusion/highlight logic below.
+  const selectedDirectAddress =
+    selectedChat?.kind === 'direct' && selectedChat.network !== 'qortal' ? selectedChat.direct.address : null;
+  const selectedQortalDirectAddress =
+    selectedChat?.kind === 'direct' && selectedChat.network === 'qortal' ? selectedChat.direct.address : null;
   const selectedChatKey = getSelectedChatKey(selectedChat);
   const selectedGroupConversationKey =
     selectedChat?.kind === 'group'
@@ -1676,6 +1704,7 @@ export default function App() {
       : null;
   const selectedGroupIdRef = useRef<number | null>(selectedGroupId);
   const selectedDirectAddressRef = useRef<string | null>(selectedDirectAddress);
+  const selectedQortalDirectAddressRef = useRef<string | null>(selectedQortalDirectAddress);
   // Live mirror of the selected chat key so async loads can drop results that
   // resolve after the user has switched chats (see loadMessages).
   const selectedChatKeyRef = useRef(selectedChatKey);
@@ -1695,6 +1724,7 @@ export default function App() {
 
   selectedGroupIdRef.current = selectedGroupId;
   selectedDirectAddressRef.current = selectedDirectAddress;
+  selectedQortalDirectAddressRef.current = selectedQortalDirectAddress;
   selectedChatKeyRef.current = selectedChatKey;
   messagesChatKeyRef.current = messagesChatKey;
   hasSelectedChatRef.current = selectedChat !== null;
@@ -1786,9 +1816,51 @@ export default function App() {
     () => new Set(mergedDirects.map((direct) => direct.address).filter((address) => !activeDirectAddresses.has(address))),
     [mergedDirects, activeDirectAddresses],
   );
+  // Qortal counterparts of directActivityByAddress/mergedDirects/
+  // removableDirectAddresses above — mirrored, not merged, same as every other
+  // qortal* derivation in this file (see canJoinQortalGroup's comment).
+  const qortalDirectActivityByAddress = useMemo(() => {
+    const activity = new Map<string, number>();
+
+    for (const direct of qortalActiveChats.value.direct ?? []) {
+      if (typeof direct.timestamp === 'number' && !isHiddenActiveChatEntry(direct)) {
+        activity.set(direct.address, direct.timestamp);
+      }
+    }
+
+    for (const [address, timestamp] of qortalLoadedDirectActivityByAddress) {
+      if (timestamp === null) {
+        activity.delete(address);
+      } else {
+        activity.set(address, Math.max(activity.get(address) ?? Number.NEGATIVE_INFINITY, timestamp));
+      }
+    }
+
+    return activity;
+  }, [qortalActiveChats.value.direct, qortalLoadedDirectActivityByAddress]);
+  const qortalActiveDirectAddresses = useMemo(
+    () => new Set((qortalActiveChats.value.direct ?? []).map((direct) => direct.address)),
+    [qortalActiveChats.value.direct],
+  );
+  const qortalMergedDirects = useMemo(() => {
+    const active = qortalActiveChats.value.direct ?? [];
+    const extras = qortalPersistedDirects
+      .filter((direct) => !qortalActiveDirectAddresses.has(direct.address))
+      .map((direct): ActiveDirectChat => (direct.name ? { address: direct.address, name: direct.name } : { address: direct.address }));
+
+    return [...active, ...extras];
+  }, [qortalActiveChats.value.direct, qortalActiveDirectAddresses, qortalPersistedDirects]);
+  const qortalRemovableDirectAddresses = useMemo(
+    () =>
+      new Set(
+        qortalMergedDirects.map((direct) => direct.address).filter((address) => !qortalActiveDirectAddresses.has(address)),
+      ),
+    [qortalMergedDirects, qortalActiveDirectAddresses],
+  );
   const sortedGroups = useMemo(() => sortGroups(groups.value, t, groupActivityById), [groupActivityById, groups.value, t]);
   const isGroupSearchVisible = isGroupSearchOpen || search.trim().length > 0;
   const isDirectFormVisible = isDirectSearchOpen || directAddress.trim().length > 0;
+  const isQortalDirectFormVisible = isQortalDirectSearchOpen || qortalDirectAddress.trim().length > 0;
   // A chat is unread when its latest activity is newer than the user's read
   // watermark. The currently open chat is excluded (it is being read).
   const unreadGroupIds = useMemo(() => {
@@ -1825,6 +1897,23 @@ export default function App() {
 
     return addresses;
   }, [directActivityByAddress, lastReadByAddress, selectedDirectAddress]);
+  const unreadQortalDirectAddresses = useMemo(() => {
+    const addresses = new Set<string>();
+
+    for (const [address, timestamp] of qortalDirectActivityByAddress) {
+      if (address === selectedQortalDirectAddress) {
+        continue;
+      }
+
+      const lastRead = lastReadByQortalAddress.get(address);
+
+      if (lastRead !== undefined && timestamp > lastRead) {
+        addresses.add(address);
+      }
+    }
+
+    return addresses;
+  }, [qortalDirectActivityByAddress, lastReadByQortalAddress, selectedQortalDirectAddress]);
   const unreadQortalGroupIds = useMemo(() => {
     const ids = new Set<number>();
 
@@ -1845,6 +1934,7 @@ export default function App() {
   const hasUnreadGroups = unreadGroupIds.size > 0;
   const hasUnreadQortalGroups = unreadQortalGroupIds.size > 0;
   const hasUnreadDirect = unreadDirectAddresses.size > 0;
+  const hasUnreadQortalDirect = unreadQortalDirectAddresses.size > 0;
   const canManageNotifications = !!account && canManageChatNotifications(actions);
   const canShowNotifications = canShowChatNotifications(actions);
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
@@ -2116,6 +2206,24 @@ export default function App() {
 
     return previews;
   }, [activeChats.value.direct, t]);
+  // Qortal counterpart of directPreviewByAddress.
+  const qortalDirectPreviewByAddress = useMemo(() => {
+    const previews = new Map<string, string>();
+
+    for (const direct of qortalActiveChats.value.direct ?? []) {
+      if (
+        !direct.data ||
+        (direct.isEncrypted && direct.decryptionStatus !== 'DECRYPTED') ||
+        isHiddenActiveChatEntry(direct)
+      ) {
+        continue;
+      }
+
+      previews.set(direct.address, getMessageSnippet(direct, t, 80));
+    }
+
+    return previews;
+  }, [qortalActiveChats.value.direct, t]);
   // Memoized: this array feeds the memoized MessageList as `systemMessages`,
   // and a fresh identity per render would defeat its memo bailout.
   const selectedTransactions = useMemo(
@@ -2230,7 +2338,9 @@ export default function App() {
     selectQortalGroup(conversation.group),
   );
   const handleSelectDirect = useStableCallback(selectDirect);
+  const handleSelectQortalDirect = useStableCallback((direct: ActiveDirectChat) => selectDirect(direct, 'qortal'));
   const handleRemoveDirect = useStableCallback(removeDirect);
+  const handleRemoveQortalDirect = useStableCallback(removeQortalDirect);
   const handleStartReply = useStableCallback(startReply);
   const handleStartEdit = useStableCallback(startEdit);
   const handleLoadOlderMessages = useStableCallback(() => void loadOlderMessages());
@@ -2327,6 +2437,15 @@ export default function App() {
       }
     }
 
+    for (const direct of qortalMergedDirects) {
+      const directName = normalizeRegisteredName(getDirectCounterpartName(direct));
+      const key = getAvatarProfileKey('qortal', direct.address);
+
+      if (directName && !namesByAddress.has(key)) {
+        namesByAddress.set(key, directName);
+      }
+    }
+
     const selectedNetwork = selectedChat?.network ?? 'qortium';
     for (const message of messages.value) {
       const senderName = normalizeRegisteredName(message.senderName);
@@ -2364,6 +2483,7 @@ export default function App() {
     accountInfoTarget?.senderName,
     accountInfoTarget?.network,
     mergedDirects,
+    qortalMergedDirects,
     messages.value,
     selectedChat?.network,
     selectedGroup?.owner,
@@ -2399,6 +2519,16 @@ export default function App() {
       }
     }
 
+    for (const direct of qortalMergedDirects) {
+      if (
+        !isQortalDirectCollapsed ||
+        unreadQortalDirectAddresses.has(direct.address) ||
+        direct.address === selectedQortalDirectAddress
+      ) {
+        add('qortal', direct.address);
+      }
+    }
+
     if (showGroupMembers && membersOpen) {
       for (const member of selectedGroupMembers) {
         const address = getGroupMemberAddress(member);
@@ -2426,14 +2556,18 @@ export default function App() {
     approvalModalOpen,
     combinedMessages,
     isDirectCollapsed,
+    isQortalDirectCollapsed,
     membersOpen,
     mergedDirects,
+    qortalMergedDirects,
     pendingApprovals.value,
     selectedDirectAddress,
+    selectedQortalDirectAddress,
     selectedChat?.network,
     selectedGroupMembers,
     showGroupMembers,
     unreadDirectAddresses,
+    unreadQortalDirectAddresses,
   ]);
   const avatarProfiles = useAvatarProfiles(
     avatarTargets,
@@ -2613,6 +2747,17 @@ export default function App() {
   // ensureSelectedAccountUnlocked), plus having actually resolved a Qortal
   // identity to send as.
   const canUseQortalAccount = canUseSelectedAccount && !!qortalAccount;
+  // Qortal direct-chat gates, mirroring canReadPrivateDirectChat/
+  // canLoadPrivateDirectChats/canSendDirectChat/canOpenDirectChat above
+  // against qortalBridge.value.actions instead of the Qortium `actions` list.
+  // Qortal Hub advertises none of the SEND_DIRECT_CHAT_*/GET_PRIVATE_DIRECT_*
+  // family, so these come out false there with no special-casing — the same
+  // gating-alone mechanism that already hides Qortal DM on Hub for groups.
+  const canReadQortalPrivateDirectChat = hasAction(qortalBridge.value.actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
+  const canLoadQortalPrivateDirectChats = hasAction(qortalBridge.value.actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
+  const canSendQortalDirectChat = hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_MESSAGE');
+  const canOpenQortalDirectChat =
+    canUseQortalAccount && (canReadQortalPrivateDirectChat || canSendQortalDirectChat);
   // Mirrors isJoinableGroup/canSubmitJoin/canSubmitLeave above against the
   // Qortal bridge/membership rather than merging into them — a Qortium
   // membership must never make a Qortal group read as joined (or vice
@@ -2652,7 +2797,9 @@ export default function App() {
   const canComposeMessage =
     !!selectedChat &&
     (selectedChat.network === 'qortal'
-      ? canUseQortalAccount && canSendQortalGroupChat && canPostInSelectedQortalGroup
+      ? selectedChat.kind === 'group'
+        ? canUseQortalAccount && canSendQortalGroupChat && canPostInSelectedQortalGroup
+        : canUseQortalAccount && canSendQortalDirectChat
       : canUseSelectedAccount &&
         (selectedChat.kind === 'group' ? canSendGroupChat && canPostInSelectedGroup : canSendDirectChat));
   const canSubmitMessage =
@@ -2668,6 +2815,11 @@ export default function App() {
     hasAction(actions, 'SEND_DIRECT_CHAT_EDIT') &&
     hasAction(actions, 'SEND_DIRECT_CHAT_DELETE') &&
     hasAction(actions, 'SEND_DIRECT_CHAT_REACTION');
+  // Qortal counterpart of canReviseDirectChat, same full-family requirement.
+  const canReviseQortalDirectChat =
+    hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_EDIT') &&
+    hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_DELETE') &&
+    hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_REACTION');
   // Attachments are public QDN data (no encrypt-on-publish in Home yet), so
   // they are offered in open groups only, and publishing requires the Home
   // bridge plus a registered name to publish under. Edits keep the original
@@ -2746,6 +2898,36 @@ export default function App() {
     : bridge.value.isHomeBridge
       ? t('action.directSendUnavailable')
       : t('action.directSendUnavailableBrowser');
+  // Qortal counterparts of the direct-chat notice labels above, reusing the
+  // same network-neutral wording ("Open in Qortium Home to...") — text stays
+  // shared, only the gating (qortalAccount, qortalBridge) is chain-specific.
+  const qortalDirectAccessUnavailableLabel = !account
+    ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
+    : !qortalAccount
+      ? qortalAccountError || accountRequiredLabel
+    : qortalBridge.value.isHomeBridge
+      ? t('action.directReadOnly')
+      : t('action.privateChatUnavailable');
+  const qortalDirectReadUnavailableLabel = !account
+    ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
+    : !qortalAccount
+      ? qortalAccountError || accountRequiredLabel
+    : qortalBridge.value.isHomeBridge
+      ? t('action.directReadOnly')
+      : t('action.directReadUnavailableBrowser');
+  const qortalDirectSendUnavailableLabel = !account
+    ? accountRequiredLabel
+    : !isAccountUnlocked
+      ? accountLockedLabel
+    : !qortalAccount
+      ? qortalAccountError || accountRequiredLabel
+    : qortalBridge.value.isHomeBridge
+      ? t('action.directSendUnavailable')
+      : t('action.directSendUnavailableBrowser');
   const groupJoinUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
@@ -2808,7 +2990,10 @@ export default function App() {
     : [];
   const hasSelectedChatJournalNotice = selectedChatJournalEntries.length > 0;
   const selectedDirectHistoryUnavailable =
-    selectedChat?.kind === 'direct' && (!isAccountUnlocked || !canReadPrivateDirectChat);
+    selectedChat?.kind === 'direct' &&
+    (selectedChat.network === 'qortal'
+      ? !isAccountUnlocked || !canReadQortalPrivateDirectChat
+      : !isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
     selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !shouldDecryptSelectedGroupMessages;
   const closedGroupHistoryUnavailableLabel = !account
@@ -3005,9 +3190,16 @@ export default function App() {
 
     try {
       const nextActiveChats = await getActiveChats('qortal', address, actionList);
+      // Mirrors loadActiveChats' GET_PRIVATE_DIRECT_ACTIVE_CHATS override above:
+      // prefer the decrypted private-direct list when Home advertises it, else
+      // fall back to whatever GET_ACTIVE_CHATS already returned for `direct`.
+      const direct = isAccountUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')
+        ? await getPrivateDirectActiveChats(actionList, 'qortal')
+        : nextActiveChats.direct;
 
       if (qortalActiveChatsRequestGuardRef.current.isLatest(requestId)) {
-        setQortalActiveChats({ phase: 'ready', value: nextActiveChats });
+        setQortalActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct } });
+        persistDirects('qortal', address, direct ?? []);
       }
     } catch (error) {
       if (!options.quiet && qortalActiveChatsRequestGuardRef.current.isLatest(requestId)) {
@@ -3092,6 +3284,17 @@ export default function App() {
     lastReadByQortalGroupIdRef.current = restoredQortalWatermarks;
     setLastReadByQortalGroupId(restoredQortalWatermarks);
     setQortalGroupActivityById(new Map());
+
+    // Qortal direct watermarks have no legacy migration to coordinate with
+    // (see the persist effect's comment), so this is a plain per-account read.
+    const restoredQortalDirectWatermarks = nextAccountAddress
+      ? readQortalDirectReadWatermarks(nextAccountAddress)
+      : new Map<string, number>();
+
+    skipQortalDirectWatermarkPersistRef.current = true;
+    lastReadByQortalAddressRef.current = restoredQortalDirectWatermarks;
+    setLastReadByQortalAddress(restoredQortalDirectWatermarks);
+    setQortalLoadedDirectActivityByAddress(new Map());
 
     for (const key of draftsByChatKeyRef.current.keys()) {
       if (key.startsWith('qortal:')) {
@@ -3484,7 +3687,7 @@ export default function App() {
       setActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct } });
       // Keep these directs listed after their messages later expire. Done here
       // (not in an effect) so the write is tied to the account just loaded.
-      persistDirects(selectedAccount.address, direct ?? []);
+      persistDirects('qortium', selectedAccount.address, direct ?? []);
     } catch (error) {
       if (!options.quiet && qortiumActiveChatsRequestGuardRef.current.isLatest(requestId)) {
         setActiveChats({
@@ -3568,15 +3771,22 @@ export default function App() {
       return;
     }
 
-    // Qortal groups take a small, self-contained path (below): no direct-chat
-    // branch (Qortal DM is deferred), no private-group decrypt/key-recovery
-    // (not advertised on qortalRequest in this slice — see getGroupMessages),
-    // and its own activity map, so nothing here needs to change for Qortium.
-    // (chat.kind is always 'group' for network 'qortal' by construction —
-    // selectQortalGroup is the only place that sets network: 'qortal' — the
-    // kind check just gives TypeScript the same narrowing.)
+    // Qortal groups take a small, self-contained path (below): no private-
+    // group decrypt/key-recovery (not advertised on qortalRequest in this
+    // slice — see getGroupMessages), and its own activity map, so nothing
+    // here needs to change for Qortium.
     if (chat.network === 'qortal' && chat.kind === 'group') {
       return loadQortalGroupMessages(chat, {
+        quiet: options.quiet,
+        sessionAccountAddress,
+      });
+    }
+
+    // Qortal direct chats similarly take their own small path (own gates,
+    // own activity map, own action list) rather than sharing the Qortium
+    // branch below.
+    if (chat.network === 'qortal' && chat.kind === 'direct') {
+      return loadQortalDirectMessages(chat, {
         quiet: options.quiet,
         sessionAccountAddress,
       });
@@ -3783,6 +3993,88 @@ export default function App() {
     }
   }
 
+  // Qortal counterpart of the direct-chat branch loadMessages runs for
+  // Qortium (below the qortal-group early return above): own gates
+  // (canReadQortalPrivateDirectChat's SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES),
+  // own activity map (qortalLoadedDirectActivityByAddress), and the Qortal
+  // action list/network passed through to getDirectMessages.
+  async function loadQortalDirectMessages(
+    chat: Extract<SelectedChat, { kind: 'direct' }>,
+    options: { quiet?: boolean; sessionAccountAddress?: string | null } = {},
+  ) {
+    const chatKey = getSelectedChatKey(chat);
+    const sessionAccountAddress = options.sessionAccountAddress === undefined
+      ? currentQortalAccountAddressRef.current
+      : options.sessionAccountAddress;
+    const isStale = () =>
+      isChatReadSessionStale(
+        { accountAddress: sessionAccountAddress, chatKey },
+        {
+          accountAddress: currentQortalAccountAddressRef.current,
+          chatKey: selectedChatKeyRef.current,
+        },
+      );
+
+    if (!sessionAccountAddress || isStale()) {
+      return;
+    }
+
+    if (!options.quiet) {
+      setMessagesChatKey('');
+      setMessages({ phase: 'loading', value: messages.value });
+    }
+
+    const qortalActionList = qortalBridge.value.actions;
+
+    try {
+      if (!isAccountUnlocked || !hasAction(qortalActionList, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')) {
+        setMessagesChatKey(chatKey);
+        setMessages({ phase: 'ready', value: emptyMessages });
+        return;
+      }
+
+      const nextMessages = await getDirectMessages(chat.direct.address, qortalActionList, {}, 'qortal');
+
+      if (isStale()) {
+        return;
+      }
+
+      setQortalLoadedDirectActivityByAddress((current) =>
+        mergeActivityTimestamp(current, chat.direct.address, nextMessages),
+      );
+
+      reconcileJournalWithMessages('qortal', nextMessages);
+
+      setMessagesChatKey(chatKey);
+      setMessages((current) => {
+        const value = options.quiet ? retainChatMessagesWhenEqual(current.value, nextMessages) : nextMessages;
+
+        return options.quiet && current.phase === 'ready' && value === current.value
+          ? current
+          : { phase: 'ready', value };
+      });
+
+      if (!options.quiet) {
+        setOlderMessagesState({
+          error: '',
+          loading: false,
+          reachedStart: nextMessages.length < DEFAULT_LIST_LIMIT,
+        });
+      }
+    } catch (error) {
+      if (options.quiet || isStale()) {
+        return;
+      }
+
+      setMessagesChatKey('');
+      setMessages((current) => ({
+        error: getBridgeErrorMessage(error, t('status.loadingError.messages'), t),
+        phase: 'error',
+        value: current.value,
+      }));
+    }
+  }
+
   async function loadOlderMessages() {
     const chat = selectedChat;
 
@@ -3855,7 +4147,12 @@ export default function App() {
               before: olderBefore,
               decryptPrivate: chat.network === 'qortal' ? false : shouldDecryptPrivateGroup,
             })
-          : await getDirectMessages(chat.direct.address, actions, { before: olderBefore });
+          : await getDirectMessages(
+              chat.direct.address,
+              chat.network === 'qortal' ? qortalBridge.value.actions : actions,
+              { before: olderBefore },
+              chat.network ?? 'qortium',
+            );
 
       if (isStale()) {
         return;
@@ -5425,15 +5722,16 @@ export default function App() {
   }
 
   // Keep directs in the sidebar after their messages expire off the active list.
-  // Storage is the source of truth (keyed by account), so a write always targets
-  // the right account even when activeChats/state for a prior account lag behind;
-  // the visible state updates only while that account is still selected.
-  function persistDirects(accountAddress: string, directs: ActiveDirectChat[]) {
+  // Storage is the source of truth (keyed by account+network — see
+  // readPersistedDirectsForNetwork), so a write always targets the right
+  // account even when activeChats/state for a prior account lag behind; the
+  // visible state updates only while that account is still selected.
+  function persistDirects(network: ChatNetwork, accountAddress: string, directs: ActiveDirectChat[]) {
     if (directs.length === 0) {
       return;
     }
 
-    const stored = readPersistedDirects(accountAddress);
+    const stored = readPersistedDirectsForNetwork(network, accountAddress);
     let next = stored;
 
     for (const direct of directs) {
@@ -5444,16 +5742,25 @@ export default function App() {
       return;
     }
 
-    writePersistedDirects(accountAddress, next);
+    writePersistedDirectsForNetwork(network, accountAddress, next);
 
-    if (currentAccountAddressRef.current === accountAddress) {
-      setPersistedDirects(next);
+    const currentAddress =
+      network === 'qortal' ? currentQortalAccountAddressRef.current : currentAccountAddressRef.current;
+
+    if (currentAddress === accountAddress) {
+      if (network === 'qortal') {
+        setQortalPersistedDirects(next);
+      } else {
+        setPersistedDirects(next);
+      }
     }
   }
 
-  function rememberDirect(direct: ActiveDirectChat) {
-    if (account) {
-      persistDirects(account.address, [direct]);
+  function rememberDirect(direct: ActiveDirectChat, network: ChatNetwork = 'qortium') {
+    const accountAddress = network === 'qortal' ? qortalAccount?.address : account?.address;
+
+    if (accountAddress) {
+      persistDirects(network, accountAddress, [direct]);
     }
   }
 
@@ -5694,7 +6001,7 @@ export default function App() {
     writeChatRoute({ group: group.groupId, network: 'qortal' }, historyMode);
   }
 
-  function selectDirect(direct: ActiveDirectChat, options: ChatSelectionOptions = {}) {
+  function selectDirect(direct: ActiveDirectChat, network: ChatNetwork = 'qortium', options: ChatSelectionOptions = {}) {
     const {
       historyMode = 'push',
       remember = true,
@@ -5706,20 +6013,20 @@ export default function App() {
     setPrivateGroupKeyStatus('');
     setPrivateGroupKeyError('');
     setDirectLookupError('');
-    switchDraftTo(getSelectedChatKey({ direct, kind: 'direct' }));
+    switchDraftTo(getSelectedChatKey({ direct, kind: 'direct', network }));
     setComposeContext(null);
     if (userInitiated) {
       userSelectedChatRef.current = true;
     }
-    setSelectedChat({ direct, kind: 'direct' });
+    setSelectedChat({ direct, kind: 'direct', network });
     if (remember) {
-      rememberLastChat({ direct, kind: 'direct' });
-      rememberDirect(direct);
+      rememberLastChat({ direct, kind: 'direct', network });
+      rememberDirect(direct, network);
     }
     if (showConversation) {
       setMobileChatView(true);
     }
-    writeChatRoute({ address: direct.address, network: 'qortium' }, historyMode);
+    writeChatRoute({ address: direct.address, network }, historyMode);
   }
 
   // Remove a persisted direct from the sidebar. If it is the open chat, fall back
@@ -5731,11 +6038,11 @@ export default function App() {
     const generalChat = groups.value.find((group) => isGeneralChatGroup(group)) ?? null;
 
     if (accountAddress) {
-      const stored = readPersistedDirects(accountAddress);
+      const stored = readPersistedDirectsForNetwork('qortium', accountAddress);
       const next = stored.filter((direct) => direct.address !== address);
 
       if (next.length !== stored.length) {
-        writePersistedDirects(accountAddress, next);
+        writePersistedDirectsForNetwork('qortium', accountAddress, next);
       }
 
       if (currentAccountAddressRef.current === accountAddress) {
@@ -5751,7 +6058,49 @@ export default function App() {
       setPersistedDirects((current) => current.filter((direct) => direct.address !== address));
     }
 
-    if (selectedChat?.kind === 'direct' && selectedChat.direct.address === address) {
+    if (selectedChat?.kind === 'direct' && selectedChat.network !== 'qortal' && selectedChat.direct.address === address) {
+      if (generalChat) {
+        selectGroup(generalChat, {
+          historyMode: 'replace',
+          remember: false,
+          showConversation: false,
+          userInitiated: false,
+        });
+      } else {
+        setSelectedChat(null);
+        writeChatRoute({}, 'replace');
+      }
+
+      setMobileChatView(false);
+    }
+  }
+
+  // Qortal counterpart of removeDirect — mirrors it against the Qortal
+  // persisted-directs key/account/selection instead of the Qortium ones.
+  function removeQortalDirect(address: string) {
+    const accountAddress = qortalAccount?.address ?? null;
+    const generalChat = groups.value.find((group) => isGeneralChatGroup(group)) ?? null;
+
+    if (accountAddress) {
+      const stored = readPersistedDirectsForNetwork('qortal', accountAddress);
+      const next = stored.filter((direct) => direct.address !== address);
+
+      if (next.length !== stored.length) {
+        writePersistedDirectsForNetwork('qortal', accountAddress, next);
+      }
+
+      if (currentQortalAccountAddressRef.current === accountAddress) {
+        setQortalPersistedDirects(next);
+      }
+      // No repoint-the-dangling-saved-chat step here (unlike removeDirect):
+      // Qortal has no General Chat equivalent to repoint a stale saved
+      // selection to. Worst case, the next restore resolves to this now-gone
+      // direct, which simply renders empty until removed again — harmless.
+    } else {
+      setQortalPersistedDirects((current) => current.filter((direct) => direct.address !== address));
+    }
+
+    if (selectedChat?.kind === 'direct' && selectedChat.network === 'qortal' && selectedChat.direct.address === address) {
       if (generalChat) {
         selectGroup(generalChat, {
           historyMode: 'replace',
@@ -5817,6 +6166,17 @@ export default function App() {
     setDirectSearchOpen(true);
   }
 
+  function toggleQortalDirectSearch() {
+    if (isQortalDirectFormVisible) {
+      setQortalDirectSearchOpen(false);
+      setQortalDirectAddress('');
+      return;
+    }
+
+    setQortalDirectCollapsed(false);
+    setQortalDirectSearchOpen(true);
+  }
+
   function mentionAccount(target: AccountInfoTarget & { network: ChatNetwork }) {
     const scopedProfiles = target.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles;
     const label = getMessageSenderLabel(target, scopedProfiles.get(target.sender));
@@ -5833,8 +6193,10 @@ export default function App() {
     composerRef.current?.focus();
   }
 
-  async function openDirectFromAccount(address: string, name: string | null) {
-    if (!canOpenDirectChat) {
+  async function openDirectFromAccount(address: string, name: string | null, network: ChatNetwork = 'qortium') {
+    const canOpen = network === 'qortal' ? canOpenQortalDirectChat : canOpenDirectChat;
+
+    if (!canOpen) {
       return;
     }
 
@@ -5843,7 +6205,7 @@ export default function App() {
     }
 
     setAccountInfoTarget(null);
-    selectDirect({ address, name: name ?? undefined });
+    selectDirect({ address, name: name ?? undefined }, network);
   }
 
   async function handleOpenDirectChat(event: SubmitEvent<HTMLFormElement>) {
@@ -5871,7 +6233,7 @@ export default function App() {
       setDirectLookupPending(true);
 
       try {
-        const ownerAddress = await getNameOwnerAddress(value);
+        const ownerAddress = await getNameOwnerAddressForNetwork('qortium', value, actions);
 
         if (!ownerAddress) {
           setDirectLookupError(t('status.direct.nameNotFound'));
@@ -5891,7 +6253,58 @@ export default function App() {
     setDirectAddress('');
     setDirectSearchOpen(false);
     const direct: ActiveDirectChat = name ? { address, name } : { address };
-    selectDirect(direct);
+    selectDirect(direct, 'qortium');
+  }
+
+  // Qortal counterpart of handleOpenDirectChat, scoped to the Qortal Direct
+  // panel's own open-by-name form/state (qortalDirectAddress etc.). Name
+  // resolution goes through the Qortal bridge (GET_NAME_DATA when advertised,
+  // else FETCH_NODE_API against the Qortal node — see
+  // getNameOwnerAddressForNetwork).
+  async function handleOpenQortalDirectChat(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const value = qortalDirectAddress.trim();
+
+    if (!value || !canOpenQortalDirectChat || qortalDirectLookupPending) {
+      return;
+    }
+
+    if (!(await ensureSelectedAccountUnlocked())) {
+      return;
+    }
+
+    setWriteError('');
+    setQortalDirectLookupError('');
+
+    let address = value;
+    let name: string | undefined;
+
+    if (!isPlausibleQortiumAddress(value)) {
+      setQortalDirectLookupPending(true);
+
+      try {
+        const ownerAddress = await getNameOwnerAddressForNetwork('qortal', value, qortalBridge.value.actions);
+
+        if (!ownerAddress) {
+          setQortalDirectLookupError(t('status.direct.nameNotFound'));
+          return;
+        }
+
+        address = ownerAddress;
+        name = value;
+      } catch (error) {
+        setQortalDirectLookupError(getBridgeErrorMessage(error, t('status.loadingError.nameLookup'), t));
+        return;
+      } finally {
+        setQortalDirectLookupPending(false);
+      }
+    }
+
+    setQortalDirectAddress('');
+    setQortalDirectSearchOpen(false);
+    const direct: ActiveDirectChat = name ? { address, name } : { address };
+    selectDirect(direct, 'qortal');
   }
 
   async function connectSelectedAccount(actionList = actions) {
@@ -6167,12 +6580,11 @@ export default function App() {
     // present, prefer the direct conversation, matching the notification's most
     // specific recipient target.
     if (pending.target?.address) {
-      if (targetNetwork === 'qortium') {
-        selectDirect(
-          { address: pending.target.address },
-          { historyMode: pending.historyMode },
-        );
-      }
+      selectDirect(
+        { address: pending.target.address },
+        targetNetwork,
+        { historyMode: pending.historyMode },
+      );
       return;
     }
 
@@ -6310,6 +6722,12 @@ export default function App() {
       directSearchInputRef.current?.focus();
     }
   }, [isDirectFormVisible]);
+
+  useEffect(() => {
+    if (isQortalDirectFormVisible) {
+      qortalDirectSearchInputRef.current?.focus();
+    }
+  }, [isQortalDirectFormVisible]);
 
   // The active-chats endpoint intentionally excludes chatReference rows, so it
   // keeps the original message body after an edit. Whenever a group's real
@@ -6567,6 +6985,24 @@ export default function App() {
     });
   }, [directActivityByAddress]);
 
+  useEffect(() => {
+    setLastReadByQortalAddress((current) => {
+      let next: Map<string, number> | null = null;
+
+      for (const [address, timestamp] of qortalDirectActivityByAddress) {
+        if (!current.has(address)) {
+          next ??= new Map(current);
+          next.set(address, timestamp);
+        }
+      }
+
+      const result = next ?? current;
+
+      lastReadByQortalAddressRef.current = result;
+      return result;
+    });
+  }, [qortalDirectActivityByAddress]);
+
   // Mark the open chat read once its messages are shown, and keep it read as new
   // activity arrives while it stays open (so reading clears unread, not just the
   // initial click).
@@ -6602,12 +7038,26 @@ export default function App() {
       }
     } else {
       const address = selectedChat.direct.address;
-      const timestamp = directActivityByAddress.get(address);
+      const isQortal = selectedChat.network === 'qortal';
+      const timestamp = isQortal
+        ? qortalDirectActivityByAddress.get(address)
+        : directActivityByAddress.get(address);
 
       if (typeof timestamp === 'number') {
-        setLastReadByAddress((current) =>
-          (current.get(address) ?? -1) >= timestamp ? current : new Map(current).set(address, timestamp),
-        );
+        if (isQortal) {
+          setLastReadByQortalAddress((current) => {
+            const next = (current.get(address) ?? -1) >= timestamp
+              ? current
+              : new Map(current).set(address, timestamp);
+
+            lastReadByQortalAddressRef.current = next;
+            return next;
+          });
+        } else {
+          setLastReadByAddress((current) =>
+            (current.get(address) ?? -1) >= timestamp ? current : new Map(current).set(address, timestamp),
+          );
+        }
       }
     }
   }, [
@@ -6617,6 +7067,7 @@ export default function App() {
     groupActivityById,
     qortalGroupActivityByIdDisplay,
     directActivityByAddress,
+    qortalDirectActivityByAddress,
   ]);
 
   useEffect(() => {
@@ -6630,6 +7081,10 @@ export default function App() {
   useEffect(() => {
     lastReadByAddressRef.current = lastReadByAddress;
   }, [lastReadByAddress]);
+
+  useEffect(() => {
+    lastReadByQortalAddressRef.current = lastReadByQortalAddress;
+  }, [lastReadByQortalAddress]);
 
   // Snapshot the read watermark for the chat being opened so the "new messages"
   // divider can sit above the first unread message. Keyed on the chat only, so
@@ -6646,7 +7101,9 @@ export default function App() {
         ? selectedChat.network === 'qortal'
           ? lastReadByQortalGroupIdRef.current.get(selectedChat.group.groupId)
           : lastReadByGroupIdRef.current.get(selectedChat.group.groupId)
-        : lastReadByAddressRef.current.get(selectedChat.direct.address);
+        : selectedChat.network === 'qortal'
+          ? lastReadByQortalAddressRef.current.get(selectedChat.direct.address)
+          : lastReadByAddressRef.current.get(selectedChat.direct.address);
 
     setUnreadDividerTimestamp(typeof watermark === 'number' ? watermark : null);
     // Freeze the upper bound at the open moment so live/own messages stay below it.
@@ -6756,6 +7213,10 @@ export default function App() {
   useEffect(() => {
     loadedDirectActivityRef.current = loadedDirectActivityByAddress;
   }, [loadedDirectActivityByAddress]);
+
+  useEffect(() => {
+    loadedQortalDirectActivityRef.current = qortalLoadedDirectActivityByAddress;
+  }, [qortalLoadedDirectActivityByAddress]);
 
   // Scroll-bookmark persistence is debounced; land a pending write before the
   // page is hidden or closed (mobile webviews often skip unload paths, so
@@ -6922,10 +7383,33 @@ export default function App() {
     writeQortalReadWatermarks(qortalAccount.address, lastReadByQortalGroupId);
   }, [qortalAccount, lastReadByQortalGroupId]);
 
+  // Qortal direct read watermarks have no legacy record to protect (brand new
+  // key — see qortalDirectReadWatermarksStorageKey), so this skips the
+  // qortalUiPersistenceBlockedAddressRef check the group effect above needs.
+  useEffect(() => {
+    if (!qortalAccount) {
+      return;
+    }
+
+    if (skipQortalDirectWatermarkPersistRef.current) {
+      skipQortalDirectWatermarkPersistRef.current = false;
+      return;
+    }
+
+    writeQortalDirectReadWatermarks(qortalAccount.address, lastReadByQortalAddress);
+  }, [qortalAccount, lastReadByQortalAddress]);
+
   // Load this account's persisted direct chats from storage.
   useEffect(() => {
-    setPersistedDirects(account ? readPersistedDirects(account.address) : []);
+    setPersistedDirects(account ? readPersistedDirectsForNetwork('qortium', account.address) : []);
   }, [account?.address]);
+
+  // Qortal counterpart. Restored on the Qortal account itself (mirrors
+  // qortalMemberGroups etc.) rather than the account-change effect above,
+  // since Qortal DM has no legacy migration to coordinate with.
+  useEffect(() => {
+    setQortalPersistedDirects(qortalAccount ? readPersistedDirectsForNetwork('qortal', qortalAccount.address) : []);
+  }, [qortalAccount?.address]);
 
   // Reopen from the preferred chain's identity-specific record. Wait for the
   // Qortal identity when that chain was last used; never derive its saved group
@@ -6961,7 +7445,7 @@ export default function App() {
     restoredForAccountRef.current = restoreKey;
 
     if (saved?.kind === 'direct') {
-      selectDirect(saved.direct, {
+      selectDirect(saved.direct, saved.network, {
         historyMode: 'replace',
         remember: false,
         showConversation: false,
@@ -7180,6 +7664,91 @@ export default function App() {
     };
   }, [actionsKey, activeChats.value.direct, canReadPrivateDirectChat, isAccountUnlocked]);
 
+  // Qortal counterpart of the direct activity sweep above — same rationale
+  // (Qortal has no protocol-specific websocket route, so a direct chat not
+  // currently open has no other live signal), gated on the Qortal direct
+  // read gate/actions instead of the Qortium ones.
+  useEffect(() => {
+    const directs = qortalActiveChats.value.direct ?? [];
+
+    if (!isAccountUnlocked || !canReadQortalPrivateDirectChat || directs.length === 0) {
+      return undefined;
+    }
+
+    let isDisposed = false;
+    let isHydrating = false;
+
+    async function hydrateQortalDirectActivity(refresh: boolean) {
+      if (isHydrating) {
+        return;
+      }
+
+      isHydrating = true;
+
+      const openDirectAddress = selectedQortalDirectAddressRef.current;
+      const qortalActionList = qortalBridge.value.actions;
+
+      try {
+        for (const direct of directs) {
+          if (isDisposed) {
+            return;
+          }
+
+          if (direct.address === openDirectAddress) {
+            continue;
+          }
+
+          if (!refresh && loadedQortalDirectActivityRef.current.has(direct.address)) {
+            continue;
+          }
+
+          try {
+            const nextMessages = await getDirectMessages(
+              direct.address,
+              qortalActionList,
+              { limit: ACTIVITY_SWEEP_MESSAGE_LIMIT },
+              'qortal',
+            );
+
+            if (isDisposed) {
+              return;
+            }
+
+            setQortalLoadedDirectActivityByAddress((current) =>
+              mergeActivityTimestamp(current, direct.address, nextMessages, {
+                allowTombstone: nextMessages.length < ACTIVITY_SWEEP_MESSAGE_LIMIT,
+              }),
+            );
+          } catch {
+            // Direct history is optional in older Home/Core bridge contexts.
+          }
+        }
+      } finally {
+        isHydrating = false;
+      }
+    }
+
+    void hydrateQortalDirectActivity(false);
+
+    const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      void hydrateQortalDirectActivity(true);
+    }, 30000);
+
+    return () => {
+      isDisposed = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    qortalBridge.value.actions.join('\n'),
+    qortalActiveChats.value.direct,
+    canReadQortalPrivateDirectChat,
+    isAccountUnlocked,
+  ]);
+
   // Refresh the decrypted active-chats list on a slow cadence so a brand-new
   // direct conversation (from a sender not yet in the list) surfaces in the
   // sidebar without the user reloading. The active-chats websocket folds in
@@ -7284,10 +7853,18 @@ export default function App() {
     // action). Polling pauses while hidden, so the count freezes at its last
     // value until the tab is next visible; still a real signal on return and
     // whenever a websocket frame lands before the tab goes fully idle.
-    const unreadCount = unreadGroupIds.size + unreadQortalGroupIds.size + unreadDirectAddresses.size;
+    const unreadCount =
+      unreadGroupIds.size + unreadQortalGroupIds.size + unreadDirectAddresses.size + unreadQortalDirectAddresses.size;
 
     document.title = unreadCount > 0 ? `(${unreadCount}) ${t('app.title')}` : t('app.title');
-  }, [displaySettings.language, t, unreadGroupIds, unreadQortalGroupIds, unreadDirectAddresses]);
+  }, [
+    displaySettings.language,
+    t,
+    unreadGroupIds,
+    unreadQortalGroupIds,
+    unreadDirectAddresses,
+    unreadQortalDirectAddresses,
+  ]);
 
   useEffect(() => {
     function handlePopState() {
@@ -7917,7 +8494,7 @@ export default function App() {
     selectedChat?.kind === 'group'
       ? selectedChat.group.description?.trim() || null
       : selectedChat?.kind === 'direct'
-        ? canReadPrivateDirectChat
+        ? (selectedChat.network === 'qortal' ? canReadQortalPrivateDirectChat : canReadPrivateDirectChat)
           ? t('group.meta.directPrivateRead')
           : t('group.meta.direct')
         : null;
@@ -8262,6 +8839,94 @@ export default function App() {
 
           {qortalAvailable ? (
             <ConversationNetworkSection network="qortal">
+              <section className={`panel${isQortalDirectCollapsed ? ' panel--collapsed' : ''}`}>
+                <div className="panel__header">
+                  <button
+                    aria-expanded={!isQortalDirectCollapsed}
+                    className="panel__toggle"
+                    onClick={() => setQortalDirectCollapsed((collapsed) => !collapsed)}
+                    type="button"
+                  >
+                    <DownIcon />
+                    <h2>{t('label.common.direct')}</h2>
+                  </button>
+                  <div className="panel__header-actions">
+                    {hasUnreadQortalDirect ? (
+                      <span
+                        aria-label={t('aria.unreadDirect')}
+                        className="panel__unread-dot"
+                        role="img"
+                        title={t('aria.unreadDirect')}
+                      />
+                    ) : null}
+                    <span className="panel__count">{qortalMergedDirects.length}</span>
+                    <button
+                      aria-expanded={isQortalDirectFormVisible}
+                      aria-label={t('label.newDirectChat')}
+                      className="icon-button"
+                      onClick={toggleQortalDirectSearch}
+                      title={t('label.newDirectChat')}
+                      type="button"
+                    >
+                      <PlusIcon />
+                    </button>
+                  </div>
+                </div>
+                {!isQortalDirectCollapsed && isQortalDirectFormVisible ? (
+                  <form className="search" onSubmit={handleOpenQortalDirectChat}>
+                    <input
+                      aria-label={t('placeholder.directNameOrAddress')}
+                      disabled={!canOpenQortalDirectChat || qortalDirectLookupPending}
+                      onChange={(event) => {
+                        setQortalDirectAddress(event.target.value);
+                        setQortalDirectLookupError('');
+                      }}
+                      placeholder={t('placeholder.directNameOrAddress')}
+                      ref={qortalDirectSearchInputRef}
+                      value={qortalDirectAddress}
+                    />
+                    <button
+                      className="button"
+                      disabled={!canOpenQortalDirectChat || !qortalDirectAddress.trim() || qortalDirectLookupPending}
+                      title={canOpenQortalDirectChat ? t('action.directTooltip') : qortalDirectAccessUnavailableLabel}
+                      type="submit"
+                    >
+                      {qortalDirectLookupPending ? t('button.opening') : t('button.open')}
+                    </button>
+                  </form>
+                ) : null}
+                {!isQortalDirectCollapsed && qortalDirectLookupError ? (
+                  <p className="error">{qortalDirectLookupError}</p>
+                ) : null}
+                {!isQortalDirectCollapsed && qortalActiveChats.phase === 'error' ? (
+                  <p className="error">{qortalActiveChats.error}</p>
+                ) : null}
+                {!isQortalDirectCollapsed && !canOpenQortalDirectChat ? (
+                  <p className="muted">{qortalDirectAccessUnavailableLabel}</p>
+                ) : null}
+                {!isQortalDirectCollapsed && canOpenQortalDirectChat && !canLoadQortalPrivateDirectChats ? (
+                  <p className="muted">{directListUnavailableLabel}</p>
+                ) : null}
+                {qortalActiveChats.phase === 'loading' && !isQortalDirectCollapsed ? (
+                  <LoadingRows count={3} label={t('label.loading')} />
+                ) : (
+                  <DirectList
+                    activityByAddress={qortalDirectActivityByAddress}
+                    avatarProfiles={qortalAvatarProfiles}
+                    canOpen={canOpenQortalDirectChat}
+                    collapsed={isQortalDirectCollapsed}
+                    directs={qortalMergedDirects}
+                    onRemove={handleRemoveQortalDirect}
+                    onSelect={handleSelectQortalDirect}
+                    previewByAddress={qortalDirectPreviewByAddress}
+                    removableAddresses={qortalRemovableDirectAddresses}
+                    selectedAddress={selectedQortalDirectAddress}
+                    t={t}
+                    unreadAddresses={unreadQortalDirectAddresses}
+                    now={now}
+                  />
+                )}
+              </section>
               <section className={`panel${isQortalGroupsCollapsed ? ' panel--collapsed' : ''}`}>
                 <div className="panel__header">
                   <button
@@ -8410,6 +9075,18 @@ export default function App() {
                   {t('button.removeChat')}
                 </button>
               ) : null}
+              {selectedChat?.kind === 'direct' &&
+              selectedQortalDirectAddress !== null &&
+              qortalRemovableDirectAddresses.has(selectedQortalDirectAddress) ? (
+                <button
+                  className="button button--secondary"
+                  onClick={() => removeQortalDirect(selectedQortalDirectAddress)}
+                  title={t('action.removeDirectChat', { name: getDirectTitle(selectedChat.direct) })}
+                  type="button"
+                >
+                  {t('button.removeChat')}
+                </button>
+              ) : null}
               {renderJoinGroupButton()}
               {selectedChat?.kind === 'group' &&
               selectedGroupId !== null &&
@@ -8513,7 +9190,11 @@ export default function App() {
               {showApprovalControls && pendingApprovals.phase === 'error' ? (
                 <p className="error">{pendingApprovals.error}</p>
               ) : null}
-              {selectedDirectHistoryUnavailable ? <p className="muted">{directReadUnavailableLabel}</p> : null}
+              {selectedDirectHistoryUnavailable ? (
+                <p className="muted">
+                  {selectedChat?.network === 'qortal' ? qortalDirectReadUnavailableLabel : directReadUnavailableLabel}
+                </p>
+              ) : null}
               {selectedClosedGroupHistoryUnavailable ? (
                 <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
               ) : null}
@@ -8550,7 +9231,14 @@ export default function App() {
               <MessageList
                 avatarProfiles={selectedAvatarProfiles}
                 canCompose={canComposeMessage}
-                canRevise={canComposeMessage && (selectedChat?.kind === 'direct' ? canReviseDirectChat : true)}
+                canRevise={
+                  canComposeMessage &&
+                  (selectedChat?.kind === 'direct'
+                    ? selectedChat.network === 'qortal'
+                      ? canReviseQortalDirectChat
+                      : canReviseDirectChat
+                    : true)
+                }
                 emptyHint={isSelectedGeneralChat ? t('hint.noMessages.general') : undefined}
                 initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
                 messages={displayMessages}
@@ -8615,7 +9303,9 @@ export default function App() {
             <div aria-live="polite" className="composer composer--notice">
               <p>
                 {selectedChat.kind === 'direct'
-                  ? directSendUnavailableLabel
+                  ? selectedChat.network === 'qortal'
+                    ? qortalDirectSendUnavailableLabel
+                    : directSendUnavailableLabel
                   : isSelectedQortalGroup
                     ? qortalGroupSendUnavailableLabel
                     : groupSendUnavailableLabel}
@@ -8675,7 +9365,9 @@ export default function App() {
                 selectedChat?.kind === 'direct'
                   ? canComposeMessage
                     ? t('button.sendDirectMessage')
-                    : directSendUnavailableLabel
+                    : selectedChat.network === 'qortal'
+                      ? qortalDirectSendUnavailableLabel
+                      : directSendUnavailableLabel
                   : canComposeMessage
                     ? t('button.sendMessage')
                     : groupSendUnavailableLabel
@@ -8769,15 +9461,17 @@ export default function App() {
       {accountInfoTarget ? (
         <AccountInfoDialog
           canMention={canComposeMessage}
-          canOpenDirect={accountInfoTarget.network === 'qortium' && canOpenDirectChat}
-          directUnavailableLabel={directAccessUnavailableLabel}
+          canOpenDirect={accountInfoTarget.network === 'qortal' ? canOpenQortalDirectChat : canOpenDirectChat}
+          directUnavailableLabel={
+            accountInfoTarget.network === 'qortal' ? qortalDirectAccessUnavailableLabel : directAccessUnavailableLabel
+          }
           onClose={() => setAccountInfoTarget(null)}
           onMention={() => mentionAccount(accountInfoTarget)}
           onOpenAvatar={(image) => {
             setAccountInfoTarget(null);
             setAvatarLightboxImage(image);
           }}
-          onOpenDirect={openDirectFromAccount}
+          onOpenDirect={(address, name) => void openDirectFromAccount(address, name, accountInfoTarget.network)}
           profile={(accountInfoTarget.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles).get(accountInfoTarget.sender)}
           target={accountInfoTarget}
           t={t}

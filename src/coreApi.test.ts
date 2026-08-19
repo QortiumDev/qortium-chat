@@ -40,6 +40,7 @@ import {
   getGroupApprovalVotes,
   getMintingStatus,
   getNameOwnerAddress,
+  getNameOwnerAddressForNetwork,
   getQortalUserAccount,
   getTransactionStatus,
   getPrivateDirectActiveChats,
@@ -403,6 +404,38 @@ describe('Core API path builders', () => {
 
     await expect(getNameOwnerAddress('   ')).resolves.toBeNull();
     expect(qdnRequestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a Qortal name via the exact GET_NAME_DATA action when advertised', async () => {
+    qortalRequestMock.mockResolvedValueOnce({ name: 'bob', owner: 'QbobOwner' });
+
+    await expect(getNameOwnerAddressForNetwork('qortal', ' bob ', ['GET_NAME_DATA'])).resolves.toBe('QbobOwner');
+    expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'GET_NAME_DATA', name: 'bob' });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to FETCH_NODE_API against the Qortal node when GET_NAME_DATA is not advertised', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: '{"name":"bob","owner":"QbobOwner"}',
+      contentType: 'application/json',
+      data: { name: 'bob', owner: 'QbobOwner' },
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getNameOwnerAddressForNetwork('qortal', 'bob', [])).resolves.toBe('QbobOwner');
+    expect(qortalRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/names/bob',
+    });
+  });
+
+  it('treats a failed GET_NAME_DATA lookup as an unregistered name rather than throwing', async () => {
+    qortalRequestMock.mockRejectedValueOnce(new Error('not found'));
+
+    await expect(getNameOwnerAddressForNetwork('qortal', 'ghost', ['GET_NAME_DATA'])).resolves.toBeNull();
   });
 
   it('uses the group members bridge action when available', async () => {
