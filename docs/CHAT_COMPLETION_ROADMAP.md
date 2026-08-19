@@ -1,388 +1,161 @@
-# Dual-chain Chat completion roadmap
+# Chat 2.0 roadmap
 
-Status: working roadmap, reconciled 2026-08-17
+Status: reconciled 2026-08-19 against Home `main` (Home 2, milestones H0–H7
+implemented) and Core `main` (C0–C6 implemented). This supersedes the earlier
+dual-chain completion roadmap, which described Home 1.7 constraints and
+proposed contracts (for example `GET_CHAT_CAPABILITIES`) that were never
+adopted — Home 2 advertises its callable actions dynamically through
+`SHOW_ACTIONS`, and that advertisement is the only capability truth surface
+Chat consumes.
 
-This roadmap completes the existing CHAT experience on Qortium and Qortal before
-Reticulum/RCHAT work resumes. The target is one coherent Chat app in Qortium
-Home, with public and private groups, direct messages, membership actions,
-avatars, replies, edits, deletes, reactions, and embeds behaving consistently.
+Reticulum/RCHAT is explicitly parked. It is a distinct future source/action
+family; nothing in this roadmap depends on it, references to it gate nothing,
+and it must not be overloaded onto the Qortium or Qortal CHAT actions.
 
-Every completed capability must work in the same tranche on:
+## Target
 
-- desktop and Android;
-- a local node, an authenticated or unauthenticated custom node, and a public
-  node that exposes the documented public prerequisites; and
-- Qortium and Qortal, except where a protocol genuinely has no interoperable
-  equivalent and that limitation is explicitly documented.
+One Chat app, one published bundle, version 2.0.0:
 
-The user's normal live testing is continuous product feedback, not a separate
-acceptance phase or a reason to defer automated contract coverage.
+- In **Qortium Home 2** it serves Qortium and/or Qortal, detecting which
+  chains the host actually offers — Home running with a single connected
+  network shows a single network section.
+- In **Qortal Hub** the same bundle serves Qortal only, through the classic
+  `qortalRequest` surface.
+- Feature availability always derives from advertised actions and structured
+  runtime errors — never from route class (public vs local node), host
+  version sniffing, or hard-coded network checks.
 
-Home cannot force an independently operated node to expose an endpoint that its
-operator has disabled. In that case it must report the exact missing capability;
-it must not silently use another network or pretend that the feature succeeded.
+## Host tiers
+
+One shared conversation model; three explicit transport adapters:
+
+| Tier | Host / global | Surface |
+| --- | --- | --- |
+| T1 | Home 2, `window.qdnRequest` (Qortium) | Full fine-grained families: public group send/edit/delete/reaction, direct family, private-group family, membership/admin, resources, private attachments, notifications, pending-transaction journal |
+| T2 | Home 2, `window.qortalRequest` (Qortal) | Same families minus per-chain deltas (no group 0, chain-specific extras) |
+| T3 | Qortal Hub, lexical `qortalRequest` | Generic `SEND_CHAT_MESSAGE` + `chatReference` envelopes, `SEARCH_CHAT_MESSAGES`, group membership mutations, generic QDN reads/publish. No decrypted DM reads (DMs are hidden on Hub), no private groups, no attachments, no immediate notifications, no pending journal |
+
+A browser-development fallback (read-only local node access) is retained for
+`npm run dev`. The legacy Home 1.7 Qortal-prefixed adapter remains only as
+compatibility; it proves its action catalogue before the Qortal section shows.
+
+Detection order: `window.qdnRequest` presence; a dedicated `qortalRequest`
+global (Home 2 sets a window property, Hub injects a top-level lexical const —
+both are honored); then `SHOW_ACTIONS` + `WHICH_UI` per global
+(`QORTIUM_HOME_ELECTRON` vs `HUB_ELECTRON`/`HUB_WEB`). Unknown action names
+are never probed — Hub leaves unrecognized requests to a 30-second timeout.
+
+## Contract facts Chat relies on
+
+- `SHOW_ACTIONS` is runtime-filtered by the selected route's availability;
+  publication/attachment actions additionally require reachability. An
+  implemented-but-unavailable action fails with `NODE_CAPABILITY_MISSING`; an
+  action absent from the protocol fails with `UNSUPPORTED_PROTOCOL`.
+- `GET_HOST_INFO` supplies host, protocol, network, platform, and route
+  diagnostics.
+- Bridge errors carry structured fields (`code`, `network`, `action`,
+  `retryable`, `outcome`, optional `target`). Chat maps the documented codes
+  to localized notices and treats `outcome: "unknown"` as ambiguous, never as
+  a proven rejection.
+- Home records signed mutations with unknown broadcast outcomes in a
+  restart-safe journal (`GET_PENDING_TRANSACTIONS` /
+  `FORGET_PENDING_TRANSACTION`) and blocks same-target mutations with
+  `PENDING_TRANSACTION_RECONCILIATION_REQUIRED` until the app reconciles and
+  forgets the entry. Chat forgets an entry only after observing its signature
+  in fetched or live messages for its own network.
+- The invoked global fixes the chain; Home never silently crosses networks,
+  and Chat never lets an app-side `network` value select keys or routes.
+- Qortal has no group-0 general chat anywhere (Core rejects it; the UI never
+  offers it).
 
 ## Ownership and safety boundaries
 
 Chat owns conversation state, network-qualified presentation, protocol payload
 codecs, capability-gated controls, and bounded rendering. Home owns account
 selection, private keys, signing, proof of work, encryption and decryption,
-private-chat authorization, native file access, publishing, and native viewers.
-Chat must never receive reusable private, group, or content keys.
-
-Home must decode and attest every target-critical field before signing any
-node-provided unsigned bytes: network/domain, selected sender, recipient or
-group, payload/hash, transaction reference, timestamp, fee, and proof-of-work
-rules. It must recheck app, tab, account, network, and node-route authority after
-approval and immediately before signing and broadcasting. Node-staged QDN
-publishes require equivalent content attestation.
-
-All conversation, identity, avatar, and resource objects must carry their
-network. No operation may silently default a Qortal object to Qortium. Feature
-availability must come from advertised capabilities, not Home version sniffing.
-Reticulum remains a distinct future source/action family; it must not be
-overloaded onto the legacy Qortium or Qortal CHAT actions.
-
-## Completion matrix
-
-| Capability | Qortium today | Qortal today | Chat can do now | Home, and sometimes Core, required |
-| --- | --- | --- | --- | --- |
-| Joined/open groups | History, pagination, live updates, send, replies, membership-first navigation, and discovery; Home 1 still has a custom-remote send-routing gap | Joined/open history, polling, active previews/unread, pagination, send, replies, network-routed rosters, persisted selection, and discovery | Reconcile stale already-member joins without trapping the user in a generic error; continue shared presentation cleanup | Portable join/leave/invite/admin actions on both bridges, plus correction of the Home 1 custom-remote send route |
-| Closed/private groups | Read and send through Home 1 local/trusted compatibility actions; not portable to public nodes | Not implemented | Shared private-conversation UI, status, and capability gates | Qortium: portable Home QPGC crypto plus a bounded public Core control-envelope read API. Qortal: exact Hub key-bundle and `encryptSingle` compatibility in Home |
-| Direct messages | Read, send, pagination, replies, edits, deletes, and reactions through the current Home 1 local/trusted Qortium path; public-node portability is incomplete | Not implemented | Network-qualified direct rail, storage, routes, and shared presentation | Home-owned QDM1 and Qortal DM lookup, encryption/decryption, send, active-list, and search actions for every node route |
-| Replies | Groups and DMs | Open groups | Preserve shared projection and build exact network payloads | Reused by new DM/private actions; no new standalone action needed |
-| Edits and deletes | Work in Home 1; Home 2 currently drops `chatReference` and can turn revisions into new messages | Disabled; delete interoperability still needs a frozen Hub contract | Keep same-sender authorization and implement exact Qortal Hub edit envelopes | Preserve a validated transaction `chatReference` end-to-end and advertise the capability. Do not claim Qortal delete until an interoperable trace/spec is frozen |
-| Emoji reactions | Groups and DMs in the existing Qortium path; broken through Home 2 for the same reference reason | Disabled | Build/project exact per-network reaction envelopes | Same `chatReference` bridge tranche as edits |
-| Membership and administration | Home 1 actions exist but are not portable across all node routes; Home 2 writes are deferred | Reads only | Consistent member/role UI and action gating | Portable join, leave, invite, approval, ban, kick, and role actions as needed by Chat; advanced administration may open Groups |
-| User avatars | Network-scoped Qortium account avatars work in lists, messages, dialogs, and headers | Network-scoped primary-name `qortal_avatar` reads work with bounded caching and initials fallback | Keep display contracts aligned with the owning profile/avatar modules | Normalized read actions are desirable in Home 2; Qortal avatar publishing is a later Home write action |
-| Group avatars | Qortium pointer-backed group avatars render with bounded visible-row caching and initials fallback | Owner-primary-name `qortal_group_avatar_<groupId>` thumbnails render with the same bounds and fallback | Reconcile the shared descriptor/module issue with Groups without duplicating authoring logic | Add Home 2 group-avatar parity; authoring/publishing stays with Home/Groups |
-| Public embeds | QDN image preview, bounded metadata cards, media viewer, document viewer/save, and open-group public upload work in Home 1 | Native/contextual links, Hub `images`, safe text/HTML variants, metadata cards, and bounded small previews are network-correct; released Home still lacks full Qortal viewer/save/navigation parity | Keep rendering bounded, click-gated, and visibly public | Unified Qortal viewer, stream, save, and publish support, particularly Android ranged media and Home 2 binary handling |
-| Private embeds | A public link can be placed in encrypted text, but the resource remains public | Same limitation | Render an explicit encrypted attachment descriptor once defined; never label a public resource private | Home-owned encrypted upload, key wrapping, authorized decrypt, and bounded view/stream contracts for each DM/private-group protocol |
-| Notifications and mentions | Existing Qortium direct, mention, and reply foundations | Cross-chain group/direct behavior is incomplete | Network-qualify read watermarks, mentions, and in-app notification state | Advertise and implement safe background events for both chains without exposing message plaintext |
-| Send lifecycle | Network/account-scoped pending, broadcast, confirmed, rejected, ambiguous, and expired states are implemented with duplicate suppression | The same shared lifecycle is used for Qortal open-group sends | Preserve the current fail-safe retry rules and exact error labels | Return durable, privacy-safe broadcast identity/status needed to reconcile accepted sends across a full close/reopen |
-
-## Phase 1 Chat-only work
-
-The read/presentation capability scope below shipped in Chat 1.4.12. The
-follow-up cleanup extracts the rail, selected-chat header, and composer from the
-large application component, makes already-member joins idempotent, and
-reconciles the corresponding issues. Further functional parity after this
-section crosses the Home/Core boundary described in Phases 2–5.
-
-### 1. Qortal read and navigation parity
-
-- Wire Qortal active-chat results into safe previews; keep read watermarks and
-  unread-count ownership in Chat.
-- Page older Qortal group history instead of stopping after the first page.
-- Route group rosters through the selected network.
-- Persist and restore network-qualified group and direct selections.
-- Make deep links include the network and conversation kind.
-- Keep unsupported write controls hidden until Home advertises them.
-
-The same tranche should normalize the send lifecycle on both chains:
-`pending -> broadcast -> confirmed`, with explicit rejected/expired states,
-stable signature-based reconciliation, bounded retry, and duplicate prevention.
-Within one Chat session, switching chats or accounts and receiving a delayed
-history result must not turn one user intent into two posts. Safe duplicate
-prevention across a full close/reopen additionally requires a durable,
-privacy-preserving Home receipt or idempotency contract; Chat must not persist
-private plaintext merely to reconstruct an optimistic send.
-
-### 2. Network-scoped identity and avatars
-
-- Replace address-only profile caching with `(network,address)` keys.
-- Resolve Qortium account and group avatars through the existing Home actions.
-- Resolve Qortal account avatars from the primary-name `qortal_avatar`
-  thumbnail and group avatars from
-  `qortal_group_avatar_<groupId>` under the owner's primary name.
-- Reserve stable avatar layout slots and use bounded loading, byte validation,
-  and initials fallback on desktop and Android.
-
-The current Qortium avatar contract is a mutable explicit
-`{service,name,identifier}` pointer resolved to the latest revision. Older issue
-text describing signature-lifetime avatar caching is stale. Chat now consumes
-Home's pointer-aware account/group actions with bounded validation and owns only
-its app-specific target/cache policy; avatar authoring remains in Groups/Home.
-
-### 3. Network-aware public embeds
-
-- Introduce one internal resource descriptor containing `network`, `service`,
-  `name`, `identifier`, optional `path`, filename, MIME type, and size.
-- Treat a legacy bare `qdn://` link as belonging to its source conversation;
-  new copied descriptors must encode the network explicitly.
-- Parse and preserve pinned Qortal Hub `images` descriptors rather than
-  discarding them. Decode and sanitize the observed structured, string, and HTML
-  body variants without rendering raw HTML.
-- Keep image previews user-initiated and bounded. Reject unsafe inline SVG/HTML,
-  validate bytes and MIME type, and keep external HTTP previews opt-in to avoid
-  leaking a reader's IP or activity.
-- Use Home's viewer/stream/save capabilities when advertised. Do not buffer
-  large audio or video into an unbounded base64 response.
-- Add compact title/description cards without auto-fetching arbitrary web pages.
-- Make app/resource navigation network-aware so a Qortal resource can never be
-  opened or fetched from Qortium by accident.
-- Validate all service/name/identifier/path lengths and traversal/query behavior
-  before passing an attacker-controlled resource descriptor to Home.
-
-### 4. Conversation-model cleanup
-
-Extract the network-qualified conversation, capability, rail, header, composer,
-and resource models before adding another full protocol path. Close issues whose
-current behavior is already implemented (#29 membership-first navigation and
-#30 member Direct/Mention actions). Issue #38 is resolved without weakening its
-sender boundary by rejecting stale-owner edit/delete dispatches and coalescing
-same-sender orphan revisions when the retained history window no longer includes
-their root. Issue #55's Chat display side is complete under the corrected pointer
-contract; shared authoring remains tracked by the companion Groups issue.
-
-## Required bridge contract
-
-Names below describe the normalized contract. Home may retain compatibility
-aliases internally, but Chat should consume one capability-driven interface.
-
-### Capability discovery
-
-Add `GET_CHAT_CAPABILITIES`, scoped to the selected account, authoritative
-bridge network, current node route, and platform. It should advertise exact
-primitives rather than broad feature booleans, including:
-
-- public-group read, send, reply, revise, react, and each supported membership or
-  administration mutation;
-- direct read, send, revise, react, and crypto;
-- private-group read, send, revise, react, recovery, and rotation;
-- account-avatar and group-avatar reads;
-- small resource read, publish, viewer, ranged stream, save, and app-link
-  navigation; and
-- private attachment publish, decrypt, view, and stream.
-
-Chat can derive a conservative legacy profile from `SHOW_ACTIONS` on Home 1.7,
-but it must not infer future behavior from a version number. Capability discovery
-does not grant authorization, and target-specific conditions such as a missing
-recipient public key or group key remain structured runtime states.
-
-### Conversations, reads, and sends
-
-Use a tagged selector everywhere:
-
-```text
-{ kind: "group", groupId } | { kind: "direct", otherAddress }
-```
-
-The invoked bridge (`qdnRequest` or `qortalRequest`) is the authoritative network
-and selects the permission and signing domain. If a compatibility request repeats
-`network`, Home must reject a mismatch; app input must never select a different
-key, route, or permission scope.
-
-Normalize the actions around these shapes:
-
-- `SEARCH_CHAT_MESSAGES { conversation, before, after, limit, reverse }`
-  returns plaintext messages, a cursor, and structured crypto status. Home must
-  reject a direct selector that does not involve the selected account.
-- `GET_ACTIVE_CHATS { includeGroups, includeDirect }` returns active
-  conversations, safe previews, and crypto status, with Home decrypting only for
-  the selected account. Chat owns read watermarks and unread counts.
-- `SEND_CHAT_MESSAGE { conversation, message, payloadFormat,
-  chatReference? }` validates target, size, reference, and capability, then
-  performs protocol-specific encryption, proof of work, signing, and broadcast.
-  It returns network, signature, timestamp, and broadcast state.
-
-`payloadFormat` is an allowlisted application-envelope codec/version only. Home
-derives encryption from the conversation kind and authoritative group metadata
-and fails closed if private status cannot be verified. An app-provided format can
-never override target or encryption semantics.
-
-`chatReference` must be validated and preserved on both Home 1 and Home 2, on
-desktop and Android. Freeze the distinct Qortal codecs separately: Hub v3 open
-groups, legacy version-2 direct-message plaintext before secretbox, and the
-private-group inner payload before `encryptSingle`. Do not reuse Qortium's JSON
-shape for any of them.
-
-### Portable private chat
-
-The existing Home 1 Qortium `/chat/private/*` integration remains a local-node
-compatibility adapter, not the portable design. Home needs deterministic golden
-vectors and host-owned implementations for:
-
-- Qortium QDM1 direct messages: Ed25519-to-X25519 shared secret, QDM1 domain
-  separation/KDF, and AES-256-GCM envelope;
-- Qortal direct messages: Ed25519-to-Curve25519/X25519, SHA-256 shared secret,
-  NaCl secretbox, and a nonce taken from the first 24 bytes of the random 64-byte
-  `lastReference` (which is distinct from `chatReference`);
-- Qortium QPGC membership epochs, announcements, requests, relays, rotations,
-  AES-GCM content, and secure account/network/group/epoch-scoped key persistence;
-  and
-- Qortal Hub private-group QDN key bundles and exact `encryptSingle` message
-  formats.
-
-Vectors must cover both directions, wrong account or key, unknown recipient
-public key, malformed/tampered/replayed data, restart, account switch, key
-rotation, and cross-client Hub traces. Home returns plaintext or structured
-`MISSING_KEY` state, never reusable keys. QPGC recovery additionally needs a
-bounded, side-effect-free Core API for raw control envelopes. It must filter by
-group, epoch, and control type; support before/after cursors and limits; and
-return sender, timestamp, CHAT signature, and raw data for current and historical
-requests without decrypting or exposing keys. Home still verifies envelope
-signatures, membership/epoch, intended wrapper recipient, and key commitment.
-Ordinary public chat search intentionally filters these controls today.
-
-Phase 0 must also decide secure at-rest QPGC key storage and migration, account
-isolation, recovery after the roughly 24-hour CHAT/control retention window,
-reinstall and multi-device behavior, and which earlier history is irrecoverable.
-For Qortal private groups it must freeze publisher authorization, exact owner or
-admin name and identifier selection, deterministic newest-valid-resource rules,
-member public-key requirements, rotations on joins/leaves, historical-key
-behavior, old/new `encryptSingle` compatibility, and reaction type 102.
-
-CHAT storage is retained and ephemeral, not indefinite chain history. Pagination
-and resume cover the selected node's retained window; the product must explain
-node-switch gaps and missing history rather than promise an offline mailbox.
-
-### Resources and attachments
-
-Normalize public resource operations as network-qualified `FETCH_RESOURCE`,
-`OPEN_RESOURCE_VIEWER`, `OPEN_RESOURCE_STREAM`, `SAVE_RESOURCE`, and
-`PUBLISH_RESOURCE` actions, plus network-qualified app/resource navigation. The
-desktop and Android implementations must share the same validators, bounds,
-authorization, and MIME policy. Small fetch/property responses are strictly
-bounded. Large streams use an expiring app/tab/account/network/route-bound
-capability URL with Range support, cancellation and byte ceilings, no node API
-key exposure, and strict service/path validation. Android needs that authorized
-ranged proxy rather than whole-file buffering.
-
-Public uploads may be referenced from open chats. A public upload referenced by
-an encrypted message is still public. Genuine private files require a separate
-chat-specific contract such as:
-
-```text
-PUBLISH_CHAT_ATTACHMENT { conversation, sourceToken, metadata }
-```
-
-Home issues `sourceToken` from its native file picker; only a small, explicitly
-bounded inline-byte alternative is allowed. Home selects and allowlists the
-ciphertext service, sniffs and validates content, encrypts bytes plus filename,
-MIME type and other sensitive metadata using the current DM or group context,
-and publishes under an opaque identifier. The returned authenticated descriptor
-must contain an immutable expected transaction signature and/or content hash so
-a later mutable-QDN revision cannot silently replace a signed attachment.
-Intentional latest-revision embeds remain a distinct descriptor type.
-
-Fetch/view/stream actions verify the selected account's conversation access,
-decrypt in Home, and recheck the declared MIME type against decrypted bytes. The
-design must acknowledge unavoidable size/timing/publisher metadata and that
-downloaded plaintext cannot be revoked.
-
-Qortal public-node publication must not be promised until a portable signing or
-keyless staging route is proven. Qortium's existing keyless public publication
-does not imply that Qortal has an equivalent. Hub-compatible private-group images
-use their pinned `encryptSingle` and encrypted `images[]` formats; generic Qortal
-private files and DM attachments require separate formats and vectors rather than
-being assumed compatible with that image path.
-
-## Delivery sequence
-
-### Phase 0 — reconcile contracts and fixtures
-
-- Correct the stale avatar issue text and freeze the current pointer contract.
-- Pin the Qortal Hub implementation used for interoperability evidence.
-- Capture separate open-group, direct-message, private-group, mutation,
-  attachment, transaction, crypto, and cross-client vectors.
-- Define `GET_CHAT_CAPABILITIES` and the normalized conversation/resource
-  descriptors before adding more one-off actions.
-- Probe and specify portable Qortal QDN publication before scheduling Qortal
-  private-group rotation or authoring. If Qortal has no safe public/custom
-  staging route, define the required Qortal Core/API work first.
-- Specify QPGC durable key storage/recovery and Qortal private-group bundle trust
-  and rotation rules before implementation.
-
-### Phase 1 — Chat-only read and presentation parity (complete)
-
-Deliver Qortal active chats/unread, history pagination, roster and selection
-parity; network-scoped user/group avatars; Qortal Hub image parsing; and
-network-correct public embeds/cards. Refactor the conversation and resource
-models while preserving current Qortium behavior. Add the shared pending,
-broadcast, confirmation/error, retry, and duplicate-prevention model. This phase
-targets the already released Home 1.7 action surface and requires no Home change.
-
-Completion evidence: Chat 1.4.12 provides the dual-chain read lifecycle,
-network-scoped identity/avatar caches, and network-aware bounded resource
-rendering. The immediate follow-up keeps the same bridge surface while splitting
-the conversation rail, header, and composer into presentation modules and
-handling Core's named `ALREADY_GROUP_MEMBER` outcome as a membership refresh.
-This Chat-only follow-up closes the remaining revision-window duplication and
-stale-owner write gap, and makes a loaded selected-group avatar openable in the
-existing bounded lightbox.
-
-### Phase 2 — small bridge parity tranche
-
-Preserve `chatReference` through every Home bridge, add capability discovery,
-Home 2 group-avatar reads, network-aware viewer/stream/save actions, and portable
-join/leave basics. Add the durable broadcast receipt/idempotency contract needed
-to reconcile an accepted send after Chat closes and reopens. Each mutation needs
-its own advertised capability, validated
-serializer or public unsigned builder, local signing/attestation, fee and proof
-rules, action-specific approval, freshness checks, and broadcast tests. Enable
-Qortal edits and reactions only after Hub vectors pass.
-
-### Phase 3 — direct messages on both chains
-
-Implement Home-owned QDM1 and Qortal DM active/search/decrypt/send paths, then
-enable replies, edits, supported delete semantics, reactions, pagination,
-unread state, and avatars in the shared direct-message UI.
-
-### Phase 4 — closed/private groups on both chains
-
-Add the bounded Core QPGC control read needed by remote Home, implement portable
-QPGC recovery/rotation, and separately implement the pinned Qortal Hub key-bundle
-and message formats, including the Qortal publication route proven in Phase 0.
-Complete private member state, history, send, replies, edits/reactions where
-interoperable, and structured missing-key recovery.
-
-### Phase 5 — publishing, authoring, and attachments
-
-Complete general Qortal public publishing, Home 2 Qortium publishing parity, and
-avatar authoring through the owning app, then add separately specified encrypted
-private images/files for each supported direct and private-group protocol. Public
-and private resource descriptors must remain visibly distinct.
-
-### Phase 6 — completion hardening
-
-For every capability, maintain automated fixtures across both networks,
-desktop/Android, local/authenticated-custom/unauthenticated-custom/public node
-routes, open/private/direct
-conversation kinds, account lock/switch/restart, node switch, missing key/public
-key, stale approval, malformed/oversize input, tamper, and replay. A tranche is
-not complete if one platform silently falls back to another network or if a
-public/custom node path is merely hidden rather than implemented or explicitly
-reported unavailable. Keep named representative public and unauthenticated
-custom nodes in the fixture matrix, and cover short retention, node-switch gaps,
-missing history, pending-send reconciliation, and cross-chain direct/mention/
-reply notification semantics.
-
-User testing continues throughout these phases and feeds the next tranche. It is
-not a separate packaged-Home checkpoint in this roadmap.
-
-### Phase 7 — Reticulum/RCHAT
-
-Resume the separate RCHAT compatibility work only after the dual-chain CHAT
-matrix above is complete. It retains its own protocol, action family, licensing,
-vectors, honest capability handshake, group/DM behavior, and stock-client trace
-requirements.
-
-## Dual-chain legacy CHAT tranche definition of done
-
-Chat completion means a selected account can discover and participate in its
-public and private groups and direct conversations on both chains; see correct
-names and avatars; page and resume history; reply, edit, delete where the target
-protocol defines an interoperable delete, and react; and safely view or share
-public and private resources. The same advertised capability behaves the same on
-desktop and Android and across local, authenticated or unauthenticated custom,
-and public nodes that expose the documented prerequisites; operator-denied
-capabilities fail explicitly.
-
-Unsupported states produce an accurate structured explanation. They never
-broadcast a different transaction, leak a key, fetch from the other chain, or
-present a public resource as private.
-
-This definition completes the Qortium/Qortal legacy CHAT tranche. It is not the
-Chat 2.0 release gate: the accepted Chat 2.0 plan still requires the separate
-Reticulum/RCHAT scope in Phase 7.
+private-chat authorization, native file access, publishing, and native
+viewers. Chat never receives reusable private, group, or content keys. All
+conversation, identity, avatar, and resource objects carry their network; no
+operation defaults a Qortal object to Qortium.
+
+## Delivery phases
+
+### P1 — host adapters and capability cutover (this tranche)
+
+Done in this branch:
+
+- Bridge host classification (`home2` / `hub` / `legacy-home` / `gateway` /
+  `browser-dev`) and Hub-safe detection of the lexical `qortalRequest` global.
+- Obsolete public-node send and key-recovery suppression removed; failures
+  surface through the structured error codes instead.
+- Typed per-network wrappers for public `SEND_CHAT_EDIT`/`DELETE`/`REACTION`
+  and the fine-grained direct family, with the generic
+  `SEND_CHAT_MESSAGE` + `chatReference` envelope retained for hosts that do
+  not advertise the exact actions (byte-compatible with the Hub v3 /
+  direct v2 envelopes frozen in Home's interop fixture).
+- Direct-send capability derived from `SEND_DIRECT_CHAT_MESSAGE`, not from
+  the group send action; direct revision controls require the full
+  edit/delete/reaction family.
+- Qortal join/leave through mirrored per-network derivations with
+  network-tagged transaction tracking.
+- Pending-transaction journal consumption and reconciliation.
+
+### P2 — direct messages on both chains
+
+Qortal direct rail/list/history/send through the exact direct family on
+T1/T2. DMs stay hidden on T3 (Hub exposes no way to decrypt DM history).
+Qortal direct payloads must serialize text as paragraph HTML per the frozen
+interop vectors. Preserve network/account-qualified storage, pagination,
+unread state, avatars, replies, missing-public-key errors, and ambiguous-send
+handling.
+
+### P3 — private groups on both chains
+
+Consume private active/history/state, send/revision, key request, resolve,
+and rotation actions per network on T1/T2; surface structured missing-key,
+recovery, membership, retention-gap, and operator-policy states without
+exposing keys. Unjoined private groups stay hidden; T3 shows none.
+
+### P4 — public and private resource completion
+
+Route viewer/stream/save/publish/navigation through the selected network's
+advertised actions; adopt Home source tokens (`SELECT_QDN_PUBLISH_SOURCE`)
+and the private attachment family (publish, stream, viewer, save, progress,
+failure states). Wire the Qortal publisher identity so attachments stop being
+Qortium-only. Ordinary QDN links stay visibly public even inside encrypted
+conversations.
+
+### P5 — UI/UX redesign to the Home 2 design system
+
+Extract the layout shell from `App.tsx`; move Chat's token values to Home 2's
+palette and finish the `modern` UI style (including a `clay` accent); keep
+the app fully usable on phones. Requires a small Home change so hosted apps
+receive `uiStyle: 'modern'` and an unmapped `clay` accent.
+
+### P6 — notifications and operational completion
+
+Chain-qualified `SHOW_NOTIFICATION`/`NOTIFICATION_HAS_PERMISSION` where
+advertised; retain separate user choices for direct activity, mentions, and
+replies; reconcile account, lock, node-route, app-navigation, and journal
+changes without leaking another identity's transcript, drafts, or
+notifications; finish consistent empty/locked/missing-key/read-only/pending/
+ambiguous/retry states on desktop and mobile.
+
+### P7 — version 2.0.0, docs, dual-chain publication
+
+Version bump (2.0.0 = requires platform 2.0 under QAVS), final capability
+matrix and README limits, then publication of the identical built tree to
+Qortium QDN (existing `APP/Chat/Chat`) and Qortal QDN (identity to be decided
+at publish time; Hub's catalog lists default-identifier resources). The
+transaction wrapping necessarily differs per chain; the published files do
+not. Publication only happens from merged `main` with explicit owner
+approval.
+
+## Verification standard
+
+Every tranche keeps `npm test` and `npm run build` green and adds unit tests
+for new pure logic. Capabilities must work across local, authenticated
+custom, unauthenticated custom, and public node routes on desktop and
+Android; when an operator disables a required endpoint, the exact capability
+error is shown. A public node is not a reduced tier by design — only by an
+operator's explicit policy.
