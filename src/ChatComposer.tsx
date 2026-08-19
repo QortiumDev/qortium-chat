@@ -47,6 +47,8 @@ export function ChatComposer({
   onSubmit,
   onToggleEmoji,
   processingLabel,
+  remainingBytesLabel,
+  remainingBytesOverLimit,
   removeAttachmentLabel,
   searchLabel,
   sendLabel,
@@ -81,6 +83,15 @@ export function ChatComposer({
   onSubmit: (event: SubmitEvent<HTMLFormElement>) => void;
   onToggleEmoji: () => void;
   processingLabel: string;
+  /** A closed group's live byte-remaining counter (e.g. "1801 of 2225
+   * bytes"), or null for any other chat — see App.tsx's
+   * selectedGroupPrivatePlaintextMaxBytes. Advisory only: the actual cap is
+   * enforced by coreApi's send wrappers and by Home/Core server-side. */
+  remainingBytesLabel?: string | null;
+  /** True once the drafted text's UTF-8 byte length exceeds the cap the
+   * counter above reports — styles the counter as an error and (via
+   * App.tsx's canSubmitMessage) disables submit. */
+  remainingBytesOverLimit?: boolean;
   removeAttachmentLabel: string;
   searchLabel: string;
   sendLabel: string;
@@ -155,6 +166,11 @@ export function ChatComposer({
         rows={1}
         value={draft}
       />
+      {remainingBytesLabel ? (
+        <p aria-live="polite" className={remainingBytesOverLimit ? 'composer__byte-counter composer__byte-counter--over' : 'composer__byte-counter'}>
+          {remainingBytesLabel}
+        </p>
+      ) : null}
       {showAttachment ? (
         <input
           hidden

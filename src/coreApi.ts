@@ -34,10 +34,16 @@ import type {
   NodeStatus,
   PendingApprovalTransaction,
   PendingBridgeTransactionsResult,
+  PrivateGroupActiveChatEntry,
   PrivateGroupChatKeyRequest,
   PrivateGroupChatKeyRequestRecoveryResult,
   PrivateGroupChatKeyRequestResult,
+  PrivateGroupChatState,
+  PrivateGroupKeyRequestOutcome,
+  PrivateGroupKeyResolutionOutcome,
   QdnAction,
+  QortalPrivateGroupChatState,
+  QortiumPrivateGroupChatState,
   RewardShare,
   StartMintingResult,
   TransactionStatus,
@@ -647,10 +653,11 @@ export async function getGroupMessages(
   };
 
   if (group.isOpen === false && shouldDecryptPrivate) {
-    // Neither protocol's Home 2.0 v2 bridge advertises
-    // SEARCH_PRIVATE_GROUP_CHAT_MESSAGES for qortalRequest (no private-group
-    // decryption on Qortal in this slice), so a closed Qortal group hits this
-    // same gate a closed Qortium group hits on an older/legacy bridge.
+    // Both protocols' Home 2 bridge can advertise SEARCH_PRIVATE_GROUP_CHAT_
+    // MESSAGES (review/schemas-private-group-actions.md — Qortal's private-
+    // bundle reads are network-routed the same as Qortium's QPGC reads); a
+    // closed group on either chain hits this same gate only on an older/
+    // legacy bridge that does not advertise it.
     if (!hasBridgeAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES')) {
       throw new Error('Closed group chat reads require Qortium Home private group chat support.');
     }
@@ -679,6 +686,62 @@ export async function getGroupMessages(
   );
 
   return sortMessagesByTimestamp(messages);
+}
+
+// Qortium/QPGC state discriminates on `qpgcVersion`; Qortal state discriminates
+// on `qortalPrivateGroupVersion` — the two per-chain result shapes documented
+// in review/schemas-private-group-actions.md "GET_PRIVATE_GROUP_CHAT_STATE"
+// share no other reliably-present field to switch on.
+export function isQortiumPrivateGroupChatState(
+  state: PrivateGroupChatState,
+): state is QortiumPrivateGroupChatState {
+  return (state as QortiumPrivateGroupChatState).qpgcVersion === 1;
+}
+
+export function isQortalPrivateGroupChatState(
+  state: PrivateGroupChatState,
+): state is QortalPrivateGroupChatState {
+  return (state as QortalPrivateGroupChatState).qortalPrivateGroupVersion === 1;
+}
+
+// GET_PRIVATE_GROUP_ACTIVE_CHATS — one entry per eligible closed group (latest
+// decrypted row, or a MISSING_KEY/NO_MESSAGES marker). Returns [] rather than
+// throwing when unadvertised, matching getPrivateDirectActiveChats: "no
+// private-group activity support" and "no private-group activity yet" read
+// the same to every caller of this function.
+export async function getPrivateGroupActiveChats(
+  network: ChatNetwork,
+  actions?: QdnAction[],
+): Promise<PrivateGroupActiveChatEntry[]> {
+  if (!hasBridgeAction(actions, 'GET_PRIVATE_GROUP_ACTIVE_CHATS')) {
+    return [];
+  }
+
+  return bridgeRequest<PrivateGroupActiveChatEntry[]>(network, {
+    action: 'GET_PRIVATE_GROUP_ACTIVE_CHATS',
+    encoding: 'BASE64',
+    limit: DEFAULT_LIST_LIMIT,
+  });
+}
+
+// GET_PRIVATE_GROUP_CHAT_STATE — unlike the active-chats read above, this
+// throws when unadvertised: callers use it to drive composer gating/caps for
+// one specific selected group, where silently returning "no state" would
+// read as "this group has no state" rather than "this host cannot answer".
+export async function getPrivateGroupChatState(
+  network: ChatNetwork,
+  groupId: number,
+  actions?: QdnAction[],
+): Promise<PrivateGroupChatState> {
+  if (!hasBridgeAction(actions, 'GET_PRIVATE_GROUP_CHAT_STATE')) {
+    throw new Error('Private group chat state requires Qortium Home private group chat support.');
+  }
+
+  return bridgeRequest<PrivateGroupChatState>(network, {
+    action: 'GET_PRIVATE_GROUP_CHAT_STATE',
+    encoding: 'BASE64',
+    groupId,
+  });
 }
 
 function getOptionalKeyId(value: unknown) {
@@ -713,36 +776,124 @@ export function getMissingPrivateGroupKeyRequests(messages: ChatMessage[], group
   return Array.from(requests.values());
 }
 
+// Raw REQUEST_PRIVATE_GROUP_CHAT_KEY responses have no shared shape across
+// chains (review/schemas-private-group-actions.md § 5): QPGC broadcasts a
+// signed control envelope ({signature, timestamp}); Qortal instead attempts
+// local/resource recovery with no transaction at all
+// ({accepted, recovered, resourceSignature}). Every raw field is kept
+// (spread) alongside the added `kind` so callers reading the pre-P3a
+// pass-through shape (e.g. an existing legacy mock/response) are unaffected.
+function normalizePrivateGroupKeyRequestResult(raw: unknown): PrivateGroupKeyRequestOutcome {
+  const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  if (typeof record.recovered === 'boolean') {
+    return { ...record, kind: 'recovery' };
+  }
+
+  // QPGC broadcast result, or an unrecognized/legacy shape — default to
+  // 'broadcast' since that is this wrapper's Qortium-primary case.
+  return { ...record, kind: 'broadcast' };
+}
+
+// Shared by RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS and
+// ROTATE_PRIVATE_GROUP_CHAT_KEY — review/schemas-private-group-actions.md § 5
+// documents the same result-shape family for both. QPGC relays zero, one
+// ({signature, timestamp}, no `relayed`/`accepted` field at all), or many
+// ({accepted, relayed, results[]}) announcements; Qortal instead publishes/
+// rotates an administrator key bundle ({accepted, signature, timestamp}).
+// `signatures` always holds every relayed/published signature found in the
+// raw response (empty when none); raw fields are kept alongside, same
+// rationale as normalizePrivateGroupKeyRequestResult above.
+function normalizePrivateGroupKeyResolutionResult(raw: unknown): PrivateGroupKeyResolutionOutcome {
+  const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  if ('relayed' in record) {
+    const signatures = Array.isArray(record.results)
+      ? (record.results as Array<Record<string, unknown>>)
+          .map((entry) => (typeof entry.signature === 'string' ? entry.signature : null))
+          .filter((signature): signature is string => signature !== null)
+      : [];
+
+    return { ...record, kind: 'relay', signatures };
+  }
+
+  if (typeof record.signature === 'string' && !('accepted' in record)) {
+    // QPGC: exactly one relayed envelope.
+    return { ...record, kind: 'relay', signatures: [record.signature] };
+  }
+
+  if (typeof record.signature === 'string' && 'accepted' in record) {
+    // Qortal administrator publication/rotation.
+    return { ...record, kind: 'publication', signatures: [record.signature] };
+  }
+
+  // Unrecognized/legacy shape (e.g. an existing pre-P3a mock) — no signature
+  // to extract.
+  return { ...record, kind: 'relay', signatures: [] };
+}
+
+// `network` is trailing and defaults to 'qortium' so every existing call site
+// keeps dispatching through qdnRequest exactly as before (bridgeRequest routes
+// 'qortium' to qdnRequest — see chatNetwork.ts). The raw legacy pass-through
+// shape existing callers may already rely on is preserved via the spread
+// inside normalizePrivateGroupKeyRequestResult.
 export async function requestPrivateGroupChatKey(
   request: PrivateGroupChatKeyRequest,
   actions?: QdnAction[],
+  network: ChatNetwork = 'qortium',
 ) {
   if (!hasBridgeAction(actions, 'REQUEST_PRIVATE_GROUP_CHAT_KEY')) {
     throw new Error('Private group chat key requests require Qortium Home key recovery support.');
   }
 
-  return qdnRequest<PrivateGroupChatKeyRequestResult>({
+  const raw = await bridgeRequest<PrivateGroupChatKeyRequestResult>(network, {
     action: 'REQUEST_PRIVATE_GROUP_CHAT_KEY',
     ...(request.epochId ? { epochId: request.epochId } : {}),
     groupId: request.groupId,
     ...(request.keyId ? { keyId: request.keyId } : {}),
   });
+
+  return normalizePrivateGroupKeyRequestResult(raw);
 }
 
 export async function resolvePrivateGroupChatKeyRequests(
   groupId: number,
   actions?: QdnAction[],
   limit = 20,
+  network: ChatNetwork = 'qortium',
 ) {
   if (!hasBridgeAction(actions, 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS')) {
     throw new Error('Private group chat key request resolution requires Qortium Home key recovery support.');
   }
 
-  return qdnRequest<PrivateGroupChatKeyRequestRecoveryResult>({
+  const raw = await bridgeRequest<PrivateGroupChatKeyRequestRecoveryResult>(network, {
     action: 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS',
     groupId,
     limit,
   });
+
+  return normalizePrivateGroupKeyResolutionResult(raw);
+}
+
+// ROTATE_PRIVATE_GROUP_CHAT_KEY has no pre-P3a call site (this action family
+// did not exist before), so unlike the two functions above there is no
+// legacy signature/shape to preserve — `network` leads like every other new
+// (network, …, actions?) wrapper in this file.
+export async function rotatePrivateGroupChatKey(
+  network: ChatNetwork,
+  groupId: number,
+  actions?: QdnAction[],
+) {
+  if (!hasBridgeAction(actions, 'ROTATE_PRIVATE_GROUP_CHAT_KEY')) {
+    throw new Error('Private group chat key rotation requires Qortium Home key recovery support.');
+  }
+
+  const raw = await bridgeRequest<Record<string, unknown>>(network, {
+    action: 'ROTATE_PRIVATE_GROUP_CHAT_KEY',
+    groupId,
+  });
+
+  return normalizePrivateGroupKeyResolutionResult(raw);
 }
 
 export async function getDirectMessages(
@@ -1049,6 +1200,151 @@ export async function sendChatReaction(
   }
 
   return sendChatMessage(network, txGroupId, qortiumReactionMessage, chatReference);
+}
+
+// Qortal private-group plaintext cap (review/schemas-private-group-actions.md
+// § "Message, edit, delete, reaction actions"); the Qortium/QPGC cap has no
+// fixed constant — it comes from GET_PRIVATE_GROUP_CHAT_STATE's
+// maxMessagePlaintextBytes and is enforced here only when a caller supplies
+// it (P3-design.md: "Qortium cap accepted as an optional param"). Exported so
+// the composer (App.tsx, via privateGroupComposer.ts) can show/enforce the
+// same fixed cap client-side for a closed Qortal group without duplicating
+// the literal.
+export const QORTAL_PRIVATE_GROUP_MAX_PLAINTEXT_BYTES = 2225;
+
+function assertPrivateGroupPlaintextByteLimit(network: ChatNetwork, wireMessage: string, maxPlaintextBytes?: number) {
+  const byteLength = new TextEncoder().encode(wireMessage).byteLength;
+
+  if (network === 'qortal') {
+    if (byteLength > QORTAL_PRIVATE_GROUP_MAX_PLAINTEXT_BYTES) {
+      throw new Error(
+        `Private group messages must be at most ${QORTAL_PRIVATE_GROUP_MAX_PLAINTEXT_BYTES} UTF-8 bytes on Qortal.`,
+      );
+    }
+    return;
+  }
+
+  if (typeof maxPlaintextBytes === 'number' && byteLength > maxPlaintextBytes) {
+    throw new Error(`Private group messages must be at most ${maxPlaintextBytes} UTF-8 bytes.`);
+  }
+}
+
+// Private-group sends have NO generic fallback on either chain — unlike the
+// public/direct wrappers above, which fall back to a plain SEND_CHAT_MESSAGE
+// envelope when the exact action is unadvertised, a closed group's plaintext
+// must never reach the wire through a path that would broadcast it outside
+// the group (P3-design.md safety invariant). Every wrapper below throws
+// instead of falling back when its exact action is not advertised.
+//
+// The `message` sent to Home is plain text for SEND_PRIVATE_GROUP_CHAT_MESSAGE
+// on both chains (Home performs the encryption/enveloping for the initial
+// send — same as the existing sendChatMessage above, which never builds a
+// Qortal envelope either). Edit/delete/reaction instead validate `message` as
+// the SAME per-chain envelope the public family uses (Home's private-group
+// write-request normalizer delegates directly to the public chat validator —
+// home-v2-app-bridge.ts:225-249, 2933-2960, 3330-3357), so those three reuse
+// this file's existing public-group envelope builders unchanged.
+export async function sendPrivateGroupChatMessage(
+  network: ChatNetwork,
+  groupId: number,
+  message: string,
+  actions?: QdnAction[],
+  maxPlaintextBytes?: number,
+) {
+  if (!hasBridgeAction(actions, 'SEND_PRIVATE_GROUP_CHAT_MESSAGE')) {
+    throw new Error('Private group chat sends require Qortium Home private group chat support.');
+  }
+
+  assertPrivateGroupPlaintextByteLimit(network, message, maxPlaintextBytes);
+
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, {
+      action: 'SEND_PRIVATE_GROUP_CHAT_MESSAGE',
+      groupId,
+      message,
+    }),
+  );
+}
+
+export async function sendPrivateGroupChatEdit(
+  network: ChatNetwork,
+  groupId: number,
+  message: string,
+  chatReference: string,
+  actions?: QdnAction[],
+  maxPlaintextBytes?: number,
+) {
+  if (!hasBridgeAction(actions, 'SEND_PRIVATE_GROUP_CHAT_EDIT')) {
+    throw new Error('Private group chat edits require Qortium Home private group chat support.');
+  }
+
+  const wireMessage =
+    network === 'qortal' ? buildQortalHubGroupChatEditPayload(normalizeQortalOutgoingMessage(message)) : message;
+
+  assertPrivateGroupPlaintextByteLimit(network, wireMessage, maxPlaintextBytes);
+
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, {
+      action: 'SEND_PRIVATE_GROUP_CHAT_EDIT',
+      chatReference,
+      groupId,
+      message: wireMessage,
+    }),
+  );
+}
+
+// `repliedTo` (the reply-thread target the deleted message itself was
+// replying to, if any) is optional and trailing, same rationale as the public
+// sendChatDelete above.
+export async function sendPrivateGroupChatDelete(
+  network: ChatNetwork,
+  groupId: number,
+  chatReference: string,
+  actions?: QdnAction[],
+  repliedTo?: string | null,
+) {
+  if (!hasBridgeAction(actions, 'SEND_PRIVATE_GROUP_CHAT_DELETE')) {
+    throw new Error('Private group chat deletes require Qortium Home private group chat support.');
+  }
+
+  const wireMessage =
+    network === 'qortal' ? buildQortalHubGroupChatDeletePayload() : buildDeletedMessageText(repliedTo);
+
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, {
+      action: 'SEND_PRIVATE_GROUP_CHAT_DELETE',
+      chatReference,
+      groupId,
+      message: wireMessage,
+    }),
+  );
+}
+
+export async function sendPrivateGroupChatReaction(
+  network: ChatNetwork,
+  groupId: number,
+  chatReference: string,
+  content: string,
+  contentState: boolean,
+  actions?: QdnAction[],
+) {
+  if (!hasBridgeAction(actions, 'SEND_PRIVATE_GROUP_CHAT_REACTION')) {
+    throw new Error('Private group chat reactions require Qortium Home private group chat support.');
+  }
+
+  // Throws for empty/>32-char content before any bridge call, on both paths.
+  const qortiumReactionMessage = buildReactionMessageText(content, contentState);
+  const wireMessage =
+    network === 'qortal' ? buildQortalHubGroupChatReactionPayload(content, contentState) : qortiumReactionMessage;
+
+  return normalizeChatSendResult(
+    await bridgeRequest<unknown>(network, {
+      action: 'SEND_PRIVATE_GROUP_CHAT_REACTION',
+      chatReference,
+      groupId,
+      message: wireMessage,
+    }),
+  );
 }
 
 // Qortal's identity shape (docs/HOME_V2_BRIDGE_COMPATIBILITY.md in

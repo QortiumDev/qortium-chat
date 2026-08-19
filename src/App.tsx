@@ -39,25 +39,23 @@ import {
   getPendingGroupApprovals,
   getTransactionStatus,
   getPrivateDirectActiveChats,
+  getPrivateGroupActiveChats,
+  getPrivateGroupChatState,
   forgetPendingBridgeTransaction,
   isChatSendRejectedError,
+  isQortalPrivateGroupChatState,
   leaveGroup,
   joinGroup,
   publishQdnAttachment,
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
   searchGroups,
-  sendChatDelete,
-  sendChatEdit,
-  sendChatMessage,
-  sendChatReaction,
-  sendDirectChatDelete,
-  sendDirectChatEdit,
-  sendDirectChatMessage,
-  sendDirectChatReaction,
   startMinting,
   submitGroupApproval,
 } from './coreApi';
+import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch';
+import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
+import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
 import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
 import { getBridgeErrorCode, isPendingReconciliationRequired } from './bridgeErrors';
 import {
@@ -263,6 +261,7 @@ import type {
   AsyncState,
   PendingApprovalTransaction,
   PendingBridgeTransactionEntry,
+  PrivateGroupChatState,
   QdnAction,
   QdnSelectedAccount,
   TrackedTransaction,
@@ -347,6 +346,12 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 function getPrivateGroupKeyRecoveryKey(accountAddress: string, request: PrivateGroupKeyRecoveryRequest) {
   return `${accountAddress}:${request.groupId}:${request.epochId ?? ''}:${request.keyId ?? ''}`;
+}
+
+// Key for the per-chat GET_PRIVATE_GROUP_CHAT_STATE store — same
+// network-then-id convention as getSelectedChatKey above.
+function getPrivateGroupChatStateKey(network: ChatNetwork, groupId: number) {
+  return `${network}:${groupId}`;
 }
 
 // Coded bridge errors (Home 2's structured `code` — see bridgeErrors.ts) take
@@ -1586,6 +1591,28 @@ export default function App() {
   const [writeError, setWriteError] = useState('');
   const [privateGroupKeyStatus, setPrivateGroupKeyStatus] = useState('');
   const [privateGroupKeyError, setPrivateGroupKeyError] = useState('');
+  // P3: GET_PRIVATE_GROUP_CHAT_STATE for the currently selected closed group,
+  // keyed by `${network}:${groupId}` (see the fetch effect and
+  // getPrivateGroupChatStateKey below) — drives the composer byte cap
+  // (Qortium), membership confirmation and the rotation-required notice
+  // (Qortal), following the same AsyncState + ref-mirror pattern used
+  // throughout this file for per-selection async data. A fetch failure never
+  // blocks message reads (P3-design.md) — it just leaves the composer/notice
+  // without that extra signal, degrading to the always-available generic
+  // membership/join gates.
+  const [privateGroupChatStateByKey, setPrivateGroupChatStateByKey] = useState<
+    Map<string, AsyncState<PrivateGroupChatState | null>>
+  >(() => new Map());
+  const privateGroupChatStateByKeyRef = useRef(privateGroupChatStateByKey);
+  privateGroupChatStateByKeyRef.current = privateGroupChatStateByKey;
+  const privateGroupChatStateRequestGuardRef = useRef(new LatestRequestGuard());
+  // Manual Qortal admin "publish group key" affordance (RESOLVE_PRIVATE_GROUP_
+  // CHAT_KEY_REQUESTS) — unlike Qortium's automatic background resolve (which
+  // only relays announcements a member is already entitled to), Qortal's
+  // RESOLVE is administrator bundle publication: a signed, staged QDN write
+  // that must never fire automatically for every member's background
+  // recovery poll (see recoverMissingPrivateGroupKeys below).
+  const [qortalPrivateGroupResolvePending, setQortalPrivateGroupResolvePending] = useState(false);
   // Members are auto-hidden behind a toggle so groups/chat get the full width;
   // on a narrow screen the panel opens as an off-canvas overlay instead.
   const [membersOpen, setMembersOpen] = useState(false);
@@ -1664,6 +1691,10 @@ export default function App() {
     () => new Set(qortalMemberGroups.value.map((group) => group.groupId)),
     [qortalMemberGroups.value],
   );
+  // Mirrors joinedIdsRef above, for the qortal counterpart of
+  // recoverMissingPrivateGroupKeys' isPrivateGroupRecoveryContextCurrent check.
+  const qortalJoinedIdsRef = useRef<ReadonlySet<number>>(qortalJoinedIds);
+  qortalJoinedIdsRef.current = qortalJoinedIds;
   // Invitations worth showing: unexpired, not already a member, and without a
   // join transaction already in flight (Core keeps the invite listed until
   // the join confirms).
@@ -2645,6 +2676,12 @@ export default function App() {
   const canApproveGroupJoinRequests = hasAction(actions, 'APPROVE_GROUP_JOIN_REQUEST');
   const canSendGroupChat = hasAction(actions, 'SEND_CHAT_MESSAGE');
   const canReadPrivateGroupChat = hasAction(actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
+  // P3 safety routing: a closed group's send must go through this exact
+  // action (never the generic SEND_CHAT_MESSAGE canSendGroupChat above
+  // checks) — see chatDispatch.ts and canPostInSelectedGroup/
+  // canPostInSelectedQortalGroup below, which gate the composer on this
+  // instead of canSendGroupChat whenever the selected group is closed.
+  const canSendPrivateGroupChat = hasAction(actions, 'SEND_PRIVATE_GROUP_CHAT_MESSAGE');
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
@@ -2667,21 +2704,77 @@ export default function App() {
   const isRegularSelectedGroup = selectedChat?.kind === 'group' && selectedChat.network !== 'qortal' && !isSelectedGeneralChat;
   const isSelectedGroupMembershipConfirmed = !isRegularSelectedGroup || memberGroups.phase === 'ready';
   const isConfirmedJoinedGroup = memberGroups.phase === 'ready' && isJoinedGroup;
+  // P3 item 5: Qortal closed groups are no longer read-unsupported — Home 2
+  // can advertise SEARCH_PRIVATE_GROUP_CHAT_MESSAGES on qortalRequest the
+  // same way it does on qdnRequest (review/schemas-private-group-actions.md),
+  // so this branches on network rather than always reading off the Qortium-
+  // only canReadPrivateGroupChat/isConfirmedJoinedGroup pair.
+  const canReadQortalPrivateGroupChat = hasAction(qortalBridge.value.actions, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES');
+  // Moved above the Qortal composer-gating block below (which now needs
+  // isConfirmedJoinedQortalGroup earlier, for shouldDecryptSelectedGroupMessages).
+  const isSelectedQortalGroup = selectedChat?.kind === 'group' && selectedChat.network === 'qortal';
+  const isConfirmedJoinedQortalGroup =
+    isSelectedQortalGroup &&
+    qortalMemberGroups.phase === 'ready' &&
+    qortalMemberGroups.value.some((candidate) => candidate.groupId === selectedGroupId);
+  // P3 item 2: the current GET_PRIVATE_GROUP_CHAT_STATE snapshot for the
+  // selected closed group (fetched by the effect further down this
+  // component). `selectedPrivateGroupChatStateAsync` degrades to `undefined`
+  // for anything other than a currently-selected closed group so a stale map
+  // entry from a previously-selected group never leaks into gating for the
+  // newly-selected one.
+  const selectedPrivateGroupChatStateKey =
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false
+      ? getPrivateGroupChatStateKey(selectedChat.network ?? 'qortium', selectedChat.group.groupId)
+      : null;
+  const selectedPrivateGroupChatStateAsync = selectedPrivateGroupChatStateKey
+    ? privateGroupChatStateByKey.get(selectedPrivateGroupChatStateKey)
+    : undefined;
+  const selectedPrivateGroupChatState = selectedPrivateGroupChatStateAsync?.value ?? null;
+  // No separate `selectedQortiumPrivateGroupChatState` narrowing is kept here
+  // (unlike the Qortal one below): the one Qortium consumer,
+  // getPrivateGroupComposerMaxPlaintextBytes, takes the union type directly
+  // and narrows internally (isQortiumPrivateGroupChatState). Member counts
+  // are deliberately NOT sourced from this state either (see P3 report): the
+  // private-layer memberCount (key-bundle recipients) and the existing
+  // group-membership roster count (selectedGroupMembers.length, real chain
+  // membership) answer different questions, and conflating them risks a
+  // misleading UI when they diverge (e.g. a joined member not yet keyed in).
+  const selectedQortalPrivateGroupChatState =
+    selectedPrivateGroupChatState && isQortalPrivateGroupChatState(selectedPrivateGroupChatState)
+      ? selectedPrivateGroupChatState
+      : null;
   const shouldDecryptSelectedGroupMessages =
     selectedChat?.kind === 'group' &&
-    shouldDecryptGroupMessages(selectedChat.group, {
-      canReadPrivateGroupChat,
-      isAccountUnlocked,
-      isGroupMembershipConfirmed: isSelectedGroupMembershipConfirmed,
-      isJoinedGroup: isConfirmedJoinedGroup,
-    });
+    (selectedChat.network === 'qortal'
+      ? shouldDecryptGroupMessages(selectedChat.group, {
+          canReadPrivateGroupChat: canReadQortalPrivateGroupChat,
+          isAccountUnlocked,
+          isGroupMembershipConfirmed: qortalMemberGroups.phase === 'ready',
+          isJoinedGroup: isConfirmedJoinedQortalGroup,
+        })
+      : shouldDecryptGroupMessages(selectedChat.group, {
+          canReadPrivateGroupChat,
+          isAccountUnlocked,
+          isGroupMembershipConfirmed: isSelectedGroupMembershipConfirmed,
+          isJoinedGroup: isConfirmedJoinedGroup,
+        }));
   const selectedClosedGroupReadKey =
     selectedChat?.kind === 'group' && selectedChat.group.isOpen === false
-      ? `${memberGroups.phase}:${isConfirmedJoinedGroup ? 'joined' : 'not-joined'}`
+      ? selectedChat.network === 'qortal'
+        ? `qortal:${qortalMemberGroups.phase}:${isConfirmedJoinedQortalGroup ? 'joined' : 'not-joined'}`
+        : `${memberGroups.phase}:${isConfirmedJoinedGroup ? 'joined' : 'not-joined'}`
       : '';
+  // P3 item 3: a closed group additionally requires the exact private-send
+  // action — canSendGroupChat (generic) is irrelevant for a closed group,
+  // since dispatchChatSendEntry never routes a closed-group target through
+  // it (chatDispatch.ts).
   const canPostInSelectedGroup =
     selectedChat?.kind === 'group' &&
-    (isSelectedGeneralChat || isConfirmedJoinedGroup);
+    (isSelectedGeneralChat ||
+      (selectedChat.group.isOpen === false
+        ? isConfirmedJoinedGroup && canSendPrivateGroupChat
+        : isConfirmedJoinedGroup));
   const hasPendingJoinRequest = selectedGroupId !== null && pendingJoinGroupIds.has(selectedGroupId);
   const hasPendingJoinTransaction = selectedGroupId !== null && pendingTrackedJoinGroupIds.has(selectedGroupId);
   const hasPendingLeaveTransaction = selectedGroupId !== null && pendingTrackedLeaveGroupIds.has(selectedGroupId);
@@ -2732,15 +2825,20 @@ export default function App() {
   // canSubmitQortalJoin) now that Home 2 advertises JOIN_GROUP/LEAVE_GROUP on
   // the Qortal bridge too.
   const canSendQortalGroupChat = hasAction(qortalBridge.value.actions, 'SEND_CHAT_MESSAGE');
-  const isSelectedQortalGroup = selectedChat?.kind === 'group' && selectedChat.network === 'qortal';
-  const isConfirmedJoinedQortalGroup =
-    isSelectedQortalGroup &&
-    qortalMemberGroups.phase === 'ready' &&
-    qortalMemberGroups.value.some((candidate) => candidate.groupId === selectedGroupId);
+  // P3 safety routing counterpart of canSendPrivateGroupChat above.
+  const canSendQortalPrivateGroupChat = hasAction(qortalBridge.value.actions, 'SEND_PRIVATE_GROUP_CHAT_MESSAGE');
+  // P3 item 3: for a closed Qortal group, membership is confirmed off the
+  // private-layer GET_PRIVATE_GROUP_CHAT_STATE `isMember` signal rather than
+  // isConfirmedJoinedQortalGroup (general on-chain group membership) — the
+  // two can diverge (a just-joined member may not yet be in the encrypted
+  // key-ring bundle). selectedQortalPrivateGroupChatState is derived below,
+  // after the private-group state store.
   const canPostInSelectedQortalGroup =
     isSelectedQortalGroup &&
-    selectedChat.group.isOpen === true &&
-    isConfirmedJoinedQortalGroup;
+    isConfirmedJoinedQortalGroup &&
+    (selectedChat.group.isOpen === true
+      ? true
+      : canSendQortalPrivateGroupChat && selectedQortalPrivateGroupChatState?.isMember === true);
   // Qortal has no UNLOCK_SELECTED_ACCOUNT shortcut of its own — a pure-Qortal
   // send depends on the shared Home wallet already being unlocked via
   // Qortium's canUseSelectedAccount gate (see handleSendMessage's reuse of
@@ -2798,14 +2896,32 @@ export default function App() {
     !!selectedChat &&
     (selectedChat.network === 'qortal'
       ? selectedChat.kind === 'group'
-        ? canUseQortalAccount && canSendQortalGroupChat && canPostInSelectedQortalGroup
+        ? canUseQortalAccount &&
+          (selectedChat.group.isOpen === false ? canSendQortalPrivateGroupChat : canSendQortalGroupChat) &&
+          canPostInSelectedQortalGroup
         : canUseQortalAccount && canSendQortalDirectChat
       : canUseSelectedAccount &&
-        (selectedChat.kind === 'group' ? canSendGroupChat && canPostInSelectedGroup : canSendDirectChat));
+        (selectedChat.kind === 'group'
+          ? (selectedChat.group.isOpen === false ? canSendPrivateGroupChat : canSendGroupChat) &&
+            canPostInSelectedGroup
+          : canSendDirectChat));
+  // P3 item 2a: the composer's visible cap for a closed group reflects the
+  // per-chain plaintext byte cap — Qortal's fixed 2225, or Qortium's
+  // maxMessagePlaintextBytes once GET_PRIVATE_GROUP_CHAT_STATE has loaded
+  // (undefined until then: never block the composer on that fetch, and
+  // canSubmitMessage below imposes no client-side cap either — Home/Core
+  // still enforce it authoritatively).
+  const selectedGroupPrivatePlaintextMaxBytes =
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false
+      ? getPrivateGroupComposerMaxPlaintextBytes(selectedChat.network ?? 'qortium', selectedPrivateGroupChatState)
+      : undefined;
+  const draftByteLength =
+    typeof selectedGroupPrivatePlaintextMaxBytes === 'number' ? getUtf8ByteLength(draft) : 0;
   const canSubmitMessage =
     canComposeMessage &&
     (draft.trim().length > 0 || stagedAttachment?.phase === 'ready') &&
-    !sendPending;
+    !sendPending &&
+    (typeof selectedGroupPrivatePlaintextMaxBytes !== 'number' || draftByteLength <= selectedGroupPrivatePlaintextMaxBytes);
   // Direct edit/delete/react have no generic-envelope fallback (item B's
   // sendDirectChatEdit/Delete/Reaction throw when unadvertised — a fallback
   // would create a new unrelated message instead of a revision), so the
@@ -2837,23 +2953,45 @@ export default function App() {
     composeContext?.kind !== 'edit' &&
     !!normalizeRegisteredName(account?.name) &&
     hasAction(actions, 'PUBLISH_QDN_RESOURCE');
+  // P3 item 3: for a closed group, the notice must still show when the
+  // private family is entirely unadvertised (canSendGroupChat, the generic
+  // action, is irrelevant there) — only an OPEN group's notice still gates on
+  // canSendGroupChat.
   const showGroupComposerNotice =
     canUseSelectedAccount &&
-    canSendGroupChat &&
     isRegularSelectedGroup &&
-    !canPostInSelectedGroup;
+    !canPostInSelectedGroup &&
+    (selectedGroup?.isOpen === false || canSendGroupChat);
   const groupComposerNotice =
-    memberGroups.phase === 'error'
-      ? t('hint.groupMembershipUnavailable')
-      : !isSelectedGroupMembershipConfirmed
-        ? t('hint.groupMembershipChecking')
-        : t('hint.groupJoinToPost');
+    isRegularSelectedGroup && selectedGroup?.isOpen === false && !canSendPrivateGroupChat
+      ? t('action.closedGroupSendUnsupported')
+      : memberGroups.phase === 'error'
+        ? t('hint.groupMembershipUnavailable')
+        : !isSelectedGroupMembershipConfirmed
+          ? t('hint.groupMembershipChecking')
+          : t('hint.groupJoinToPost');
   // renderJoinGroupButton() renders a join affordance alongside this notice
   // when Home 2 advertises JOIN_GROUP on the Qortal bridge (see its call site).
-  const showQortalGroupComposerNotice = canUseQortalAccount && canSendQortalGroupChat && isSelectedQortalGroup && !canPostInSelectedQortalGroup;
+  const showQortalGroupComposerNotice =
+    canUseQortalAccount &&
+    isSelectedQortalGroup &&
+    !canPostInSelectedQortalGroup &&
+    (selectedChat.group.isOpen === true ? canSendQortalGroupChat : true);
+  // P3 item 5: a closed Qortal group is no longer unconditionally
+  // unsupported — distinguish "private family unavailable" (a real gap),
+  // "not yet joined" (general membership), and "not yet a confirmed private
+  // member" (state.isMember false even though the general join succeeded).
   const qortalGroupComposerNotice =
     isSelectedQortalGroup && selectedChat.group.isOpen !== true
-      ? t('action.closedGroupHistoryUnsupported')
+      ? !canSendQortalPrivateGroupChat
+        ? t('action.closedGroupSendUnsupported')
+        : qortalMemberGroups.phase === 'error'
+          ? t('hint.groupMembershipUnavailable')
+          : qortalMemberGroups.phase !== 'ready'
+            ? t('hint.groupMembershipChecking')
+            : !isConfirmedJoinedQortalGroup
+              ? t('hint.groupJoinToPost')
+              : t('hint.privateGroupNotMember')
       : qortalMemberGroups.phase === 'error'
       ? t('hint.groupMembershipUnavailable')
       : qortalMemberGroups.phase !== 'ready'
@@ -2996,17 +3134,39 @@ export default function App() {
       : !isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
     selectedChat?.kind === 'group' && selectedChat.group.isOpen === false && !shouldDecryptSelectedGroupMessages;
+  // P3 item 5: network-routed — a closed Qortal group now has its own read
+  // path (canReadQortalPrivateGroupChat/qortalMemberGroups/
+  // isConfirmedJoinedQortalGroup), no longer the blanket "unsupported"
+  // message every closed Qortal group showed before P3.
   const closedGroupHistoryUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
       ? accountLockedLabel
-      : !canReadPrivateGroupChat
-        ? t('action.closedGroupHistoryUnsupported')
-        : memberGroups.phase === 'error'
-          ? t('hint.groupMembershipUnavailable')
-        : !isSelectedGroupMembershipConfirmed
-          ? t('hint.groupMembershipChecking')
-          : t('hint.groupJoinToRead');
+      : selectedChat?.network === 'qortal'
+        ? !canReadQortalPrivateGroupChat
+          ? t('action.closedGroupHistoryUnsupported')
+          : qortalMemberGroups.phase === 'error'
+            ? t('hint.groupMembershipUnavailable')
+            : qortalMemberGroups.phase !== 'ready'
+              ? t('hint.groupMembershipChecking')
+              : !isConfirmedJoinedQortalGroup
+                ? t('hint.groupJoinToRead')
+                : t('hint.privateGroupNotMember')
+        : !canReadPrivateGroupChat
+          ? t('action.closedGroupHistoryUnsupported')
+          : memberGroups.phase === 'error'
+            ? t('hint.groupMembershipUnavailable')
+          : !isSelectedGroupMembershipConfirmed
+            ? t('hint.groupMembershipChecking')
+            : t('hint.groupJoinToRead');
+  // P3 item 2c: Qortal rotationRequired notice, reusing the same
+  // conversation-notice slot pattern as selectedClosedGroupHistoryUnavailable
+  // above (a <p className="muted"> line in the notices stack).
+  const selectedQortalPrivateGroupRotationNotice =
+    selectedChat?.kind === 'group' &&
+    selectedChat.network === 'qortal' &&
+    selectedChat.group.isOpen === false &&
+    selectedQortalPrivateGroupChatState?.rotationRequired === true;
   const canGroupApproval = hasAction(actions, 'GROUP_APPROVAL');
   // network !== 'qortal': DEV_GROUP_IDS/GROUP_APPROVAL are Qortium-only —
   // without this a Qortal group could coincidentally share a numeric groupId
@@ -3196,9 +3356,18 @@ export default function App() {
       const direct = isAccountUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')
         ? await getPrivateDirectActiveChats(actionList, 'qortal')
         : nextActiveChats.direct;
+      // P3 item 6: fold decrypted closed-group activity into the same
+      // `groups` array GET_ACTIVE_CHATS returns — groupActivityById and
+      // qortalGroupPreviewByGroupId both already read straight off this
+      // array, so this is the only wiring a closed group's unread/preview
+      // needs (see privateGroupActiveChats.ts's module doc).
+      const privateGroupEntries = isAccountUnlocked && hasAction(actionList, 'GET_PRIVATE_GROUP_ACTIVE_CHATS')
+        ? await getPrivateGroupActiveChats('qortal', actionList)
+        : [];
+      const groups = mergePrivateGroupActiveChats(nextActiveChats.groups ?? [], privateGroupEntries);
 
       if (qortalActiveChatsRequestGuardRef.current.isLatest(requestId)) {
-        setQortalActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct } });
+        setQortalActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct, groups } });
         persistDirects('qortal', address, direct ?? []);
       }
     } catch (error) {
@@ -3679,12 +3848,17 @@ export default function App() {
       const direct = selectedAccount.isUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')
         ? await getPrivateDirectActiveChats(actionList)
         : nextActiveChats.direct;
+      // P3 item 6: same fold as loadQortalActiveChats above.
+      const privateGroupEntries = selectedAccount.isUnlocked && hasAction(actionList, 'GET_PRIVATE_GROUP_ACTIVE_CHATS')
+        ? await getPrivateGroupActiveChats('qortium', actionList)
+        : [];
+      const groups = mergePrivateGroupActiveChats(nextActiveChats.groups ?? [], privateGroupEntries);
 
       if (!qortiumActiveChatsRequestGuardRef.current.isLatest(requestId)) {
         return;
       }
 
-      setActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct } });
+      setActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct, groups } });
       // Keep these directs listed after their messages later expire. Done here
       // (not in an effect) so the write is tied to the account just loaded.
       persistDirects('qortium', selectedAccount.address, direct ?? []);
@@ -3771,14 +3945,15 @@ export default function App() {
       return;
     }
 
-    // Qortal groups take a small, self-contained path (below): no private-
-    // group decrypt/key-recovery (not advertised on qortalRequest in this
-    // slice — see getGroupMessages), and its own activity map, so nothing
-    // here needs to change for Qortium.
+    // Qortal groups take a small, self-contained path (below), including
+    // their own private-group decrypt/key-recovery (P3 item 5 — Qortal can
+    // advertise the private-group family too now) and their own activity
+    // map, so nothing here needs to change for Qortium.
     if (chat.network === 'qortal' && chat.kind === 'group') {
       return loadQortalGroupMessages(chat, {
         quiet: options.quiet,
         sessionAccountAddress,
+        skipKeyRecovery: options.skipKeyRecovery,
       });
     }
 
@@ -3889,7 +4064,7 @@ export default function App() {
         account?.isUnlocked === true &&
         shouldDecryptPrivateGroup
       ) {
-        void recoverMissingPrivateGroupKeys(chat.group, nextMessages, account, actionList, {
+        void recoverMissingPrivateGroupKeys('qortium', chat.group, nextMessages, account, actionList, {
           quiet: options.quiet,
         });
       }
@@ -3914,14 +4089,16 @@ export default function App() {
     }
   }
 
-  // Qortal counterpart of the group-open branch of loadMessages above, minus
-  // everything that branch has to handle for Qortium and Qortal does not yet
-  // support: private-group decrypt/key-recovery and direct chat. Shares the
-  // same `messages`/`messagesChatKey`/`olderMessagesState` — only one chat
+  // Qortal counterpart of the group-open branch of loadMessages above:
+  // Qortal can now advertise the private-group family too (P3 item 5), so
+  // this attempts the same decrypt + key-recovery Qortium does — own gates,
+  // own activity map, own action list/network passed through to
+  // getGroupMessages/recoverMissingPrivateGroupKeys. Shares the same
+  // `messages`/`messagesChatKey`/`olderMessagesState` — only one chat
   // (either network) is ever open in the single chat pane at a time.
   async function loadQortalGroupMessages(
     chat: Extract<SelectedChat, { kind: 'group' }>,
-    options: { quiet?: boolean; sessionAccountAddress?: string | null } = {},
+    options: { quiet?: boolean; sessionAccountAddress?: string | null; skipKeyRecovery?: boolean } = {},
   ) {
     const chatKey = getSelectedChatKey(chat);
     const sessionAccountAddress = options.sessionAccountAddress === undefined
@@ -3945,15 +4122,27 @@ export default function App() {
       setMessages({ phase: 'loading', value: messages.value });
     }
 
+    const qortalActionList = qortalBridge.value.actions;
+    const shouldDecryptPrivateGroup =
+      chat.group.isOpen === false &&
+      shouldDecryptGroupMessages(chat.group, {
+        canReadPrivateGroupChat: hasAction(qortalActionList, 'SEARCH_PRIVATE_GROUP_CHAT_MESSAGES'),
+        isAccountUnlocked,
+        isGroupMembershipConfirmed: qortalMemberGroups.phase === 'ready',
+        isJoinedGroup: qortalMemberGroups.value.some((candidate) => candidate.groupId === chat.group.groupId),
+      });
+
     try {
-      if (chat.group.isOpen === false) {
-        // Same gate getGroupMessages applies server-side (no private-group
-        // decrypt on qortalRequest in this slice) — fail the same way here so
-        // the notice matches a closed Qortium group without that support.
+      if (chat.group.isOpen === false && !shouldDecryptPrivateGroup) {
+        // Same gate getGroupMessages applies server-side — fail the same way
+        // here so the notice matches a closed group whose host/network does
+        // not (yet, or at all) advertise private-group read support.
         throw new Error('Closed group chat reads require Qortium Home private group chat support.');
       }
 
-      const nextMessages = await getGroupMessages('qortal', chat.group, qortalBridge.value.actions, {});
+      const nextMessages = await getGroupMessages('qortal', chat.group, qortalActionList, {
+        decryptPrivate: shouldDecryptPrivateGroup,
+      });
 
       if (isStale()) {
         return;
@@ -3978,6 +4167,23 @@ export default function App() {
           loading: false,
           reachedStart: nextMessages.length < DEFAULT_LIST_LIMIT,
         });
+      }
+
+      if (
+        chat.group.isOpen === false &&
+        !options.skipKeyRecovery &&
+        isAccountUnlocked &&
+        shouldDecryptPrivateGroup &&
+        qortalAccount
+      ) {
+        void recoverMissingPrivateGroupKeys(
+          'qortal',
+          chat.group,
+          nextMessages,
+          { address: qortalAccount.address, isUnlocked: isAccountUnlocked },
+          qortalActionList,
+          { quiet: options.quiet },
+        );
       }
     } catch (error) {
       if (options.quiet || isStale()) {
@@ -4182,25 +4388,43 @@ export default function App() {
     }
   }
 
+  // P3 item 4: network-routed. Qortium semantics are unchanged (broadcast
+  // REQUEST, then an automatic RESOLVE relays whatever retained announcements
+  // this member is already entitled to — safe for every member's background
+  // poll). Qortal's REQUEST is instead a local/resource *recovery attempt*
+  // with no transaction (review/schemas-private-group-actions.md § 5) — also
+  // safe to run automatically — but Qortal's RESOLVE is administrator BUNDLE
+  // PUBLICATION: a signed, staged QDN write that must never fire
+  // automatically here (it would either fail loudly for a non-admin, or pop
+  // an unwanted signing prompt). Qortal resolve is instead the explicit
+  // handleQortalPublishGroupKey admin button below; this function never calls
+  // it automatically for network === 'qortal'.
   async function recoverMissingPrivateGroupKeys(
+    network: ChatNetwork,
     group: GroupData,
     nextMessages: ChatMessage[],
-    selectedAccount: QdnSelectedAccount,
+    selectedAccount: { address: string; isUnlocked: boolean },
     actionList: QdnAction[],
     options: { quiet?: boolean } = {},
   ) {
+    const isQortal = network === 'qortal';
     const recoveryContext = {
       accountAddress: selectedAccount.address,
-      accountRefreshGeneration: accountRefreshGenerationRef.current,
-      chatKey: `group:${group.groupId}`,
+      // Qortal has no wallet-refresh-generation concept of its own (unlike
+      // Qortium's accountRefreshGenerationRef) — a constant 0 on both sides
+      // of the comparison below makes that one check a no-op for Qortal,
+      // while accountRefreshPending/accountAddress still gate on the
+      // Qortal-specific refs.
+      accountRefreshGeneration: isQortal ? 0 : accountRefreshGenerationRef.current,
+      chatKey: getSelectedChatKey({ group, kind: 'group', network }),
       groupId: group.groupId,
     };
     const isCurrentRecovery = () =>
       isPrivateGroupRecoveryContextCurrent(recoveryContext, {
-        accountAddress: currentAccountAddressRef.current,
-        accountRefreshGeneration: accountRefreshGenerationRef.current,
-        accountRefreshPending: accountRefreshPendingRef.current,
-        joinedGroupIds: joinedIdsRef.current,
+        accountAddress: isQortal ? currentQortalAccountAddressRef.current : currentAccountAddressRef.current,
+        accountRefreshGeneration: isQortal ? 0 : accountRefreshGenerationRef.current,
+        accountRefreshPending: isQortal ? qortalAccountRefreshPendingRef.current : accountRefreshPendingRef.current,
+        joinedGroupIds: isQortal ? qortalJoinedIdsRef.current : joinedIdsRef.current,
         selectedChatKey: selectedChatKeyRef.current,
         selectedGroupId: selectedGroupIdRef.current,
       });
@@ -4226,7 +4450,13 @@ export default function App() {
     }
 
     const canRequestPrivateGroupChatKey = hasAction(actionList, 'REQUEST_PRIVATE_GROUP_CHAT_KEY');
-    const canResolvePrivateGroupChatKeyRequests = hasAction(actionList, 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS');
+    // Qortal's RESOLVE is admin-only bundle publication — never automatic
+    // here (see the function doc above); `canResolvePrivateGroupChatKeyRequests`
+    // therefore stays false for Qortal regardless of advertisement, which
+    // also keeps shouldResolveKeyRequests (and the automatic resolve call
+    // below) Qortium-only.
+    const canResolvePrivateGroupChatKeyRequests =
+      !isQortal && hasAction(actionList, 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS');
     const newKeyRequests = canRequestPrivateGroupChatKey
       ? missingKeyRequests.filter((request) => {
           const key = getPrivateGroupKeyRecoveryKey(selectedAccount.address, request);
@@ -4234,7 +4464,7 @@ export default function App() {
           return !requestedPrivateGroupKeysRef.current.has(key);
         })
       : [];
-    const resolveKey = `${selectedAccount.address}:${group.groupId}`;
+    const resolveKey = `${network}:${selectedAccount.address}:${group.groupId}`;
     const shouldResolveKeyRequests =
       canResolvePrivateGroupChatKeyRequests &&
       (newKeyRequests.length > 0 || !resolvedPrivateGroupKeyRequestsRef.current.has(resolveKey));
@@ -4253,6 +4483,13 @@ export default function App() {
     setPrivateGroupKeyError('');
 
     try {
+      // Qortal's REQUEST_PRIVATE_GROUP_CHAT_KEY resolves with
+      // {kind:'recovery', recovered}; a `recovered: true` outcome means the
+      // key was recovered locally with no admin action required, so the
+      // status line and refresh below can report success immediately rather
+      // than the generic "requested" wording.
+      let recoveredOnQortal = false;
+
       for (const request of newKeyRequests) {
         if (!isCurrentRecovery()) {
           return;
@@ -4260,9 +4497,14 @@ export default function App() {
         requestedPrivateGroupKeysRef.current.add(
           getPrivateGroupKeyRecoveryKey(selectedAccount.address, request),
         );
-        await requestPrivateGroupChatKey(request, actionList);
+
+        const outcome = await requestPrivateGroupChatKey(request, actionList, network);
+
         if (!isCurrentRecovery()) {
           return;
+        }
+        if (outcome.kind === 'recovery' && outcome.recovered === true) {
+          recoveredOnQortal = true;
         }
       }
 
@@ -4271,7 +4513,7 @@ export default function App() {
           return;
         }
         resolvedPrivateGroupKeyRequestsRef.current.add(resolveKey);
-        await resolvePrivateGroupChatKeyRequests(group.groupId, actionList);
+        await resolvePrivateGroupChatKeyRequests(group.groupId, actionList, 20, network);
         if (!isCurrentRecovery()) {
           return;
         }
@@ -4280,7 +4522,23 @@ export default function App() {
       if (!isCurrentRecovery()) {
         return;
       }
-      if (newKeyRequests.length > 0) {
+      if (isQortal && recoveredOnQortal) {
+        setPrivateGroupKeyStatus(t('status.privateGroupKey.recoveredQortal'));
+      } else if (isQortal && newKeyRequests.length > 0) {
+        // Recovery was attempted but the key is still missing: hint that an
+        // admin must publish it, but only when the per-chat private state
+        // (fetched separately — see the state effect above) confirms this
+        // account is actually a relevant member; otherwise fall back to the
+        // generic "requested" wording rather than asserting a membership
+        // fact that has not loaded yet.
+        const stateKey = getPrivateGroupChatStateKey(network, group.groupId);
+        const state = privateGroupChatStateByKeyRef.current.get(stateKey)?.value ?? null;
+        const isRelevantMember = state && isQortalPrivateGroupChatState(state) ? state.isMember : false;
+
+        setPrivateGroupKeyStatus(
+          isRelevantMember ? t('status.privateGroupKey.missingAskAdmin') : t('status.privateGroupKey.requested'),
+        );
+      } else if (newKeyRequests.length > 0) {
         setPrivateGroupKeyStatus(t('status.privateGroupKey.requested'));
       } else if (shouldResolveKeyRequests) {
         setPrivateGroupKeyStatus(t('status.privateGroupKey.recoveryChecked'));
@@ -4289,7 +4547,7 @@ export default function App() {
       if (!isCurrentRecovery()) {
         return;
       }
-      await loadMessages({ group, kind: 'group' }, actionList, {
+      await loadMessages({ group, kind: 'group', network }, actionList, {
         accountUnlocked: selectedAccount.isUnlocked,
         quiet: true,
         skipKeyRecovery: true,
@@ -4304,6 +4562,50 @@ export default function App() {
       setPrivateGroupKeyError(
         getBridgeErrorMessage(error, t('status.loadingError.privateGroupKeyRecovery'), t),
       );
+    }
+  }
+
+  // P3 item 4: explicit Qortal admin affordance for RESOLVE_PRIVATE_GROUP_
+  // CHAT_KEY_REQUESTS — administrator bundle publication (a signed, staged
+  // QDN write) — so unlike Qortium's automatic background resolve, this only
+  // ever runs from a deliberate click (see recoverMissingPrivateGroupKeys'
+  // doc for why it is never automatic). NODE_CAPABILITY_MISSING (QDN staging
+  // denied/unavailable) surfaces through the same getBridgeErrorMessage/
+  // getCodedBridgeErrorMessage mapping every other bridge error already uses.
+  async function handleQortalPublishGroupKey(group: GroupData) {
+    if (qortalPrivateGroupResolvePending) {
+      return;
+    }
+
+    const chatKey = getSelectedChatKey({ group, kind: 'group', network: 'qortal' });
+
+    setQortalPrivateGroupResolvePending(true);
+    setPrivateGroupKeyError('');
+    setPrivateGroupKeyStatus(t('status.privateGroupKey.publishing'));
+
+    try {
+      await resolvePrivateGroupChatKeyRequests(group.groupId, qortalBridge.value.actions, 20, 'qortal');
+
+      if (selectedChatKeyRef.current !== chatKey) {
+        return;
+      }
+
+      setPrivateGroupKeyStatus(t('status.privateGroupKey.published'));
+
+      void loadMessages({ group, kind: 'group', network: 'qortal' }, qortalBridge.value.actions, {
+        accountUnlocked: isAccountUnlocked,
+        quiet: true,
+        skipKeyRecovery: true,
+      });
+    } catch (error) {
+      if (selectedChatKeyRef.current !== chatKey) {
+        return;
+      }
+
+      setPrivateGroupKeyStatus('');
+      setPrivateGroupKeyError(getBridgeErrorMessage(error, t('status.loadingError.privateGroupKeyRecovery'), t));
+    } finally {
+      setQortalPrivateGroupResolvePending(false);
     }
   }
 
@@ -4535,9 +4837,14 @@ export default function App() {
     });
   }
 
+  // `isPrivate` is captured HERE, once, from the selected group's `isOpen`
+  // field — this is the P3 safety-routing flag (pendingSends.ts). It is never
+  // re-derived from live group state later at dispatch time, which would be
+  // a stale-lookup hazard (the group could open/close between queueing and
+  // the actual bridge call).
   function pendingSendTargetFor(chat: SelectedChat): PendingSendTarget {
     return chat.kind === 'group'
-      ? { groupId: chat.group.groupId, kind: 'group', network: chat.network }
+      ? { groupId: chat.group.groupId, isPrivate: chat.group.isOpen === false, kind: 'group', network: chat.network }
       : { address: chat.direct.address, kind: 'direct', network: chat.network };
   }
 
@@ -4546,6 +4853,27 @@ export default function App() {
   // never off the other network's actions.
   function getNetworkActions(network: ChatNetwork) {
     return network === 'qortal' ? qortalBridge.value.actions : actions;
+  }
+
+  // Current per-chat GET_PRIVATE_GROUP_CHAT_STATE snapshot for a closed
+  // group, keyed by (network, groupId) — see the fetch effect below. Read via
+  // a ref (not the state value directly) because dispatchChatSend/Revision
+  // run from inside runPendingSend/runPendingRevision, which can fire well
+  // after the composer that queued them last re-rendered; this is a soft,
+  // best-effort cap (unlike `isPrivate` above, staleness here is not a safety
+  // hazard — an over/under-estimated cap is still enforced authoritatively by
+  // Home/Core server-side).
+  function getPrivateGroupMaxPlaintextBytesFor(network: ChatNetwork, target: PendingSendTarget) {
+    if (target.kind !== 'group' || !target.isPrivate || network !== 'qortium') {
+      // Qortal's cap is fixed and enforced by coreApi regardless of what is
+      // passed here (assertPrivateGroupPlaintextByteLimit) — no lookup needed.
+      return undefined;
+    }
+
+    const key = getPrivateGroupChatStateKey(network, target.groupId);
+    const state = privateGroupChatStateByKeyRef.current.get(key)?.value ?? null;
+
+    return getPrivateGroupComposerMaxPlaintextBytes(network, state);
   }
 
   function setNetworkJournalEntries(network: ChatNetwork, entries: PendingBridgeTransactionEntry[]) {
@@ -4626,76 +4954,26 @@ export default function App() {
     }
   }
 
-  // New messages and replies (kind: 'message') always ride the generic
-  // SEND_CHAT_MESSAGE / SEND_DIRECT_CHAT_MESSAGE envelope — there is no
-  // exact-action alternative for a brand-new message, only for revisions.
-  function dispatchChatSendEntry(entry: Pick<PendingSend, 'chatReference' | 'content' | 'contentState' | 'kind' | 'target' | 'text'>) {
+  // Routing (open vs closed group) lives in chatDispatch.ts, tested there
+  // against the real coreApi wrappers with only the transport mocked (see
+  // chatDispatch.test.ts's safety-invariant coverage) — these two thin
+  // wrappers just supply this chat's network action list and (for a closed
+  // Qortium group) the currently-known plaintext cap from the per-chat
+  // private-group state store below.
+  function dispatchChatSend(entry: Pick<PendingSend, 'chatReference' | 'content' | 'contentState' | 'kind' | 'target' | 'text'>) {
     const network = entry.target.network ?? 'qortium';
-    const networkActions = getNetworkActions(network);
 
-    if (entry.kind === 'reaction' && entry.chatReference && typeof entry.content === 'string' && typeof entry.contentState === 'boolean') {
-      const content = entry.content;
-      const contentState = entry.contentState;
-      const chatReference = entry.chatReference;
-
-      if (entry.target.kind === 'group') {
-        return sendChatReaction(network, entry.target.groupId, chatReference, content, contentState, networkActions);
-      }
-
-      // Direct reactions have no generic-envelope fallback family member of
-      // their own to check individually — reuse the plain SEND_DIRECT_CHAT_MESSAGE
-      // envelope (today's legacy behavior) when the exact action is not
-      // advertised. Called with no network/actions (today's exact 3-arg call)
-      // so it always takes the legacy qdnRequest path — never sendDirectChatMessage's
-      // own exact-action branch, which silently drops chatReference and would
-      // turn this into a brand-new message instead of a revision.
-      return hasAction(networkActions, 'SEND_DIRECT_CHAT_REACTION')
-        ? sendDirectChatReaction(network, entry.target.address, chatReference, content, contentState, networkActions)
-        : sendDirectChatMessage(entry.target.address, entry.text, chatReference);
-    }
-
-    // A direct entry carrying a chatReference is always a revision envelope;
-    // the exact SEND_DIRECT_CHAT_MESSAGE action silently drops chatReference
-    // (initial sends forbid it), so such an entry must never reach that
-    // branch — keep it on the legacy 3-arg path unconditionally.
-    return entry.target.kind === 'group'
-      ? sendChatMessage(network, entry.target.groupId, entry.text, entry.chatReference)
-      : entry.chatReference
-        ? sendDirectChatMessage(entry.target.address, entry.text, entry.chatReference)
-        : sendDirectChatMessage(entry.target.address, entry.text, undefined, network, networkActions);
+    return dispatchChatSendEntry(entry, getNetworkActions(network), {
+      privateGroupMaxPlaintextBytes: getPrivateGroupMaxPlaintextBytesFor(network, entry.target),
+    });
   }
 
-  // Group edits/deletes route through the exact SEND_CHAT_EDIT/DELETE action
-  // when advertised, else the same generic SEND_CHAT_MESSAGE + chatReference
-  // envelope Chat has always sent (still valid — see qortalRequest.ts's
-  // removed blanket chatReference rejection). Direct edits/deletes have no
-  // such fallback (item B's wrappers throw when unadvertised): the composer-
-  // level canReviseDirectChat gate is what keeps this branch from firing
-  // against an unadvertised direct bridge in the first place.
-  function dispatchChatRevisionEntry(entry: Pick<PendingRevision, 'chatReference' | 'kind' | 'repliedTo' | 'target' | 'text'>) {
+  function dispatchChatRevision(entry: Pick<PendingRevision, 'chatReference' | 'kind' | 'repliedTo' | 'target' | 'text'>) {
     const network = entry.target.network ?? 'qortium';
-    const networkActions = getNetworkActions(network);
 
-    if (entry.target.kind === 'group') {
-      return entry.kind === 'edit'
-        ? sendChatEdit(network, entry.target.groupId, entry.text, entry.chatReference, networkActions)
-        : sendChatDelete(network, entry.target.groupId, entry.chatReference, networkActions, entry.repliedTo);
-    }
-
-    // Both fallbacks below call sendDirectChatMessage with no network/actions
-    // (today's exact 3-arg call) so they always take the legacy qdnRequest
-    // path — never sendDirectChatMessage's own exact-action branch, which
-    // silently drops chatReference and would turn this into a brand-new
-    // message instead of a revision (see the reaction fallback's comment above).
-    if (entry.kind === 'edit') {
-      return hasAction(networkActions, 'SEND_DIRECT_CHAT_EDIT')
-        ? sendDirectChatEdit(network, entry.target.address, entry.text, entry.chatReference, networkActions)
-        : sendDirectChatMessage(entry.target.address, entry.text, entry.chatReference);
-    }
-
-    return hasAction(networkActions, 'SEND_DIRECT_CHAT_DELETE')
-      ? sendDirectChatDelete(network, entry.target.address, entry.chatReference, networkActions)
-      : sendDirectChatMessage(entry.target.address, entry.text, entry.chatReference);
+    return dispatchChatRevisionEntry(entry, getNetworkActions(network), {
+      privateGroupMaxPlaintextBytes: getPrivateGroupMaxPlaintextBytesFor(network, entry.target),
+    });
   }
 
   function isCurrentWritableAccount(address: string) {
@@ -4779,7 +5057,7 @@ export default function App() {
     const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
-      const result = await dispatchChatSendEntry(entry);
+      const result = await dispatchChatSend(entry);
 
       if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
@@ -4884,7 +5162,7 @@ export default function App() {
     const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
-      const result = await dispatchChatRevisionEntry(entry);
+      const result = await dispatchChatRevision(entry);
 
       if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
@@ -8203,6 +8481,91 @@ export default function App() {
     bridge.value.transport,
   ]);
 
+  // P3 item 2: GET_PRIVATE_GROUP_CHAT_STATE for the selected closed group.
+  // Fetched alongside (not blocking) message reads, and refetched on
+  // group/account/bridge change via the dependency list below. A fetch
+  // failure degrades to "no extra signal" rather than an error banner — the
+  // composer/notices that read this state already have their own fallback
+  // (generic membership gates, no client-side cap) when it is null.
+  useEffect(() => {
+    if (!(selectedChat?.kind === 'group' && selectedChat.group.isOpen === false)) {
+      return undefined;
+    }
+
+    const network = selectedChat.network ?? 'qortium';
+    const groupId = selectedChat.group.groupId;
+    const key = getPrivateGroupChatStateKey(network, groupId);
+    const networkActions = getNetworkActions(network);
+
+    if (!hasAction(networkActions, 'GET_PRIVATE_GROUP_CHAT_STATE')) {
+      setPrivateGroupChatStateByKey((current) => {
+        if (!current.has(key)) {
+          return current;
+        }
+
+        const next = new Map(current);
+
+        next.delete(key);
+        return next;
+      });
+      return undefined;
+    }
+
+    const requestId = privateGroupChatStateRequestGuardRef.current.begin();
+
+    setPrivateGroupChatStateByKey((current) => {
+      const next = new Map(current);
+
+      next.set(key, { phase: 'loading', value: current.get(key)?.value ?? null });
+      return next;
+    });
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const state = await getPrivateGroupChatState(network, groupId, networkActions);
+
+        if (cancelled || !privateGroupChatStateRequestGuardRef.current.isLatest(requestId)) {
+          return;
+        }
+
+        setPrivateGroupChatStateByKey((current) => {
+          const next = new Map(current);
+
+          next.set(key, { phase: 'ready', value: state });
+          return next;
+        });
+      } catch (error) {
+        if (cancelled || !privateGroupChatStateRequestGuardRef.current.isLatest(requestId)) {
+          return;
+        }
+
+        setPrivateGroupChatStateByKey((current) => {
+          const next = new Map(current);
+
+          next.set(key, {
+            error: getBridgeErrorMessage(error, t('status.loadingError.privateGroupState'), t),
+            phase: 'error',
+            value: current.get(key)?.value ?? null,
+          });
+          return next;
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedChatKey,
+    selectedChat?.kind === 'group' ? selectedChat.group.isOpen : undefined,
+    account?.address,
+    qortalAccount?.address,
+    actionsKey,
+    qortalBridge.value.actions.join('\n'),
+  ]);
+
   useEffect(() => {
     if (!account) {
       return undefined;
@@ -9184,6 +9547,24 @@ export default function App() {
               {writeError ? <p className="error">{writeError}</p> : null}
               {privateGroupKeyError ? <p className="error">{privateGroupKeyError}</p> : null}
               {privateGroupKeyStatus ? <p className="muted">{privateGroupKeyStatus}</p> : null}
+              {selectedQortalPrivateGroupRotationNotice ? (
+                <p className="muted">{t('hint.privateGroupRotationRequired')}</p>
+              ) : null}
+              {isSelectedQortalGroup &&
+              selectedChat.group.isOpen === false &&
+              canUseQortalAccount &&
+              hasAction(qortalBridge.value.actions, 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS') ? (
+                <button
+                  className="button button--secondary"
+                  disabled={qortalPrivateGroupResolvePending}
+                  onClick={() => void handleQortalPublishGroupKey(selectedChat.group)}
+                  type="button"
+                >
+                  {qortalPrivateGroupResolvePending
+                    ? t('status.privateGroupKey.publishing')
+                    : t('button.privateGroup.publishKey')}
+                </button>
+              ) : null}
               {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
               {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
               {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
@@ -9356,6 +9737,21 @@ export default function App() {
               onSubmit={(event) => void handleSendMessage(event)}
               onToggleEmoji={() => setComposerEmojiOpen((current) => !current)}
               processingLabel={t('status.attachment.processing')}
+              // P3 item 2a: a closed group's visible byte counter, reflecting
+              // the per-chain plaintext cap; null for every other chat (open
+              // group/direct), same as before this cap existed.
+              remainingBytesLabel={
+                typeof selectedGroupPrivatePlaintextMaxBytes === 'number'
+                  ? t('label.composer.privateGroupBytesRemaining', {
+                      max: String(selectedGroupPrivatePlaintextMaxBytes),
+                      remaining: String(Math.max(0, selectedGroupPrivatePlaintextMaxBytes - draftByteLength)),
+                    })
+                  : null
+              }
+              remainingBytesOverLimit={
+                typeof selectedGroupPrivatePlaintextMaxBytes === 'number' &&
+                draftByteLength > selectedGroupPrivatePlaintextMaxBytes
+              }
               removeAttachmentLabel={t('label.attachment.remove')}
               searchLabel={t('label.search')}
               sendLabel={t('button.send')}

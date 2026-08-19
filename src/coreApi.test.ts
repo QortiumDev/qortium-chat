@@ -44,12 +44,17 @@ import {
   getQortalUserAccount,
   getTransactionStatus,
   getPrivateDirectActiveChats,
+  getPrivateGroupActiveChats,
+  getPrivateGroupChatState,
+  isQortalPrivateGroupChatState,
+  isQortiumPrivateGroupChatState,
   joinGroup,
   leaveGroup,
   requestPrivateGroupChatKey,
   RESOLVE_IDENTITIES_LIMIT,
   resolveIdentities,
   resolvePrivateGroupChatKeyRequests,
+  rotatePrivateGroupChatKey,
   searchGroups,
   sendChatDelete,
   sendChatEdit,
@@ -59,6 +64,10 @@ import {
   sendDirectChatEdit,
   sendDirectChatMessage,
   sendDirectChatReaction,
+  sendPrivateGroupChatDelete,
+  sendPrivateGroupChatEdit,
+  sendPrivateGroupChatMessage,
+  sendPrivateGroupChatReaction,
   startMinting,
 } from './coreApi';
 
@@ -1754,6 +1763,464 @@ describe('Core API path builders', () => {
         await joinGroup(3);
         expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'JOIN_GROUP', groupId: 3 });
         expect(qortalRequestMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('private group chat (P3a)', () => {
+      describe('reads', () => {
+        it('returns [] for active chats when the action is not advertised, without calling either bridge', async () => {
+          await expect(getPrivateGroupActiveChats('qortium', [])).resolves.toEqual([]);
+          expect(qdnRequestMock).not.toHaveBeenCalled();
+          expect(qortalRequestMock).not.toHaveBeenCalled();
+        });
+
+        it('builds the active-chats request and routes it per network', async () => {
+          qdnRequestMock.mockResolvedValueOnce([
+            { groupId: 8, status: 'MISSING_KEY' },
+            { groupId: 9, status: 'NO_MESSAGES' },
+          ]);
+
+          await expect(
+            getPrivateGroupActiveChats('qortium', ['GET_PRIVATE_GROUP_ACTIVE_CHATS']),
+          ).resolves.toEqual([
+            { groupId: 8, status: 'MISSING_KEY' },
+            { groupId: 9, status: 'NO_MESSAGES' },
+          ]);
+          expect(qdnRequestMock).toHaveBeenCalledWith({
+            action: 'GET_PRIVATE_GROUP_ACTIVE_CHATS',
+            encoding: 'BASE64',
+            limit: 100,
+          });
+
+          qortalRequestMock.mockResolvedValueOnce([{ groupId: 11, status: 'NO_MESSAGES' }]);
+          await getPrivateGroupActiveChats('qortal', ['GET_PRIVATE_GROUP_ACTIVE_CHATS']);
+          expect(qortalRequestMock).toHaveBeenCalledWith({
+            action: 'GET_PRIVATE_GROUP_ACTIVE_CHATS',
+            encoding: 'BASE64',
+            limit: 100,
+          });
+        });
+
+        it('throws a clear error for chat state when the action is not advertised', async () => {
+          await expect(getPrivateGroupChatState('qortium', 8, [])).rejects.toThrow(
+            'Private group chat state requires Qortium Home private group chat support.',
+          );
+          expect(qdnRequestMock).not.toHaveBeenCalled();
+        });
+
+        it('builds the chat-state request and routes it per network', async () => {
+          qdnRequestMock.mockResolvedValueOnce({
+            allPublicKeysKnown: true,
+            available: true,
+            epochId: 'epoch-a',
+            groupId: 8,
+            isOpen: false,
+            maxMessagePlaintextBytes: 4096,
+            memberCount: 2,
+            memberPublicKeys: ['key-a', 'key-b'],
+            qpgcVersion: 1,
+          });
+
+          await expect(getPrivateGroupChatState('qortium', 8, ['GET_PRIVATE_GROUP_CHAT_STATE'])).resolves.toMatchObject(
+            { qpgcVersion: 1 },
+          );
+          expect(qdnRequestMock).toHaveBeenCalledWith({
+            action: 'GET_PRIVATE_GROUP_CHAT_STATE',
+            encoding: 'BASE64',
+            groupId: 8,
+          });
+
+          qortalRequestMock.mockResolvedValueOnce({
+            available: true,
+            groupId: 11,
+            groupName: 'Qortal closed',
+            isMember: true,
+            isOpen: false,
+            memberCount: 3,
+            publisherName: 'publisher',
+            qortalPrivateGroupVersion: 1,
+            recipientCount: 2,
+            resourceSignature: 'res-sig',
+            rotationRequired: false,
+          });
+
+          await expect(
+            getPrivateGroupChatState('qortal', 11, ['GET_PRIVATE_GROUP_CHAT_STATE']),
+          ).resolves.toMatchObject({ qortalPrivateGroupVersion: 1 });
+          expect(qortalRequestMock).toHaveBeenCalledWith({
+            action: 'GET_PRIVATE_GROUP_CHAT_STATE',
+            encoding: 'BASE64',
+            groupId: 11,
+          });
+        });
+
+        it('discriminates the per-chain state union with the exported type guards', () => {
+          const qpgc = {
+            allPublicKeysKnown: true as const,
+            available: true as const,
+            epochId: 'epoch-a',
+            groupId: 8,
+            isOpen: false as const,
+            maxMessagePlaintextBytes: 4096,
+            memberCount: 2,
+            memberPublicKeys: ['key-a'],
+            qpgcVersion: 1 as const,
+          };
+          const qortal = {
+            available: true,
+            groupId: 11,
+            groupName: 'Qortal closed',
+            isMember: true,
+            isOpen: false as const,
+            memberCount: 3,
+            publisherName: null,
+            qortalPrivateGroupVersion: 1 as const,
+            recipientCount: null,
+            resourceSignature: null,
+            rotationRequired: false,
+          };
+
+          expect(isQortiumPrivateGroupChatState(qpgc)).toBe(true);
+          expect(isQortiumPrivateGroupChatState(qortal)).toBe(false);
+          expect(isQortalPrivateGroupChatState(qortal)).toBe(true);
+          expect(isQortalPrivateGroupChatState(qpgc)).toBe(false);
+        });
+      });
+
+      describe('sends have no generic fallback (safety invariant)', () => {
+        it('throws instead of falling back to SEND_CHAT_MESSAGE when the exact private action is unadvertised', async () => {
+          await expect(sendPrivateGroupChatMessage('qortium', 8, 'hi')).rejects.toThrow(
+            'Private group chat sends require Qortium Home private group chat support.',
+          );
+          await expect(sendPrivateGroupChatEdit('qortium', 8, 'hi', 'orig-sig', [])).rejects.toThrow(
+            'Private group chat edits require Qortium Home private group chat support.',
+          );
+          await expect(sendPrivateGroupChatDelete('qortium', 8, 'orig-sig', [])).rejects.toThrow(
+            'Private group chat deletes require Qortium Home private group chat support.',
+          );
+          await expect(
+            sendPrivateGroupChatReaction('qortium', 8, 'orig-sig', '👍', true, []),
+          ).rejects.toThrow('Private group chat reactions require Qortium Home private group chat support.');
+
+          // No bridge call at all — not even the generic SEND_CHAT_MESSAGE a
+          // closed group's plaintext must never reach.
+          expect(qdnRequestMock).not.toHaveBeenCalled();
+          expect(qortalRequestMock).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('sends', () => {
+        it('sends a plain-text new message on both chains (no envelope, unlike edit/delete/reaction)', async () => {
+          qdnRequestMock.mockResolvedValueOnce({ signature: 'msg-sig', timestamp: 1700000000300 });
+
+          await expect(
+            sendPrivateGroupChatMessage('qortium', 8, 'hello group', ['SEND_PRIVATE_GROUP_CHAT_MESSAGE']),
+          ).resolves.toEqual({ signature: 'msg-sig', timestamp: 1700000000300 });
+          expect(qdnRequestMock).toHaveBeenCalledWith({
+            action: 'SEND_PRIVATE_GROUP_CHAT_MESSAGE',
+            groupId: 8,
+            message: 'hello group',
+          });
+
+          qortalRequestMock.mockResolvedValueOnce({ signature: 'qortal-msg-sig', timestamp: 1700000000301 });
+          await sendPrivateGroupChatMessage('qortal', 11, 'hello qortal group', [
+            'SEND_PRIVATE_GROUP_CHAT_MESSAGE',
+          ]);
+          expect(qortalRequestMock).toHaveBeenCalledWith({
+            action: 'SEND_PRIVATE_GROUP_CHAT_MESSAGE',
+            groupId: 11,
+            message: 'hello qortal group',
+          });
+        });
+
+        it('enforces the fixed 2225-byte Qortal cap, and the optional Qortium cap only when supplied', async () => {
+          await expect(
+            sendPrivateGroupChatMessage('qortal', 11, 'x'.repeat(2226), ['SEND_PRIVATE_GROUP_CHAT_MESSAGE']),
+          ).rejects.toThrow('Private group messages must be at most 2225 UTF-8 bytes on Qortal.');
+          expect(qortalRequestMock).not.toHaveBeenCalled();
+
+          qortalRequestMock.mockResolvedValueOnce({ signature: 'boundary-sig', timestamp: 1700000000302 });
+          await expect(
+            sendPrivateGroupChatMessage('qortal', 11, 'x'.repeat(2225), ['SEND_PRIVATE_GROUP_CHAT_MESSAGE']),
+          ).resolves.toMatchObject({ signature: 'boundary-sig' });
+
+          // Qortium has no fixed cap: an oversized message is allowed when no
+          // maxPlaintextBytes is supplied...
+          qdnRequestMock.mockResolvedValueOnce({ signature: 'uncapped-sig', timestamp: 1700000000303 });
+          await expect(
+            sendPrivateGroupChatMessage('qortium', 8, 'x'.repeat(5000), ['SEND_PRIVATE_GROUP_CHAT_MESSAGE']),
+          ).resolves.toMatchObject({ signature: 'uncapped-sig' });
+
+          // ...but is rejected before any bridge call once the caller supplies
+          // the cap read from GET_PRIVATE_GROUP_CHAT_STATE.
+          await expect(
+            sendPrivateGroupChatMessage('qortium', 8, 'x'.repeat(101), ['SEND_PRIVATE_GROUP_CHAT_MESSAGE'], 100),
+          ).rejects.toThrow('Private group messages must be at most 100 UTF-8 bytes.');
+        });
+
+        it('builds a plain-text edit request on Qortium and the Hub v3 edit envelope on Qortal', async () => {
+          qdnRequestMock.mockResolvedValueOnce({ signature: 'edit-sig', timestamp: 1700000000310 });
+
+          await expect(
+            sendPrivateGroupChatEdit('qortium', 8, 'fixed typo', 'orig-sig', ['SEND_PRIVATE_GROUP_CHAT_EDIT']),
+          ).resolves.toEqual({ signature: 'edit-sig', timestamp: 1700000000310 });
+          expect(qdnRequestMock).toHaveBeenCalledWith({
+            action: 'SEND_PRIVATE_GROUP_CHAT_EDIT',
+            chatReference: 'orig-sig',
+            groupId: 8,
+            message: 'fixed typo',
+          });
+
+          qortalRequestMock.mockResolvedValueOnce({ signature: 'hub-edit-sig', timestamp: 1700000000311 });
+          await sendPrivateGroupChatEdit('qortal', 11, 'fixed typo', 'orig-sig', ['SEND_PRIVATE_GROUP_CHAT_EDIT']);
+
+          const call = qortalRequestMock.mock.calls[0][0];
+
+          expect(call.action).toBe('SEND_PRIVATE_GROUP_CHAT_EDIT');
+          expect(call.groupId).toBe(11);
+          expect(call.chatReference).toBe('orig-sig');
+
+          const payload = JSON.parse(call.message);
+
+          expect(payload).toMatchObject({
+            images: [],
+            isEdited: true,
+            repliedTo: '',
+            type: 'edit',
+            version: 3,
+          });
+          expect(Object.keys(payload).sort()).toEqual(
+            ['images', 'isEdited', 'messageText', 'repliedTo', 'specialId', 'type', 'version'].sort(),
+          );
+        });
+
+        it('measures the Qortal edit cap on the built envelope, not the raw text', async () => {
+          const text = 'x'.repeat(2225);
+
+          await expect(
+            sendPrivateGroupChatEdit('qortal', 11, text, 'orig-sig', ['SEND_PRIVATE_GROUP_CHAT_EDIT']),
+          ).rejects.toThrow('Private group messages must be at most 2225 UTF-8 bytes on Qortal.');
+          expect(qortalRequestMock).not.toHaveBeenCalled();
+
+          // The identical raw text passes on Qortium, where the cap (when
+          // supplied) applies to the raw text itself.
+          qdnRequestMock.mockResolvedValueOnce({ signature: 'qortium-edit-boundary-sig', timestamp: 1700000000312 });
+          await expect(
+            sendPrivateGroupChatEdit('qortium', 8, text, 'orig-sig', ['SEND_PRIVATE_GROUP_CHAT_EDIT'], 2225),
+          ).resolves.toMatchObject({ signature: 'qortium-edit-boundary-sig' });
+        });
+
+        it('builds the Qortium JSON delete envelope (optionally carrying repliedTo) and the canonical Hub v3 empty-edit envelope for Qortal', async () => {
+          qdnRequestMock
+            .mockResolvedValueOnce({ signature: 'delete-sig', timestamp: 1700000000320 })
+            .mockResolvedValueOnce({ signature: 'delete-sig-2', timestamp: 1700000000321 });
+
+          await sendPrivateGroupChatDelete('qortium', 8, 'orig-sig', ['SEND_PRIVATE_GROUP_CHAT_DELETE']);
+          expect(qdnRequestMock).toHaveBeenNthCalledWith(1, {
+            action: 'SEND_PRIVATE_GROUP_CHAT_DELETE',
+            chatReference: 'orig-sig',
+            groupId: 8,
+            message: JSON.stringify({ message: '' }),
+          });
+
+          await sendPrivateGroupChatDelete(
+            'qortium',
+            8,
+            'orig-sig',
+            ['SEND_PRIVATE_GROUP_CHAT_DELETE'],
+            'reply-target-sig',
+          );
+          expect(qdnRequestMock).toHaveBeenNthCalledWith(2, {
+            action: 'SEND_PRIVATE_GROUP_CHAT_DELETE',
+            chatReference: 'orig-sig',
+            groupId: 8,
+            message: JSON.stringify({ message: '', repliedTo: 'reply-target-sig' }),
+          });
+
+          qortalRequestMock.mockResolvedValueOnce({ signature: 'hub-delete-sig', timestamp: 1700000000322 });
+          await sendPrivateGroupChatDelete('qortal', 11, 'orig-sig', ['SEND_PRIVATE_GROUP_CHAT_DELETE']);
+
+          const call = qortalRequestMock.mock.calls[0][0];
+          const payload = JSON.parse(call.message);
+
+          expect(call.groupId).toBe(11);
+          expect(payload).toMatchObject({
+            images: [],
+            isEdited: true,
+            messageText: '<p></p>',
+            repliedTo: '',
+            type: 'edit',
+            version: 3,
+          });
+          expect(Object.keys(payload).sort()).toEqual(
+            ['images', 'isEdited', 'messageText', 'repliedTo', 'specialId', 'type', 'version'].sort(),
+          );
+        });
+
+        it('builds the reaction envelope inside message on Qortium, and with a bounded specialId on Qortal', async () => {
+          qdnRequestMock.mockResolvedValueOnce({ signature: 'reaction-sig', timestamp: 1700000000330 });
+
+          await sendPrivateGroupChatReaction('qortium', 8, 'target-sig', '👍', true, [
+            'SEND_PRIVATE_GROUP_CHAT_REACTION',
+          ]);
+          expect(qdnRequestMock).toHaveBeenCalledWith({
+            action: 'SEND_PRIVATE_GROUP_CHAT_REACTION',
+            chatReference: 'target-sig',
+            groupId: 8,
+            message: JSON.stringify({ message: '', type: 'reaction', content: '👍', contentState: true }),
+          });
+
+          qortalRequestMock.mockResolvedValueOnce({ signature: 'hub-reaction-sig', timestamp: 1700000000331 });
+          await sendPrivateGroupChatReaction('qortal', 11, 'target-sig', '❤️', false, [
+            'SEND_PRIVATE_GROUP_CHAT_REACTION',
+          ]);
+
+          const call = qortalRequestMock.mock.calls[0][0];
+          const payload = JSON.parse(call.message);
+
+          expect(call.groupId).toBe(11);
+          expect(payload).toMatchObject({ content: '❤️', contentState: false, message: '', type: 'reaction' });
+          expect(typeof payload.specialId).toBe('string');
+          expect(payload.specialId.length).toBeGreaterThan(0);
+        });
+
+        it('rejects empty or over-length reaction content before any bridge call', async () => {
+          await expect(
+            sendPrivateGroupChatReaction('qortium', 8, 'target-sig', '', true, ['SEND_PRIVATE_GROUP_CHAT_REACTION']),
+          ).rejects.toThrow('Reaction content must be a short emoji string.');
+          expect(qdnRequestMock).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('key lifecycle', () => {
+        it('routes REQUEST_PRIVATE_GROUP_CHAT_KEY to Qortal and normalizes the local-recovery result', async () => {
+          qortalRequestMock.mockResolvedValueOnce({
+            accepted: true,
+            recovered: true,
+            resourceSignature: 'res-sig',
+          });
+
+          await expect(
+            requestPrivateGroupChatKey({ groupId: 11 }, ['REQUEST_PRIVATE_GROUP_CHAT_KEY'], 'qortal'),
+          ).resolves.toMatchObject({
+            accepted: true,
+            kind: 'recovery',
+            recovered: true,
+            resourceSignature: 'res-sig',
+          });
+          expect(qortalRequestMock).toHaveBeenCalledWith({
+            action: 'REQUEST_PRIVATE_GROUP_CHAT_KEY',
+            groupId: 11,
+          });
+          expect(qdnRequestMock).not.toHaveBeenCalled();
+        });
+
+        it('normalizes the QPGC broadcast result as kind: broadcast', async () => {
+          qdnRequestMock.mockResolvedValueOnce({ signature: 'key-req-sig', timestamp: 1700000000400 });
+
+          await expect(
+            requestPrivateGroupChatKey({ groupId: 8 }, ['REQUEST_PRIVATE_GROUP_CHAT_KEY']),
+          ).resolves.toMatchObject({ kind: 'broadcast', signature: 'key-req-sig', timestamp: 1700000000400 });
+        });
+
+        it('normalizes every documented RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS result shape', async () => {
+          // QPGC: no matching requests.
+          qdnRequestMock.mockResolvedValueOnce({ accepted: true, relayed: 0 });
+          await expect(resolvePrivateGroupChatKeyRequests(8, ['RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS'])).resolves.toMatchObject(
+            { kind: 'relay', relayed: 0, signatures: [] },
+          );
+
+          // QPGC: exactly one relayed envelope (bare {signature, timestamp}).
+          qdnRequestMock.mockResolvedValueOnce({ signature: 'relay-sig', timestamp: 1700000000410 });
+          await expect(resolvePrivateGroupChatKeyRequests(8, ['RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS'])).resolves.toMatchObject(
+            { kind: 'relay', signatures: ['relay-sig'] },
+          );
+
+          // QPGC: multiple relayed envelopes.
+          qdnRequestMock.mockResolvedValueOnce({
+            accepted: true,
+            relayed: 2,
+            results: [
+              { signature: 'relay-sig-1', timestamp: 1700000000411 },
+              { signature: 'relay-sig-2', timestamp: 1700000000412 },
+            ],
+          });
+          await expect(resolvePrivateGroupChatKeyRequests(8, ['RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS'])).resolves.toMatchObject(
+            { kind: 'relay', relayed: 2, signatures: ['relay-sig-1', 'relay-sig-2'] },
+          );
+
+          // Qortal: administrator publication.
+          qortalRequestMock.mockResolvedValueOnce({
+            accepted: true,
+            signature: 'publish-sig',
+            timestamp: 1700000000413,
+          });
+          await expect(
+            resolvePrivateGroupChatKeyRequests(11, ['RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS'], 20, 'qortal'),
+          ).resolves.toMatchObject({ kind: 'publication', signatures: ['publish-sig'] });
+          expect(qortalRequestMock).toHaveBeenCalledWith({
+            action: 'RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS',
+            groupId: 11,
+            limit: 20,
+          });
+        });
+
+        it('routes ROTATE_PRIVATE_GROUP_CHAT_KEY per network and normalizes the same result family as resolve', async () => {
+          qdnRequestMock.mockResolvedValueOnce({
+            accepted: true,
+            relayed: 1,
+            results: [{ signature: 'rotate-relay-sig', timestamp: 1700000000420 }],
+          });
+
+          await expect(
+            rotatePrivateGroupChatKey('qortium', 8, ['ROTATE_PRIVATE_GROUP_CHAT_KEY']),
+          ).resolves.toMatchObject({ kind: 'relay', signatures: ['rotate-relay-sig'] });
+          expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'ROTATE_PRIVATE_GROUP_CHAT_KEY', groupId: 8 });
+
+          qortalRequestMock.mockResolvedValueOnce({
+            accepted: true,
+            signature: 'rotate-publish-sig',
+            timestamp: 1700000000421,
+          });
+          await expect(
+            rotatePrivateGroupChatKey('qortal', 11, ['ROTATE_PRIVATE_GROUP_CHAT_KEY']),
+          ).resolves.toMatchObject({ kind: 'publication', signatures: ['rotate-publish-sig'] });
+          expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'ROTATE_PRIVATE_GROUP_CHAT_KEY', groupId: 11 });
+        });
+
+        it('throws a clear error when key-lifecycle actions are unadvertised, on either chain', async () => {
+          await expect(rotatePrivateGroupChatKey('qortium', 8, [])).rejects.toThrow(
+            'Private group chat key rotation requires Qortium Home key recovery support.',
+          );
+          expect(qdnRequestMock).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('getMissingPrivateGroupKeyRequests tolerates Qortal rows', () => {
+        it('dedupes Qortal MISSING_KEY rows (no epochId/keyId) to one bare {groupId} request per group', () => {
+          expect(
+            getMissingPrivateGroupKeyRequests(
+              [
+                { sender: 'Qa', status: 'MISSING_KEY', timestamp: 10, txGroupId: 11 },
+                { sender: 'Qb', status: 'MISSING_KEY', timestamp: 20, txGroupId: 11 },
+                { sender: 'Qc', status: 'DECRYPTED', timestamp: 30, txGroupId: 11 },
+              ],
+              11,
+            ),
+          ).toEqual([{ groupId: 11 }]);
+        });
+
+        it('keeps Qortium epochId/keyId-bearing MISSING_KEY rows distinct from bare Qortal rows in the same group', () => {
+          expect(
+            getMissingPrivateGroupKeyRequests([
+              { epochId: 'epoch-a', keyId: 'key-a', sender: 'Qa', status: 'MISSING_KEY', timestamp: 10, txGroupId: 8 },
+              { sender: 'Qb', status: 'MISSING_KEY', timestamp: 20, txGroupId: 8 },
+            ]),
+          ).toEqual([
+            { epochId: 'epoch-a', groupId: 8, keyId: 'key-a' },
+            { groupId: 8 },
+          ]);
+        });
       });
     });
 
