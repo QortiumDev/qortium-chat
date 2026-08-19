@@ -59,6 +59,12 @@ export type PendingSend = {
   readonly accountAddress: string;
   readonly chatKey: string;
   readonly chatReference?: string;
+  /** Raw reaction emoji, for kind: 'reaction' only — the exact SEND_CHAT_REACTION /
+   * SEND_DIRECT_CHAT_REACTION wrappers take the emoji + state directly rather than
+   * a pre-composed envelope; `text` (buildReactionMessageText(content, contentState))
+   * still drives the optimistic chip and the generic-envelope fallback unchanged. */
+  readonly content?: string;
+  readonly contentState?: boolean;
   readonly error?: string;
   readonly kind: PendingSendKind;
   readonly delivery: SendDeliveryState;
@@ -84,6 +90,10 @@ export type PendingRevision = {
   readonly kind: PendingRevisionKind;
   readonly delivery: SendDeliveryState;
   readonly localId: string;
+  /** The reply target the deleted/edited message itself was replying to, if any —
+   * for kind: 'delete' only, this is what sendChatDelete's exact-action path needs
+   * to compose the tombstone (the fallback envelope, `text`, already bakes it in). */
+  readonly repliedTo?: string | null;
   readonly resolvedSignature: string | null;
   readonly status: PendingSendStatus;
   readonly target: PendingSendTarget;
@@ -165,6 +175,8 @@ export function createPendingSend(input: {
   accountAddress: string;
   chatKey: string;
   chatReference?: string;
+  content?: string;
+  contentState?: boolean;
   kind: PendingSendKind;
   localId: string;
   recipient?: string | null;
@@ -180,6 +192,8 @@ export function createPendingSend(input: {
     accountAddress: input.accountAddress,
     chatKey: input.chatKey,
     chatReference: input.chatReference,
+    content: input.content,
+    contentState: input.contentState,
     kind: input.kind,
     delivery: { phase: 'pending', updatedAt: input.timestamp },
     localId: input.localId,
@@ -425,6 +439,7 @@ export function createPendingRevision(input: {
   chatReference: string;
   kind: PendingRevisionKind;
   localId: string;
+  repliedTo?: string | null;
   target: PendingSendTarget;
   text: string;
   timestamp?: number;
@@ -438,6 +453,7 @@ export function createPendingRevision(input: {
     kind: input.kind,
     delivery: { phase: 'pending', updatedAt: timestamp },
     localId: input.localId,
+    repliedTo: input.repliedTo,
     resolvedSignature: null,
     status: 'sending',
     target: input.target,

@@ -35,9 +35,11 @@ import {
   getMissingPrivateGroupKeyRequests,
   getMintingStatus,
   getNameOwnerAddress,
+  getPendingBridgeTransactions,
   getPendingGroupApprovals,
   getTransactionStatus,
   getPrivateDirectActiveChats,
+  forgetPendingBridgeTransaction,
   isChatSendRejectedError,
   leaveGroup,
   joinGroup,
@@ -45,12 +47,25 @@ import {
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
   searchGroups,
+  sendChatDelete,
+  sendChatEdit,
   sendChatMessage,
+  sendChatReaction,
+  sendDirectChatDelete,
+  sendDirectChatEdit,
   sendDirectChatMessage,
+  sendDirectChatReaction,
   startMinting,
   submitGroupApproval,
 } from './coreApi';
-import { getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
+import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
+import { getBridgeErrorCode, isPendingReconciliationRequired } from './bridgeErrors';
+import {
+  filterChatJournalEntries,
+  getForgettableJournalSignatures,
+  getJournalConversationKey,
+  shouldFetchPendingJournal,
+} from './bridgeJournal';
 import { hasLegacyQortalBridgeCandidate, hasQortalChatBridgeActions } from './qortalRequest';
 import { computeApprovalProgress, NULL_ACCOUNT_ADDRESS } from './approvalProgress';
 import {
@@ -208,11 +223,7 @@ import {
   getGroupMemberAddress,
   getGroupMemberRegisteredName,
 } from './groupMembers';
-import {
-  isPublicNodePrivateGroupKeyRecoveryUnsupported,
-  isPublicNodeSendUnsupported,
-  shouldDecryptGroupMessages,
-} from './groupAccess';
+import { shouldDecryptGroupMessages } from './groupAccess';
 import { isAlreadyGroupMemberError } from './groupJoin';
 import {
   fetchAccountAvatar,
@@ -249,6 +260,7 @@ import type {
   MintingStatus,
   AsyncState,
   PendingApprovalTransaction,
+  PendingBridgeTransactionEntry,
   QdnAction,
   QdnSelectedAccount,
   TrackedTransaction,
@@ -266,6 +278,7 @@ const emptyApprovalVotes: GroupApprovalVote[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
 const emptyInvites: GroupInvite[] = [];
 const emptyPendingSends: PendingSend[] = [];
+const emptyJournalEntries: PendingBridgeTransactionEntry[] = [];
 // The 30s sidebar activity sweeps only need the latest real (non-reaction)
 // message timestamp per chat, not a full transcript page — a small window cuts
 // each probe's payload ~10x. Deep enough that a burst of reactions rarely
@@ -335,7 +348,51 @@ function getPrivateGroupKeyRecoveryKey(accountAddress: string, request: PrivateG
   return `${accountAddress}:${request.groupId}:${request.epochId ?? ''}:${request.keyId ?? ''}`;
 }
 
+// Coded bridge errors (Home 2's structured `code` — see bridgeErrors.ts) take
+// precedence over message-string matching below, which stays as the fallback
+// for legacy hosts that only ever throw a plain Error. USER_CANCELLED returns
+// '' (quiet, no banner): the user deliberately dismissed Home's prompt, so
+// showing an error for their own choice is not useful feedback.
+function getCodedBridgeErrorMessage(code: string, t: TranslateFunction): string | null {
+  switch (code) {
+    case 'NODE_CAPABILITY_MISSING':
+      return t('status.bridge.nodeCapabilityMissing');
+    case 'ROUTE_UNAVAILABLE':
+      return t('status.bridge.routeUnavailable');
+    case 'ACCOUNT_LOCKED':
+      return t('status.bridge.accountLocked');
+    case 'NOT_GROUP_MEMBER':
+      return t('status.bridge.notGroupMember');
+    case 'MISSING_RECIPIENT_PUBLIC_KEY':
+      return t('status.bridge.missingRecipientPublicKey');
+    case 'MISSING_GROUP_KEY':
+      return t('status.bridge.missingGroupKey');
+    case 'PENDING_TRANSACTION_RECONCILIATION_REQUIRED':
+      return t('status.bridge.pendingReconciliationRequired');
+    case 'VALIDATION_FAILED':
+      return t('status.bridge.validationFailed');
+    case 'STALE_CONTEXT':
+      return t('status.bridge.staleContext');
+    case 'HOME_BRIDGE_ERROR':
+      return t('status.bridge.generic');
+    case 'USER_CANCELLED':
+      return '';
+    default:
+      return null;
+  }
+}
+
 function getBridgeErrorMessage(error: unknown, fallback: string, t: TranslateFunction) {
+  const code = getBridgeErrorCode(error);
+
+  if (code) {
+    const coded = getCodedBridgeErrorMessage(code, t);
+
+    if (coded !== null) {
+      return coded;
+    }
+  }
+
   const message = getErrorMessage(error, fallback).replace(
     /^Error invoking remote method 'qdn-app:request': Error: /,
     '',
@@ -1247,6 +1304,7 @@ export default function App() {
   const homeV2AppTab = isHomeV2AppTab(window.location.search);
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
+    host: 'browser-dev',
     isHomeBridge: false,
     isUsingPublicNode: false,
     transport: 'browser-dev',
@@ -1265,6 +1323,11 @@ export default function App() {
   const [groupDiscoveries, setGroupDiscoveries] =
     useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
+  // Home 2's restart-safe pending-transaction journal (item D — see
+  // bridgeJournal.ts). Raw fetch results, one array per network, mirroring
+  // every other per-network state in this file (bridge/qortalBridge,
+  // account/qortalAccount, ...) rather than a single network-keyed map.
+  const [journalEntries, setJournalEntries] = useState<PendingBridgeTransactionEntry[]>(emptyJournalEntries);
   // Qortal keeps its chain-specific bridge/account state separate, while the
   // rendered group rows are normalized later into the same source-qualified
   // conversation model as Qortium. Home 2 supplies window.qortalRequest;
@@ -1274,6 +1337,7 @@ export default function App() {
   const qortalAvailableRef = useRef(false);
   const [qortalBridge, setQortalBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
+    host: 'browser-dev',
     isHomeBridge: false,
     isUsingPublicNode: false,
     transport: 'browser-dev',
@@ -1284,10 +1348,11 @@ export default function App() {
   const [qortalGroups, setQortalGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   // Groups the connected Qortal account has actually joined — Core rejects a
   // CHAT_MESSAGE to a group the sender has not joined (mirrors canPostInSelectedGroup
-  // below), and there is no JOIN_GROUP bridge action for Qortal in this slice to
-  // fix that from inside the app, so this only gates the composer.
+  // below). Also backs the Qortal join/leave affordance's membership check
+  // (isConfirmedJoinedQortalGroup / isJoinableQortalGroup).
   const [qortalMemberGroups, setQortalMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [qortalActiveChats, setQortalActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
+  const [qortalJournalEntries, setQortalJournalEntries] = useState<PendingBridgeTransactionEntry[]>(emptyJournalEntries);
   const [qortalGroupDiscoveries, setQortalGroupDiscoveries] =
     useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
   const [qortalSearch, setQortalSearch] = useState('');
@@ -1827,11 +1892,20 @@ export default function App() {
     () => new Set(accountJoinRequests.value.map((request) => request.groupId)),
     [accountJoinRequests.value],
   );
+  // Scoped to (transaction.network ?? 'qortium') === 'qortium' — a same-
+  // numeric-id Qortal join/leave tracked below must never make a Qortium
+  // group read as pending here, and vice versa (pendingTrackedQortalJoin/
+  // LeaveGroupIds below).
   const pendingTrackedJoinGroupIds = useMemo(
     () =>
       new Set(
         Object.values(trackedTransactions)
-          .filter((transaction) => transaction.action === 'join' && transaction.phase === 'pending')
+          .filter(
+            (transaction) =>
+              transaction.action === 'join' &&
+              transaction.phase === 'pending' &&
+              (transaction.network ?? 'qortium') === 'qortium',
+          )
           .map((transaction) => transaction.groupId),
       ),
     [trackedTransactions],
@@ -1840,7 +1914,34 @@ export default function App() {
     () =>
       new Set(
         Object.values(trackedTransactions)
-          .filter((transaction) => transaction.action === 'leave' && transaction.phase === 'pending')
+          .filter(
+            (transaction) =>
+              transaction.action === 'leave' &&
+              transaction.phase === 'pending' &&
+              (transaction.network ?? 'qortium') === 'qortium',
+          )
+          .map((transaction) => transaction.groupId),
+      ),
+    [trackedTransactions],
+  );
+  const pendingTrackedQortalJoinGroupIds = useMemo(
+    () =>
+      new Set(
+        Object.values(trackedTransactions)
+          .filter(
+            (transaction) => transaction.action === 'join' && transaction.phase === 'pending' && transaction.network === 'qortal',
+          )
+          .map((transaction) => transaction.groupId),
+      ),
+    [trackedTransactions],
+  );
+  const pendingTrackedQortalLeaveGroupIds = useMemo(
+    () =>
+      new Set(
+        Object.values(trackedTransactions)
+          .filter(
+            (transaction) => transaction.action === 'leave' && transaction.phase === 'pending' && transaction.network === 'qortal',
+          )
           .map((transaction) => transaction.groupId),
       ),
     [trackedTransactions],
@@ -2413,7 +2514,7 @@ export default function App() {
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
-  const canSendDirectChat = canSendGroupChat;
+  const canSendDirectChat = hasAction(actions, 'SEND_DIRECT_CHAT_MESSAGE');
   const isAccountUnlocked = account?.isUnlocked === true;
   const canUseSelectedAccount =
     !!account && !accountRefreshPending && (isAccountUnlocked || canRequestUnlock);
@@ -2450,12 +2551,13 @@ export default function App() {
   const hasPendingJoinRequest = selectedGroupId !== null && pendingJoinGroupIds.has(selectedGroupId);
   const hasPendingJoinTransaction = selectedGroupId !== null && pendingTrackedJoinGroupIds.has(selectedGroupId);
   const hasPendingLeaveTransaction = selectedGroupId !== null && pendingTrackedLeaveGroupIds.has(selectedGroupId);
-  // network !== 'qortal': JOIN_GROUP is not in the Qortal bridge slice at all
-  // (see docs/HOME_V2_BRIDGE_COMPATIBILITY.md in qortium-home) — without this,
-  // isSelectedGroupMembershipConfirmed's Qortium-only !isRegularSelectedGroup
-  // shortcut (true for any non-general chat network doesn't recognize) would
-  // make a Qortal group look "joinable", and clicking Join would fire a
-  // Qortium JOIN_GROUP request against a Qortal groupId.
+  // network !== 'qortal': this is the Qortium-only derivation (mirrored, not
+  // merged, by isJoinableQortalGroup below) — isSelectedGroupMembershipConfirmed's
+  // !isRegularSelectedGroup shortcut is itself Qortium-scoped, so without this
+  // guard a Qortal group could read as "joinable" here and a Join click would
+  // fire a Qortium JOIN_GROUP request against a Qortal groupId. Home 2 does
+  // advertise JOIN_GROUP/LEAVE_GROUP on the Qortal bridge now — that path is
+  // handled separately, never by relaxing this guard.
   const isJoinableGroup =
     selectedGroupId !== null &&
     selectedGroupId > 0 &&
@@ -2491,9 +2593,10 @@ export default function App() {
   // Chat 2.0 slice 2: Qortal composer gating. Mirrors the Qortium block above
   // (canPostInSelectedGroup / canComposeMessage / ...) but against the Qortal
   // bridge/account/membership — Core rejects a CHAT_MESSAGE to a group the
-  // sender has not joined on Qortal too, and there is no JOIN_GROUP bridge
-  // action there in this slice to fix that from inside the app, so this only
-  // ever gates the composer (no join affordance — see qortalGroupComposerNotice).
+  // sender has not joined on Qortal too, so this gates the composer; the join
+  // affordance itself is derived separately below (isJoinableQortalGroup /
+  // canSubmitQortalJoin) now that Home 2 advertises JOIN_GROUP/LEAVE_GROUP on
+  // the Qortal bridge too.
   const canSendQortalGroupChat = hasAction(qortalBridge.value.actions, 'SEND_CHAT_MESSAGE');
   const isSelectedQortalGroup = selectedChat?.kind === 'group' && selectedChat.network === 'qortal';
   const isConfirmedJoinedQortalGroup =
@@ -2510,21 +2613,44 @@ export default function App() {
   // ensureSelectedAccountUnlocked), plus having actually resolved a Qortal
   // identity to send as.
   const canUseQortalAccount = canUseSelectedAccount && !!qortalAccount;
-  // On a public/network node Home only accepts the keyless broadcast for open
-  // groups; direct and closed-group sends are rejected there. Block them in the
-  // UI so we never present an unsupported send. Trusted nodes are unaffected.
-  const isPublicNodeSendBlocked =
-    !!selectedChat &&
-    (selectedChat.network === 'qortal'
-      ? selectedChat.kind === 'group' &&
-        isPublicNodeSendUnsupported(qortalBridge.value.isUsingPublicNode, { group: selectedChat.group, kind: 'group' })
-      : isPublicNodeSendUnsupported(
-          bridge.value.isUsingPublicNode,
-          selectedChat.kind === 'group' ? { group: selectedChat.group, kind: 'group' } : { kind: 'direct' },
-        ));
+  // Mirrors isJoinableGroup/canSubmitJoin/canSubmitLeave above against the
+  // Qortal bridge/membership rather than merging into them — a Qortium
+  // membership must never make a Qortal group read as joined (or vice
+  // versa), which isConfirmedJoinedQortalGroup (qortalMemberGroups, already
+  // network-scoped) and the pendingTrackedQortal*GroupIds memos both keep
+  // separate from the Qortium equivalents above.
+  const canJoinQortalGroup = hasAction(qortalBridge.value.actions, 'JOIN_GROUP');
+  const canLeaveQortalGroup = hasAction(qortalBridge.value.actions, 'LEAVE_GROUP');
+  const hasPendingQortalJoinTransaction =
+    selectedGroupId !== null && pendingTrackedQortalJoinGroupIds.has(selectedGroupId);
+  const hasPendingQortalLeaveTransaction =
+    selectedGroupId !== null && pendingTrackedQortalLeaveGroupIds.has(selectedGroupId);
+  const isJoinableQortalGroup =
+    isSelectedQortalGroup &&
+    selectedGroupId !== null &&
+    selectedGroupId > 0 &&
+    qortalMemberGroups.phase === 'ready' &&
+    !isConfirmedJoinedQortalGroup &&
+    !hasPendingQortalJoinTransaction;
+  const canSubmitQortalJoin =
+    canUseQortalAccount && !!selectedGroup && canJoinQortalGroup && isJoinableQortalGroup && !joinPending;
+  const canSubmitQortalLeave =
+    canUseQortalAccount &&
+    !!selectedGroup &&
+    isSelectedQortalGroup &&
+    selectedGroupId !== null &&
+    selectedGroupId > 0 &&
+    canLeaveQortalGroup &&
+    isConfirmedJoinedQortalGroup &&
+    !leavePending &&
+    !hasPendingQortalLeaveTransaction;
+  // Sends are attempted unconditionally now (no isPublicNodeSendUnsupported
+  // pre-check): a route that rejects the broadcast surfaces through the
+  // structured error mapping (ROUTE_UNAVAILABLE / NODE_CAPABILITY_MISSING —
+  // see getBridgeErrorMessage) instead of a client-side guess about which
+  // node the bridge happens to be using.
   const canComposeMessage =
     !!selectedChat &&
-    !isPublicNodeSendBlocked &&
     (selectedChat.network === 'qortal'
       ? canUseQortalAccount && canSendQortalGroupChat && canPostInSelectedQortalGroup
       : canUseSelectedAccount &&
@@ -2533,11 +2659,24 @@ export default function App() {
     canComposeMessage &&
     (draft.trim().length > 0 || stagedAttachment?.phase === 'ready') &&
     !sendPending;
+  // Direct edit/delete/react have no generic-envelope fallback (item B's
+  // sendDirectChatEdit/Delete/Reaction throw when unadvertised — a fallback
+  // would create a new unrelated message instead of a revision), so the
+  // affordance itself must require the full exact-action family rather than
+  // any one of them individually.
+  const canReviseDirectChat =
+    hasAction(actions, 'SEND_DIRECT_CHAT_EDIT') &&
+    hasAction(actions, 'SEND_DIRECT_CHAT_DELETE') &&
+    hasAction(actions, 'SEND_DIRECT_CHAT_REACTION');
   // Attachments are public QDN data (no encrypt-on-publish in Home yet), so
   // they are offered in open groups only, and publishing requires the Home
   // bridge plus a registered name to publish under. Edits keep the original
-  // message's media, so no attaching mid-edit. PUBLISH_QDN_RESOURCE is
-  // Qortium-only (deferred on qortalRequest), so a Qortal chat never attaches.
+  // message's media, so no attaching mid-edit. Still Qortium-only: Home 2
+  // advertises PUBLISH_QDN_RESOURCE on the Qortal bridge too, but the
+  // publisher-name source (normalizeRegisteredName(account?.name), the
+  // Qortium identity) and buildAttachmentIdentifier are not yet wired to the
+  // Qortal identity/group id — that plumbing is P4 (attachments/source
+  // tokens) scope, not this gate.
   const canAttach =
     selectedChat?.kind === 'group' &&
     selectedChat.network !== 'qortal' &&
@@ -2546,7 +2685,6 @@ export default function App() {
     composeContext?.kind !== 'edit' &&
     !!normalizeRegisteredName(account?.name) &&
     hasAction(actions, 'PUBLISH_QDN_RESOURCE');
-  const publicNodeSendNotice = isPublicNodeSendBlocked ? t('action.publicNodeSendUnavailable') : '';
   const showGroupComposerNotice =
     canUseSelectedAccount &&
     canSendGroupChat &&
@@ -2558,9 +2696,8 @@ export default function App() {
       : !isSelectedGroupMembershipConfirmed
         ? t('hint.groupMembershipChecking')
         : t('hint.groupJoinToPost');
-  // No renderJoinGroupButton counterpart — JOIN_GROUP is not in the Qortal
-  // bridge slice at all (docs/HOME_V2_BRIDGE_COMPATIBILITY.md in
-  // qortium-home), so this notice is informational only.
+  // renderJoinGroupButton() renders a join affordance alongside this notice
+  // when Home 2 advertises JOIN_GROUP on the Qortal bridge (see its call site).
   const showQortalGroupComposerNotice = canUseQortalAccount && canSendQortalGroupChat && isSelectedQortalGroup && !canPostInSelectedQortalGroup;
   const qortalGroupComposerNotice =
     isSelectedQortalGroup && selectedChat.group.isOpen !== true
@@ -2656,6 +2793,20 @@ export default function App() {
     : qortalBridge.value.isHomeBridge
       ? t('action.groupMessagesUnavailable')
       : t('action.groupMessagesUnavailableBrowser');
+  // Item D: journal entries (chat-send targets only) attributed to the
+  // selected conversation, keyed the same way selectedChatKey is built (see
+  // getJournalConversationKey). A conversation with at least one entry here
+  // shows the reused ambiguous-send notice below — Home already blocks a
+  // same-target retry until this reconciles, so the notice matters most
+  // right when the composer's own optimistic state has nothing to show
+  // (e.g. right after a restart, before this app ever sent the message
+  // itself).
+  const selectedChatJournalEntries = selectedChat
+    ? filterChatJournalEntries(
+        selectedChat.network === 'qortal' ? qortalJournalEntries : journalEntries,
+      ).filter((entry) => getJournalConversationKey(selectedChat.network ?? 'qortium', entry) === selectedChatKey)
+    : [];
+  const hasSelectedChatJournalNotice = selectedChatJournalEntries.length > 0;
   const selectedDirectHistoryUnavailable =
     selectedChat?.kind === 'direct' && (!isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
@@ -2749,9 +2900,28 @@ export default function App() {
         ? hasPendingLeaveTransaction
           ? t('button.leave.transaction.pending')
           : groupLeaveUnavailableLabel
-        : showMintingControls && accountMintingStatus?.isMinting !== true && !canSubmitStartMinting
-          ? startMintingTitle
-          : '';
+        : isSelectedQortalGroup &&
+            selectedGroupId !== null &&
+            selectedGroupId > 0 &&
+            qortalMemberGroups.phase === 'ready' &&
+            !isConfirmedJoinedQortalGroup &&
+            canJoinQortalGroup &&
+            !canSubmitQortalJoin
+          ? hasPendingQortalJoinTransaction
+            ? t('button.join.transaction.pending')
+            : groupJoinUnavailableLabel
+          : isSelectedQortalGroup &&
+              selectedGroupId !== null &&
+              selectedGroupId > 0 &&
+              isConfirmedJoinedQortalGroup &&
+              canLeaveQortalGroup &&
+              !canSubmitQortalLeave
+            ? hasPendingQortalLeaveTransaction
+              ? t('button.leave.transaction.pending')
+              : groupLeaveUnavailableLabel
+            : showMintingControls && accountMintingStatus?.isMinting !== true && !canSubmitStartMinting
+              ? startMintingTitle
+              : '';
 
   async function loadGroupDiscoveries(nextSearch = search, actionList = actions) {
     const requestId = ++groupDiscoveryRequestRef.current;
@@ -2847,6 +3017,42 @@ export default function App() {
           value: current.value,
         }));
       }
+    }
+  }
+
+  // A lightweight, targeted refresh of just the Qortal account's group
+  // membership — used after a Qortal join/leave, mirroring how the Qortium
+  // handlers call loadAccountData. Deliberately narrower than
+  // refreshQortalSelectedAccount (which resets the whole Qortal session:
+  // account, groups, active chats, discoveries) — a join/leave click must not
+  // flash the entire Qortal-network UI back to a loading state.
+  async function loadQortalMemberGroups(
+    address: string,
+    actionList = qortalBridge.value.actions,
+    options: { isCurrent?: () => boolean } = {},
+  ) {
+    const isCurrent = options.isCurrent ?? (() => true);
+
+    setQortalMemberGroups((current) => ({ phase: 'loading', value: current.value }));
+
+    try {
+      const nextMemberGroups = await getMemberGroups('qortal', address, actionList);
+
+      if (!isCurrent()) {
+        return;
+      }
+
+      setQortalMemberGroups({ phase: 'ready', value: nextMemberGroups });
+    } catch (error) {
+      if (!isCurrent()) {
+        return;
+      }
+
+      setQortalMemberGroups((current) => ({
+        error: getBridgeErrorMessage(error, t('status.loadingError.joinedGroups'), t),
+        phase: 'error',
+        value: current.value,
+      }));
     }
   }
 
@@ -3443,6 +3649,8 @@ export default function App() {
         setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, chat.direct.address, nextMessages));
       }
 
+      reconcileJournalWithMessages(chat.network ?? 'qortium', nextMessages);
+
       setMessagesChatKey(chatKey);
       setMessages((current) => {
         const value = options.quiet
@@ -3542,6 +3750,8 @@ export default function App() {
       }
 
       setQortalGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+
+      reconcileJournalWithMessages('qortal', nextMessages);
 
       setMessagesChatKey(chatKey);
       setMessages((current) => {
@@ -3707,19 +3917,6 @@ export default function App() {
       return;
     }
 
-    // Public/network node: the request + relay broadcasts are rejected, so the
-    // prompts dead-end and nothing ever decrypts. Skip them entirely and show a
-    // clear "needs a local/trusted node" notice instead of several futile
-    // approval dialogs followed by silence.
-    if (isPublicNodePrivateGroupKeyRecoveryUnsupported(bridge.value.isUsingPublicNode)) {
-      if (!isCurrentRecovery()) {
-        return;
-      }
-      setPrivateGroupKeyStatus('');
-      setPrivateGroupKeyError(t('action.publicNodeSendUnavailable'));
-      return;
-    }
-
     const missingKeyRequests = getMissingPrivateGroupKeyRequests(nextMessages, group.groupId);
 
     if (missingKeyRequests.length === 0) {
@@ -3881,7 +4078,7 @@ export default function App() {
         return;
       }
 
-      const result = await joinGroup(requestedGroup.groupId);
+      const result = await joinGroup(requestedGroup.groupId, 'qortium');
 
       trackTransaction({
         action: 'join',
@@ -3913,6 +4110,54 @@ export default function App() {
     }
   }
 
+  // Mirrors handleJoinGroup for the Qortal bridge/identity — a separate
+  // handler (not a merged network-aware one) so the tracked transaction, the
+  // membership refresh, and the staleness check all stay on the Qortal side
+  // (isCurrentQortalGroupActionContext, loadQortalMemberGroups) with no risk
+  // of touching the Qortium account/member-groups state.
+  async function handleJoinQortalGroup() {
+    if (!selectedGroup || !canSubmitQortalJoin || !qortalAccount) {
+      return;
+    }
+
+    const requestedChatKey = selectedChatKey;
+    const requestedGroup = selectedGroup;
+    const qortalAddress = qortalAccount.address;
+
+    setJoinPending(true);
+    setWriteError('');
+
+    try {
+      // Qortal has no unlock shortcut of its own — reuses the shared Home
+      // wallet's Qortium unlock gate (see canComposeMessage's comment).
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount || !isCurrentQortalGroupActionContext(qortalAddress, requestedChatKey, requestedGroup.groupId)) {
+        return;
+      }
+
+      const result = await joinGroup(requestedGroup.groupId, 'qortal');
+
+      if (!isCurrentQortalGroupActionContext(qortalAddress, requestedChatKey, requestedGroup.groupId)) {
+        return;
+      }
+
+      trackTransaction({
+        action: 'join',
+        group: requestedGroup,
+        message: requestedGroup.isOpen === false ? t('status.join.request.submitted') : t('status.join.submitted'),
+        network: 'qortal',
+        result,
+      });
+
+      await loadQortalMemberGroups(qortalAddress);
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.join'), t));
+    } finally {
+      setJoinPending(false);
+    }
+  }
+
   async function handleAcceptInvite(invite: GroupInvite) {
     if (!canUseSelectedAccount || !canJoinGroup || inviteActionGroupId !== null) {
       return;
@@ -3936,7 +4181,7 @@ export default function App() {
         return;
       }
 
-      const result = await joinGroup(invite.groupId);
+      const result = await joinGroup(invite.groupId, 'qortium');
 
       trackTransaction({
         action: 'join',
@@ -3999,15 +4244,161 @@ export default function App() {
       : { address: chat.direct.address, kind: 'direct', network: chat.network };
   }
 
-  // This one dispatch point is what makes reactions/edits/deletes (which all
-  // ride the same SEND_CHAT_MESSAGE path as a plain message — see
-  // handleMessageReaction / runPendingRevision) work correctly for a Qortal
-  // group too, with no extra plumbing: they already go through
-  // pendingSendTargetFor + this function.
-  function dispatchChatSend(target: PendingSendTarget, text: string, chatReference: string | undefined) {
-    return target.kind === 'group'
-      ? sendChatMessage(target.network ?? 'qortium', target.groupId, text, chatReference)
-      : sendDirectChatMessage(target.address, text, chatReference);
+  // The selected chat's own network's advertised action list — every typed
+  // wrapper below picks its exact-action vs generic-envelope path off this,
+  // never off the other network's actions.
+  function getNetworkActions(network: ChatNetwork) {
+    return network === 'qortal' ? qortalBridge.value.actions : actions;
+  }
+
+  function setNetworkJournalEntries(network: ChatNetwork, entries: PendingBridgeTransactionEntry[]) {
+    if (network === 'qortal') {
+      setQortalJournalEntries(entries);
+    } else {
+      setJournalEntries(entries);
+    }
+  }
+
+  function getNetworkJournalEntries(network: ChatNetwork) {
+    return network === 'qortal' ? qortalJournalEntries : journalEntries;
+  }
+
+  // One-shot fetch of a network's pending journal (item D). Best-effort: a
+  // failed fetch just leaves the previous snapshot in place — the next
+  // trigger (bridge/account ready, a send resolving ambiguous, a blocked
+  // duplicate-mutation error) retries. Never throws.
+  async function fetchPendingJournal(network: ChatNetwork) {
+    const networkActions = getNetworkActions(network);
+
+    if (!hasAction(networkActions, 'GET_PENDING_TRANSACTIONS')) {
+      return;
+    }
+
+    try {
+      const result = await getPendingBridgeTransactions(network, networkActions);
+
+      setNetworkJournalEntries(network, result.entries);
+    } catch {
+      // Best-effort read; keep whatever snapshot is already in state.
+    }
+  }
+
+  // Drops a forgotten entry from state regardless of whether Home's own
+  // FORGET_PENDING_TRANSACTION call succeeded — a failed forget is retried on
+  // the next reconcile pass off the still-fresh next fetch, not by keeping a
+  // stale local copy around.
+  async function forgetJournalEntry(network: ChatNetwork, signature: string) {
+    const networkActions = getNetworkActions(network);
+
+    try {
+      await forgetPendingBridgeTransaction(network, signature, networkActions);
+    } catch {
+      // Non-fatal (see item D scope): keep trying on the next reconcile pass
+      // rather than surfacing a banner for a housekeeping call.
+    }
+
+    setNetworkJournalEntries(
+      network,
+      getNetworkJournalEntries(network).filter((entry) => entry.signature !== signature),
+    );
+  }
+
+  // Reconciles a network's journal against a freshly loaded/refreshed message
+  // list (item D step: "when message lists load/refresh for a conversation").
+  // Only entries whose signature actually showed up in `messages` are
+  // forgotten — never merely because the journal was fetched.
+  function reconcileJournalWithMessages(network: ChatNetwork, messages: readonly ChatMessage[]) {
+    const chatEntries = filterChatJournalEntries(getNetworkJournalEntries(network));
+
+    if (chatEntries.length === 0) {
+      return;
+    }
+
+    const observedSignatures = new Set<string>();
+
+    for (const message of messages) {
+      if (message.signature) {
+        observedSignatures.add(getMessageNetworkIdentity(network, message));
+      }
+    }
+
+    const forgettable = getForgettableJournalSignatures(chatEntries, observedSignatures);
+
+    for (const entry of forgettable) {
+      void forgetJournalEntry(network, entry.signature);
+    }
+  }
+
+  // New messages and replies (kind: 'message') always ride the generic
+  // SEND_CHAT_MESSAGE / SEND_DIRECT_CHAT_MESSAGE envelope — there is no
+  // exact-action alternative for a brand-new message, only for revisions.
+  function dispatchChatSendEntry(entry: Pick<PendingSend, 'chatReference' | 'content' | 'contentState' | 'kind' | 'target' | 'text'>) {
+    const network = entry.target.network ?? 'qortium';
+    const networkActions = getNetworkActions(network);
+
+    if (entry.kind === 'reaction' && entry.chatReference && typeof entry.content === 'string' && typeof entry.contentState === 'boolean') {
+      const content = entry.content;
+      const contentState = entry.contentState;
+      const chatReference = entry.chatReference;
+
+      if (entry.target.kind === 'group') {
+        return sendChatReaction(network, entry.target.groupId, chatReference, content, contentState, networkActions);
+      }
+
+      // Direct reactions have no generic-envelope fallback family member of
+      // their own to check individually — reuse the plain SEND_DIRECT_CHAT_MESSAGE
+      // envelope (today's legacy behavior) when the exact action is not
+      // advertised. Called with no network/actions (today's exact 3-arg call)
+      // so it always takes the legacy qdnRequest path — never sendDirectChatMessage's
+      // own exact-action branch, which silently drops chatReference and would
+      // turn this into a brand-new message instead of a revision.
+      return hasAction(networkActions, 'SEND_DIRECT_CHAT_REACTION')
+        ? sendDirectChatReaction(network, entry.target.address, chatReference, content, contentState, networkActions)
+        : sendDirectChatMessage(entry.target.address, entry.text, chatReference);
+    }
+
+    // A direct entry carrying a chatReference is always a revision envelope;
+    // the exact SEND_DIRECT_CHAT_MESSAGE action silently drops chatReference
+    // (initial sends forbid it), so such an entry must never reach that
+    // branch — keep it on the legacy 3-arg path unconditionally.
+    return entry.target.kind === 'group'
+      ? sendChatMessage(network, entry.target.groupId, entry.text, entry.chatReference)
+      : entry.chatReference
+        ? sendDirectChatMessage(entry.target.address, entry.text, entry.chatReference)
+        : sendDirectChatMessage(entry.target.address, entry.text, undefined, network, networkActions);
+  }
+
+  // Group edits/deletes route through the exact SEND_CHAT_EDIT/DELETE action
+  // when advertised, else the same generic SEND_CHAT_MESSAGE + chatReference
+  // envelope Chat has always sent (still valid — see qortalRequest.ts's
+  // removed blanket chatReference rejection). Direct edits/deletes have no
+  // such fallback (item B's wrappers throw when unadvertised): the composer-
+  // level canReviseDirectChat gate is what keeps this branch from firing
+  // against an unadvertised direct bridge in the first place.
+  function dispatchChatRevisionEntry(entry: Pick<PendingRevision, 'chatReference' | 'kind' | 'repliedTo' | 'target' | 'text'>) {
+    const network = entry.target.network ?? 'qortium';
+    const networkActions = getNetworkActions(network);
+
+    if (entry.target.kind === 'group') {
+      return entry.kind === 'edit'
+        ? sendChatEdit(network, entry.target.groupId, entry.text, entry.chatReference, networkActions)
+        : sendChatDelete(network, entry.target.groupId, entry.chatReference, networkActions, entry.repliedTo);
+    }
+
+    // Both fallbacks below call sendDirectChatMessage with no network/actions
+    // (today's exact 3-arg call) so they always take the legacy qdnRequest
+    // path — never sendDirectChatMessage's own exact-action branch, which
+    // silently drops chatReference and would turn this into a brand-new
+    // message instead of a revision (see the reaction fallback's comment above).
+    if (entry.kind === 'edit') {
+      return hasAction(networkActions, 'SEND_DIRECT_CHAT_EDIT')
+        ? sendDirectChatEdit(network, entry.target.address, entry.text, entry.chatReference, networkActions)
+        : sendDirectChatMessage(entry.target.address, entry.text, entry.chatReference);
+    }
+
+    return hasAction(networkActions, 'SEND_DIRECT_CHAT_DELETE')
+      ? sendDirectChatDelete(network, entry.target.address, entry.chatReference, networkActions)
+      : sendDirectChatMessage(entry.target.address, entry.text, entry.chatReference);
   }
 
   function isCurrentWritableAccount(address: string) {
@@ -4023,6 +4414,19 @@ export default function App() {
       selectedChatKeyRef.current === chatKey &&
       selectedGroupIdRef.current === groupId &&
       isCurrentWritableAccount(accountAddress)
+    );
+  }
+
+  // Mirrors isCurrentQortiumGroupActionContext for the Qortal identity/chat —
+  // a separate function (not a merged network-aware one) so a Qortal action's
+  // staleness check never accidentally reads the Qortium refs or vice versa.
+  function isCurrentQortalGroupActionContext(accountAddress: string, chatKey: string, groupId: number) {
+    return (
+      chatKey.startsWith('qortal:') &&
+      selectedChatKeyRef.current === chatKey &&
+      selectedGroupIdRef.current === groupId &&
+      !qortalAccountRefreshPendingRef.current &&
+      currentQortalAccountAddressRef.current === accountAddress
     );
   }
 
@@ -4078,7 +4482,7 @@ export default function App() {
     const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
-      const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
+      const result = await dispatchChatSendEntry(entry);
 
       if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
@@ -4104,6 +4508,14 @@ export default function App() {
         setWriteError(t('message.delivery.ambiguous'));
       }
 
+      // Item D: an ambiguous outcome is exactly the moment Home records a new
+      // pending-journal entry (a signed mutation with an unknown broadcast
+      // result) — refresh the journal so the conversation notice appears
+      // without waiting for the next unrelated bridge/account-ready trigger.
+      if (result.outcome === 'ambiguous') {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
+
       if (chat.kind === 'direct' && isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         void loadActiveChats(selectedAccount, actions, { quiet: true });
       }
@@ -4126,6 +4538,14 @@ export default function App() {
 
       const fallback = entry.kind === 'reaction' ? t('status.loadingError.sendReaction') : t('status.loadingError.sendMessage');
       const message = getBridgeErrorMessage(error, fallback, t);
+
+      // Item D: Home blocked this attempt because a pending entry for the same
+      // action+target already exists — refresh the journal immediately so the
+      // conversation-level notice (see selectedChatJournalNotice) shows up
+      // alongside the banner this error's code already produces.
+      if (isPendingReconciliationRequired(error)) {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
 
       updatePendingSends((current) =>
         current.map((candidate) =>
@@ -4167,7 +4587,7 @@ export default function App() {
     const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
-      const result = await dispatchChatSend(entry.target, entry.text, entry.chatReference);
+      const result = await dispatchChatRevisionEntry(entry);
 
       if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
@@ -4189,6 +4609,12 @@ export default function App() {
         ),
       );
 
+      // Item D: same as runPendingSend — an ambiguous revision outcome is
+      // exactly when Home records a new journal entry.
+      if (result.outcome === 'ambiguous') {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
+
       if (chat.kind === 'direct' && isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         void loadActiveChats(selectedAccount, actions, { quiet: true });
       }
@@ -4205,6 +4631,12 @@ export default function App() {
       }
 
       const message = getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t);
+
+      // Item D: same as runPendingSend's catch — surface the journal notice
+      // immediately when Home blocks a duplicate same-target mutation.
+      if (isPendingReconciliationRequired(error)) {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
 
       updatePendingRevisions((current) =>
         current.map((candidate) =>
@@ -4326,7 +4758,8 @@ export default function App() {
       // Same shape as an edit: a revision over the original's signature —
       // just with an empty body (the reply target is preserved so the
       // tombstone stays threaded).
-      const message = buildDeletedMessageText(decodeChatMessage(thread.original).repliedTo);
+      const repliedTo = decodeChatMessage(thread.original).repliedTo;
+      const message = buildDeletedMessageText(repliedTo);
       const chatKey = getSelectedChatKey(chat);
       const localId = createLocalSendId();
 
@@ -4345,6 +4778,7 @@ export default function App() {
           chatReference,
           kind: 'delete',
           localId,
+          repliedTo,
           target,
           text: message,
         }),
@@ -4377,7 +4811,7 @@ export default function App() {
         return;
       }
 
-      const result = await leaveGroup(group.groupId);
+      const result = await leaveGroup(group.groupId, 'qortium');
 
       if (!isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
         return;
@@ -4392,6 +4826,49 @@ export default function App() {
 
       await loadAccountData(selectedAccount);
       await loadGroupMembers(group);
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.leave'), t));
+    } finally {
+      setLeavePending(false);
+    }
+  }
+
+  // Mirrors handleLeaveGroup for the Qortal bridge/identity — see
+  // handleJoinQortalGroup's comment.
+  async function handleLeaveQortalGroup() {
+    if (!selectedGroup || !canSubmitQortalLeave || !qortalAccount) {
+      return;
+    }
+
+    const group = selectedGroup;
+    const chatKey = selectedChatKey;
+    const qortalAddress = qortalAccount.address;
+
+    setLeavePending(true);
+    setWriteError('');
+
+    try {
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount || !isCurrentQortalGroupActionContext(qortalAddress, chatKey, group.groupId)) {
+        return;
+      }
+
+      const result = await leaveGroup(group.groupId, 'qortal');
+
+      if (!isCurrentQortalGroupActionContext(qortalAddress, chatKey, group.groupId)) {
+        return;
+      }
+
+      trackTransaction({
+        action: 'leave',
+        group,
+        message: t('status.leave.submitted'),
+        network: 'qortal',
+        result,
+      });
+
+      await loadQortalMemberGroups(qortalAddress);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.leave'), t));
     } finally {
@@ -4575,7 +5052,7 @@ export default function App() {
         return;
       }
 
-      const result = await approveGroupJoinRequest(request.groupId, request.joiner);
+      const result = await approveGroupJoinRequest(request.groupId, request.joiner, 'qortium');
 
       if (!isCurrentQortiumGroupActionContext(selectedAccount.address, chatKey, group.groupId)) {
         return;
@@ -4602,15 +5079,20 @@ export default function App() {
     group,
     joiner,
     message,
+    network = 'qortium',
     result,
   }: {
     action: TrackedTransaction['action'];
     group: GroupData;
     joiner?: string;
     message: string;
+    network?: ChatNetwork;
     result: { transactionSignature?: string };
   }) {
-    const id = result.transactionSignature || `${action}:${group.groupId}:${Date.now()}`;
+    // `network` prefixes the fallback (no-signature) id too, so a Qortium and
+    // a Qortal transaction against the same numeric groupId in the same
+    // millisecond can never collide on tracker key.
+    const id = result.transactionSignature || `${network}:${action}:${group.groupId}:${Date.now()}`;
 
     setTrackedTransactions((current) => ({
       ...current,
@@ -4623,6 +5105,7 @@ export default function App() {
         message: result.transactionSignature
           ? message
           : `${message}; ${t('status.transaction.waitingForNodeStatus')}`,
+        network,
         phase: 'pending',
         signature: result.transactionSignature,
       },
@@ -4889,6 +5372,8 @@ export default function App() {
         accountAddress: pendingOwnerAddress,
         chatKey,
         chatReference: targetSignature,
+        content: reaction,
+        contentState,
         kind: 'reaction',
         localId,
         recipient: chat.kind === 'direct' ? chat.direct.address : null,
@@ -6738,6 +7223,44 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [qortalAccount?.address, qortalAvailable, qortalBridge.value.actions.join('\n')]);
 
+  // Item D: once Qortium's bridge is ready and an account is connected, fetch
+  // its pending-transaction journal once (gated on GET_PENDING_TRANSACTIONS
+  // being advertised — see shouldFetchPendingJournal). Re-runs whenever the
+  // advertised action set or the connected account changes, matching every
+  // other per-network "bridge ready" effect in this file.
+  useEffect(() => {
+    if (
+      !shouldFetchPendingJournal({
+        accountAddress: account?.address ?? null,
+        actions,
+        bridgeReady: bridge.phase === 'ready',
+      })
+    ) {
+      return;
+    }
+
+    void fetchPendingJournal('qortium');
+  }, [account?.address, actionsKey, bridge.phase]);
+
+  // Qortal counterpart — additionally gated on qortalAvailable (Home 1.7's
+  // Qortal-prefixed catalogue never advertises the journal actions, so this
+  // is effectively a no-op there; kept for symmetry with the other qortal*
+  // gates in this file).
+  useEffect(() => {
+    if (
+      !shouldFetchPendingJournal({
+        accountAddress: qortalAccount?.address ?? null,
+        actions: qortalBridge.value.actions,
+        bridgeReady: qortalBridge.phase === 'ready',
+        networkAvailable: qortalAvailable,
+      })
+    ) {
+      return;
+    }
+
+    void fetchPendingJournal('qortal');
+  }, [qortalAccount?.address, qortalAvailable, qortalBridge.phase, qortalBridge.value.actions.join('\n')]);
+
   useEffect(() => {
     applyDisplaySettings(displaySettings);
   }, [displaySettings]);
@@ -7022,6 +7545,8 @@ export default function App() {
 
           setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
 
+          reconcileJournalWithMessages('qortium', nextMessages);
+
           if (!receivedInitialMessages) {
             receivedInitialMessages = true;
             setMessagesChatKey(chatKey);
@@ -7294,8 +7819,40 @@ export default function App() {
   }, [account?.address, selectedGroupId, isSelectedDevGroup, isApproverOfSelectedGroup]);
 
   function renderJoinGroupButton() {
-    // network !== 'qortal': see isJoinableGroup's comment — there is no
-    // JOIN_GROUP bridge action for Qortal in this slice.
+    if (isSelectedQortalGroup) {
+      if (!(
+        selectedGroupId !== null &&
+        selectedGroupId > 0 &&
+        qortalMemberGroups.phase === 'ready' &&
+        !isConfirmedJoinedQortalGroup &&
+        canJoinQortalGroup
+      )) {
+        return null;
+      }
+
+      return (
+        <button
+          className="button button--secondary"
+          disabled={!canSubmitQortalJoin}
+          onClick={() => void handleJoinQortalGroup()}
+          title={
+            hasPendingQortalJoinTransaction
+              ? t('button.join.transaction.pending')
+              : canUseQortalAccount && canJoinQortalGroup
+                ? t('button.join')
+                : groupJoinUnavailableLabel
+          }
+          type="button"
+        >
+          {joinPending
+            ? t('button.joining')
+            : hasPendingQortalJoinTransaction
+              ? t('button.join.pending')
+              : t('button.join')}
+        </button>
+      );
+    }
+
     if (!(
       selectedChat?.kind === 'group' &&
       selectedChat.network !== 'qortal' &&
@@ -7854,23 +8411,34 @@ export default function App() {
                 </button>
               ) : null}
               {renderJoinGroupButton()}
-              {selectedChat?.kind === 'group' && selectedGroupId !== null && selectedGroupId > 0 && isConfirmedJoinedGroup && canLeaveGroup ? (
+              {selectedChat?.kind === 'group' &&
+              selectedGroupId !== null &&
+              selectedGroupId > 0 &&
+              (isSelectedQortalGroup
+                ? isConfirmedJoinedQortalGroup && canLeaveQortalGroup
+                : isConfirmedJoinedGroup && canLeaveGroup) ? (
                 <button
                   className="button button--secondary"
-                  disabled={!canSubmitLeave}
-                  onClick={() => void handleLeaveGroup()}
+                  disabled={isSelectedQortalGroup ? !canSubmitQortalLeave : !canSubmitLeave}
+                  onClick={() => void (isSelectedQortalGroup ? handleLeaveQortalGroup() : handleLeaveGroup())}
                   title={
-                    hasPendingLeaveTransaction
-                      ? t('button.leave.transaction.pending')
-                      : canUseSelectedAccount && canLeaveGroup
-                        ? t('button.leave')
-                        : groupLeaveUnavailableLabel
+                    isSelectedQortalGroup
+                      ? hasPendingQortalLeaveTransaction
+                        ? t('button.leave.transaction.pending')
+                        : canUseQortalAccount && canLeaveQortalGroup
+                          ? t('button.leave')
+                          : groupLeaveUnavailableLabel
+                      : hasPendingLeaveTransaction
+                        ? t('button.leave.transaction.pending')
+                        : canUseSelectedAccount && canLeaveGroup
+                          ? t('button.leave')
+                          : groupLeaveUnavailableLabel
                   }
                   type="button"
                 >
                   {leavePending
                     ? t('button.leaving')
-                    : hasPendingLeaveTransaction
+                    : (isSelectedQortalGroup ? hasPendingQortalLeaveTransaction : hasPendingLeaveTransaction)
                       ? t('button.leave.pending')
                       : t('button.leave')}
                 </button>
@@ -7949,6 +8517,7 @@ export default function App() {
               {selectedClosedGroupHistoryUnavailable ? (
                 <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
               ) : null}
+              {hasSelectedChatJournalNotice ? <p className="muted">{t('status.bridge.pendingJournalNotice')}</p> : null}
             </div>
             <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
               {liveAnnouncement}
@@ -7981,7 +8550,7 @@ export default function App() {
               <MessageList
                 avatarProfiles={selectedAvatarProfiles}
                 canCompose={canComposeMessage}
-                canRevise={canComposeMessage && selectedChat?.network !== 'qortal'}
+                canRevise={canComposeMessage && (selectedChat?.kind === 'direct' ? canReviseDirectChat : true)}
                 emptyHint={isSelectedGeneralChat ? t('hint.noMessages.general') : undefined}
                 initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
                 messages={displayMessages}
@@ -8027,10 +8596,6 @@ export default function App() {
             <div aria-live="polite" className="composer composer--notice">
               <p>{t('hint.noChatSelected')}</p>
             </div>
-          ) : publicNodeSendNotice ? (
-            <div aria-live="polite" className="composer composer--notice">
-              <p>{publicNodeSendNotice}</p>
-            </div>
           ) : showGroupComposerNotice ? (
             <div aria-live="polite" className="composer composer--notice">
               <div>
@@ -8040,10 +8605,11 @@ export default function App() {
               {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}
             </div>
           ) : showQortalGroupComposerNotice ? (
-            // No join affordance here (see showQortalGroupComposerNotice) —
-            // there is no JOIN_GROUP bridge action for Qortal in this slice.
             <div aria-live="polite" className="composer composer--notice">
-              <p>{qortalGroupComposerNotice}</p>
+              <div>
+                <p>{qortalGroupComposerNotice}</p>
+              </div>
+              {qortalMemberGroups.phase === 'ready' ? renderJoinGroupButton() : null}
             </div>
           ) : !canComposeMessage ? (
             <div aria-live="polite" className="composer composer--notice">

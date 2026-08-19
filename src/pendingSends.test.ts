@@ -80,6 +80,20 @@ describe('createPendingSend', () => {
     // decodeChatMessage's counterpart (decodeBase64) is covered in chatText.test.ts.
     expect(pending.message.data).toBe(btoa(String.fromCharCode(...new TextEncoder().encode('hello'))));
   });
+
+  it('carries the raw reaction content/contentState through, for App.tsx to dispatch via sendChatReaction', () => {
+    const reaction = pendingMessage({ chatReference: 'target-sig', content: '👍', contentState: true, kind: 'reaction' });
+
+    expect(reaction.content).toBe('👍');
+    expect(reaction.contentState).toBe(true);
+
+    // A retry re-arms the same entry without losing that raw content/state.
+    const failed = failPendingSend(reaction, 'boom');
+    const retried = retryPendingSend(failed, 500);
+
+    expect(retried.content).toBe('👍');
+    expect(retried.contentState).toBe(true);
+  });
 });
 
 describe('resolvePendingSend / failPendingSend / retryPendingSend', () => {
@@ -403,6 +417,17 @@ describe('pending revisions (edit/delete side channel)', () => {
 
     expect(resolved.resolvedSignature).toBe('revision-sig');
     expect(resolved.status).toBe('sending');
+  });
+
+  it('carries repliedTo through for a delete, for App.tsx to dispatch via sendChatDelete', () => {
+    const deletion = pendingRevision({ kind: 'delete', repliedTo: 'reply-target-sig', text: '' });
+
+    expect(deletion.repliedTo).toBe('reply-target-sig');
+
+    // A retry re-arms the same entry without losing it.
+    const retried = retryPendingRevision(failPendingRevision(deletion, 'boom'), 500);
+
+    expect(retried.repliedTo).toBe('reply-target-sig');
   });
 
   it('failPendingRevision marks it failed with the error retained', () => {

@@ -1,9 +1,13 @@
 # Qortium Chat
 
-A QDN chat app for Qortium Home. Qortium conversations use `window.qdnRequest`;
-Qortal public-group conversations use Home 2's separate `window.qortalRequest`
-bridge or the Qortal-prefixed `window.qdnRequest` actions supplied by released
-Home 1.7.0. The app follows Home's display settings, including the Classic,
+A QDN chat app for Qortium Home 2 and, on the Qortal side, Qortal Hub.
+Qortium conversations use `window.qdnRequest`; Qortal conversations use the
+dedicated `qortalRequest` global — Home 2's window property or Qortal Hub's
+injected classic bridge — with a compatibility adapter retained for the older
+Qortal-prefixed `window.qdnRequest` actions of Home 1.7. Every feature gates
+on the host's advertised actions (`SHOW_ACTIONS`) and structured runtime
+errors, so the same build degrades cleanly on hosts with a smaller action
+surface. The app follows Home's display settings, including the Classic,
 Modern, and Fun UI styles.
 
 On Home versions that expose app notifications, the bell beside the selected
@@ -98,13 +102,19 @@ and the published resource should report `READY` at
 
 This app does not handle private keys or transaction signing directly. Group
 joins, group chat sends, closed-group chat reads, direct private chat reads,
-direct private chat sends, and minting key registration are delegated to
-Qortium Home's account-safe approval bridge; the app never sees the minting
-key. Browser development remains read-only and cannot decrypt or send direct
-private chat without Home. Background direct-message notifications require
-Home to remain running; Android delivery currently requires Home to remain in
-the foreground. Closed-tab group mention detection is not available because
-Core deliberately excludes message content from notification events.
+direct private chat sends, and minting key registration are delegated to the
+host's account-safe approval bridge; the app never sees the minting key.
+Feature availability follows the host's advertised actions: there is no
+built-in public-node restriction anymore — if a node operator disables a
+required capability, the send is attempted and the host's exact capability
+error (for example a missing-capability or unavailable-route notice) is
+shown. Ambiguous broadcast outcomes are reconciled through Home 2's
+restart-safe pending-transaction journal when the host provides it. Browser
+development remains read-only and cannot decrypt or send direct private chat
+without Home. Background direct-message notifications require Home to remain
+running; Android delivery currently requires Home to remain in the
+foreground. Closed-tab group mention detection is not available because Core
+deliberately excludes message content from notification events.
 
 App-to-app data messages are hidden from the message feed, unread counts, and
 in-app mention/reply notifications, but a direct one can still raise Home's
@@ -114,13 +124,19 @@ filters are address-scoped, so Chat has no way to exclude a message it has not
 seen yet. Suppressing it requires Home to fetch, decrypt, and classify the
 message before displaying.
 
-Qortal support in this release is intentionally limited to public groups:
-joined-group history, ordinary messages and replies, plus bounded discovery and
-read-only previews for qualifying active open groups. Qortal DMs, closed/private
-groups, edits, deletes, and reactions require newer Home bridge actions that
-preserve the protocol's encryption and transaction-reference semantics. Chat
-hides the unsupported revision controls instead of broadcasting them as
-unrelated new messages. Reticulum/RCHAT remains a later, separate source family.
+Qortal support currently covers public groups end to end: joined-group
+history, messages, replies, edits, deletes, and emoji reactions (through the
+host's exact revision actions when advertised, otherwise the interoperable
+`chatReference` envelope), plus join/leave when the host advertises those
+actions, bounded discovery, and read-only previews for qualifying active open
+groups. Qortal direct messages and closed/private groups are the next
+tranches (see the roadmap); their controls stay hidden until implemented. In
+Qortal Hub specifically, direct messages are not offered at all — Hub
+provides no way for an app to decrypt DM history — and private groups,
+private attachments, and app notifications are likewise Home-only. Chat
+always hides unsupported revision controls instead of broadcasting them as
+unrelated new messages. Reticulum/RCHAT remains a later, separate source
+family.
 
 The working plan for completing both Qortium and Qortal CHAT capabilities is in
 [`docs/CHAT_COMPLETION_ROADMAP.md`](docs/CHAT_COMPLETION_ROADMAP.md).

@@ -1,4 +1,4 @@
-import type { BridgeState, BridgeTransport, NodeApiFetchResult, QdnAction } from './types';
+import type { BridgeHost, BridgeState, BridgeTransport, NodeApiFetchResult, QdnAction } from './types';
 
 const DEFAULT_NODE_API_URL = 'http://127.0.0.1:24891';
 
@@ -149,6 +149,32 @@ export function classifyBridgeTransport(ui: string, hasInjectedBridge: boolean):
   return hasInjectedBridge ? 'home' : 'browser-dev';
 }
 
+// Host is orthogonal to transport: transport says how the bridge is reached,
+// host says which concrete shell answered. The qdn (window.qdnRequest) side
+// never resolves 'hub' — Hub injects the separate qortalRequest global, and
+// its host is classified in qortalRequest.ts against the same `ui` values.
+export function classifyBridgeHost(
+  ui: string,
+  transport: BridgeTransport,
+  options?: { isLegacyAdapter?: boolean },
+): BridgeHost {
+  const normalizedUi = ui.trim().toUpperCase();
+
+  if (transport === 'gateway' || normalizedUi.endsWith('_GATEWAY')) {
+    return 'gateway';
+  }
+
+  if (normalizedUi === 'HUB_ELECTRON' || normalizedUi === 'HUB_WEB') {
+    return 'hub';
+  }
+
+  if (transport === 'home') {
+    return options?.isLegacyAdapter ? 'legacy-home' : 'home2';
+  }
+
+  return 'browser-dev';
+}
+
 export async function qdnRequest<T = unknown>(request: QdnRequest): Promise<T> {
   if (!isRecord(request) || typeof request.action !== 'string') {
     throw new Error('QDN requests must include an action.');
@@ -202,6 +228,7 @@ export async function getBridgeState(): Promise<BridgeState> {
 
   return {
     actions,
+    host: classifyBridgeHost(ui, transport),
     isHomeBridge: transport === 'home',
     isUsingPublicNode,
     transport,
