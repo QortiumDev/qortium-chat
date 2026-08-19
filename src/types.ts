@@ -302,6 +302,89 @@ export type PrivateGroupChatKeyRequestRecoveryResult = {
   }>;
 };
 
+// -------- Private group chat (P3a): state --------
+//
+// review/schemas-private-group-actions.md § "GET_PRIVATE_GROUP_CHAT_STATE".
+// Key material (`epochId`, `memberPublicKeys`) is carried opaque — coreApi
+// never decodes or interprets it, only routes it back to Home unchanged for
+// the next action (send/rotate/resolve).
+export type QortiumPrivateGroupChatState = {
+  allPublicKeysKnown: true;
+  available: true;
+  epochId: unknown;
+  exists?: true;
+  groupId: number;
+  isOpen: false;
+  maxMessagePlaintextBytes: number;
+  maxV1Members?: number;
+  memberCount: number;
+  memberPublicKeys: unknown[];
+  qpgcVersion: 1;
+};
+
+export type QortalPrivateGroupChatState = {
+  available: boolean;
+  exists?: true;
+  groupId: number;
+  groupName: string;
+  isMember: boolean;
+  isOpen: false;
+  memberCount: number;
+  publisherName: string | null;
+  qortalPrivateGroupVersion: 1;
+  recipientCount: number | null;
+  resourceSignature: string | null;
+  rotationRequired: boolean;
+};
+
+// Discriminate with isQortiumPrivateGroupChatState/isQortalPrivateGroupChatState
+// (coreApi.ts) rather than inspecting fields ad hoc at call sites.
+export type PrivateGroupChatState = QortiumPrivateGroupChatState | QortalPrivateGroupChatState;
+
+// -------- Private group chat (P3a): active-chats entries --------
+//
+// review/schemas-private-group-actions.md § "GET_PRIVATE_GROUP_ACTIVE_CHATS".
+// A decrypted entry is the latest row for an eligible closed group, shaped
+// like a ChatMessage plus the decrypt-envelope fields SEARCH_PRIVATE_GROUP_
+// CHAT_MESSAGES adds (epochId/keyId on Qortium, keyVersion/payloadType on
+// Qortal) — kept loose here since P3a does not decode these rows.
+export type PrivateGroupActiveChatDecryptedEntry = ChatMessage & {
+  data: string;
+  encoding: 'BASE58' | 'BASE64';
+  status: 'DECRYPTED';
+};
+
+export type PrivateGroupActiveChatMissingKeyEntry = { groupId: number; status: 'MISSING_KEY' };
+export type PrivateGroupActiveChatNoMessagesEntry = { groupId: number; status: 'NO_MESSAGES' };
+
+export type PrivateGroupActiveChatEntry =
+  | PrivateGroupActiveChatDecryptedEntry
+  | PrivateGroupActiveChatMissingKeyEntry
+  | PrivateGroupActiveChatNoMessagesEntry;
+
+// -------- Private group chat (P3a): key lifecycle --------
+//
+// Normalized REQUEST_PRIVATE_GROUP_CHAT_KEY outcome. QPGC broadcasts a
+// key-request control envelope ({signature, timestamp}); Qortal instead
+// attempts local/resource recovery with no transaction at all
+// ({accepted, recovered, resourceSignature}). Every raw response field is
+// kept alongside the added `kind` discriminant (via the Record<string,
+// unknown> intersection) so the existing untyped legacy pass-through shape
+// callers may already depend on keeps working unchanged.
+export type PrivateGroupKeyRequestOutcome =
+  | ({ kind: 'broadcast' } & Record<string, unknown>)
+  | ({ kind: 'recovery' } & Record<string, unknown>);
+
+// Normalized RESOLVE_PRIVATE_GROUP_CHAT_KEY_REQUESTS / ROTATE_PRIVATE_GROUP_
+// CHAT_KEY outcome. QPGC relays zero, one, or many key announcements; Qortal
+// instead publishes/rotates an administrator key bundle. `signatures` always
+// holds every relayed/published transaction signature found in the raw
+// response (empty when none). Raw fields are kept alongside, same rationale
+// as PrivateGroupKeyRequestOutcome above.
+export type PrivateGroupKeyResolutionOutcome =
+  | ({ kind: 'relay'; signatures: string[] } & Record<string, unknown>)
+  | ({ kind: 'publication'; signatures: string[] } & Record<string, unknown>);
+
 export type TransactionStatus = {
   approvalStatus?: string;
   blockHeight?: number | null;
