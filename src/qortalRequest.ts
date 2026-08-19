@@ -3,9 +3,10 @@
 // Qortal-prefixed actions on window.qdnRequest (the contract ChibiHub uses).
 // This adapter normalizes both hosts to the Home 2 action names consumed by the
 // rest of Chat; it never moves account keys or signing into the QDN app.
-import type { BridgeState, BridgeTransport, NodeApiFetchResult, QdnAction } from './types';
-import { classifyBridgeTransport, hasHomeBridge, qdnRequest } from './qdnRequest';
+import type { BridgeHost, BridgeState, BridgeTransport, NodeApiFetchResult, QdnAction } from './types';
+import { classifyBridgeHost, classifyBridgeTransport, hasHomeBridge, qdnRequest } from './qdnRequest';
 import { buildQortalHubGroupChatPayload, normalizeQortalOutgoingMessage } from './qortalChatPayload';
+import { getInjectedQortalRequestGlobal } from './qortalGlobal';
 
 const DEFAULT_NODE_API_URL = 'http://127.0.0.1:12391';
 
@@ -77,13 +78,15 @@ function getLegacyQortalActions(value: unknown): QdnAction[] {
   return Array.from(new Set(actions));
 }
 
-export function hasQortalChatBridgeActions(actions: readonly string[]) {
+// Hub does not advertise GET_ACCOUNT_GROUPS (core q-apps.js handles only
+// LIST_GROUPS etc.), so it is required only for non-Hub hosts.
+export function hasQortalChatBridgeActions(actions: readonly string[], host?: BridgeHost) {
   const available = new Set(actions.map((action) => action.toUpperCase()));
 
   return (
     available.has('GET_USER_ACCOUNT') &&
-    available.has('GET_ACCOUNT_GROUPS') &&
-    available.has('SEARCH_CHAT_MESSAGES')
+    available.has('SEARCH_CHAT_MESSAGES') &&
+    (host === 'hub' || available.has('GET_ACCOUNT_GROUPS'))
   );
 }
 
@@ -246,11 +249,12 @@ async function fallbackQortalRequest<T>(request: QortalRequestPayload): Promise<
   }
 }
 
-/** True only for Home 2's dedicated protocol global. Home 1.7 is detected
- * separately and must prove its Qortal-prefixed action catalogue before Chat
- * shows the network section. */
+/** True when a dedicated qortalRequest protocol global exists — Home 2's
+ * window.qortalRequest, or Qortal Hub's top-level lexical const (see
+ * qortalGlobal.ts). Home 1.7 is detected separately and must prove its
+ * Qortal-prefixed action catalogue before Chat shows the network section. */
 export function hasQortalHomeBridge() {
-  return typeof window !== 'undefined' && typeof window.qortalRequest === 'function';
+  return getInjectedQortalRequestGlobal() !== undefined;
 }
 
 export function hasLegacyQortalBridgeCandidate() {
@@ -262,7 +266,7 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
     throw new Error('Qortal requests must include an action.');
   }
 
-  const bridgeRequest = typeof window !== 'undefined' ? window.qortalRequest : undefined;
+  const bridgeRequest = getInjectedQortalRequestGlobal();
 
   if (typeof bridgeRequest === 'function') {
     if (request.action.toUpperCase() === 'SEND_CHAT_MESSAGE') {
@@ -324,14 +328,23 @@ export async function getQortalBridgeState(): Promise<BridgeState> {
     isUsingPublicNode = false;
   }
 
-  const hasQortalCapabilities = hasQortalChatBridgeActions(actions);
+  // Hub-ness only needs `ui`, not the transport it feeds into below — resolve
+  // it first so the GET_ACCOUNT_GROUPS relaxation applies to the capability
+  // check that decides transport itself.
+  const normalizedUi = ui.trim().toUpperCase();
+  const isHubUi = normalizedUi === 'HUB_ELECTRON' || normalizedUi === 'HUB_WEB';
+  const hasQortalCapabilities = hasQortalChatBridgeActions(actions, isHubUi ? 'hub' : undefined);
   const transport: BridgeTransport = classifyBridgeTransport(
     ui,
     hasDedicatedBridge || (hasLegacyCandidate && hasQortalCapabilities),
   );
+  const host = classifyBridgeHost(ui, transport, {
+    isLegacyAdapter: !hasDedicatedBridge && hasLegacyCandidate,
+  });
 
   return {
     actions,
+    host,
     isHomeBridge: transport === 'home',
     isUsingPublicNode,
     transport,

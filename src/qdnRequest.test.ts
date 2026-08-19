@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildNodeWebSocketUrl,
+  classifyBridgeHost,
   classifyBridgeTransport,
   getBridgeState,
   hasAction,
@@ -24,6 +25,7 @@ describe('qdnRequest bridge adapter', () => {
 
     await expect(getBridgeState()).resolves.toEqual({
       actions: ['FETCH_NODE_API', 'GET_SELECTED_ACCOUNT'],
+      host: 'home2',
       isHomeBridge: true,
       isUsingPublicNode: true,
       transport: 'home',
@@ -42,6 +44,7 @@ describe('qdnRequest bridge adapter', () => {
 
     await expect(getBridgeState()).resolves.toEqual({
       actions: ['FETCH_NODE_API'],
+      host: 'home2',
       isHomeBridge: true,
       isUsingPublicNode: false,
       transport: 'home',
@@ -60,6 +63,7 @@ describe('qdnRequest bridge adapter', () => {
 
     await expect(getBridgeState()).resolves.toEqual({
       actions: ['FETCH_NODE_API', 'SEARCH_CHAT_MESSAGES'],
+      host: 'gateway',
       isHomeBridge: false,
       isUsingPublicNode: true,
       transport: 'gateway',
@@ -71,6 +75,17 @@ describe('qdnRequest bridge adapter', () => {
     expect(classifyBridgeTransport('QORTIUM_GATEWAY', true)).toBe('gateway');
     expect(classifyBridgeTransport('future-home-shell', true)).toBe('home');
     expect(classifyBridgeTransport('BROWSER_DEV', false)).toBe('browser-dev');
+  });
+
+  it('classifies bridge host from ui + transport', () => {
+    expect(classifyBridgeHost('QORTIUM_HOME_ELECTRON', 'home')).toBe('home2');
+    expect(classifyBridgeHost('HUB_ELECTRON', 'home')).toBe('hub');
+    expect(classifyBridgeHost('HUB_WEB', 'home')).toBe('hub');
+    expect(classifyBridgeHost('QORTIUM_GATEWAY', 'gateway')).toBe('gateway');
+    expect(classifyBridgeHost('BROWSER_DEV', 'browser-dev')).toBe('browser-dev');
+    expect(classifyBridgeHost('QORTIUM_HOME_ELECTRON', 'home', { isLegacyAdapter: true })).toBe(
+      'legacy-home',
+    );
   });
 
   it('uses local fallback actions outside Home', async () => {

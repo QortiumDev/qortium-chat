@@ -25,10 +25,30 @@ describe('qortalRequest bridge adapter', () => {
     expect(hasQortalHomeBridge()).toBe(true);
     await expect(getQortalBridgeState()).resolves.toEqual({
       actions: ['FETCH_NODE_API', 'GET_USER_ACCOUNT', 'SEND_CHAT_MESSAGE'],
+      host: 'home2',
       isHomeBridge: true,
       isUsingPublicNode: false,
       transport: 'home',
       ui: 'QORTIUM_HOME_ELECTRON',
+    });
+  });
+
+  it('reports host "hub" when WHICH_UI resolves a Hub shell, even though the bridge global lives on window in this test', async () => {
+    const qortalRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce(['FETCH_NODE_API', 'GET_USER_ACCOUNT', 'SEARCH_CHAT_MESSAGES', 'SEND_CHAT_MESSAGE'])
+      .mockResolvedValueOnce('HUB_ELECTRON')
+      .mockResolvedValueOnce(false);
+
+    vi.stubGlobal('window', { qdnRequest: vi.fn(), qortalRequest: qortalRequestMock });
+
+    const bridge = await getQortalBridgeState();
+
+    expect(bridge).toMatchObject({
+      host: 'hub',
+      isHomeBridge: true,
+      transport: 'home',
+      ui: 'HUB_ELECTRON',
     });
   });
 
@@ -61,6 +81,7 @@ describe('qortalRequest bridge adapter', () => {
     const bridge = await getQortalBridgeState();
 
     expect(bridge).toMatchObject({
+      host: 'legacy-home',
       isHomeBridge: true,
       isUsingPublicNode: false,
       transport: 'home',
@@ -94,6 +115,15 @@ describe('qortalRequest bridge adapter', () => {
     expect(hasQortalChatBridgeActions(bridge.actions)).toBe(false);
     expect(bridge.isHomeBridge).toBe(false);
     expect(bridge.transport).toBe('browser-dev');
+  });
+
+  it('relaxes GET_ACCOUNT_GROUPS for the hub host but still requires it elsewhere', () => {
+    const withoutGroups = ['GET_USER_ACCOUNT', 'SEARCH_CHAT_MESSAGES'];
+
+    expect(hasQortalChatBridgeActions(withoutGroups, 'hub')).toBe(true);
+    expect(hasQortalChatBridgeActions(withoutGroups)).toBe(false);
+    expect(hasQortalChatBridgeActions(withoutGroups, 'home2')).toBe(false);
+    expect(hasQortalChatBridgeActions([...withoutGroups, 'GET_ACCOUNT_GROUPS'], 'home2')).toBe(true);
   });
 
   it('maps legacy account, message-read, and reply-send requests without exposing keys', async () => {

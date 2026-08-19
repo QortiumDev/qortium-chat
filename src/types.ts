@@ -7,6 +7,13 @@ export type ChatNetwork = 'qortal' | 'qortium';
 
 export type BridgeTransport = 'browser-dev' | 'gateway' | 'home';
 
+// Which concrete host injected the bridge, independent of transport. Transport
+// answers "how do we reach the node" (home vs gateway vs local browser);
+// host answers "which shell/UI is this" so callers can gate on Hub-specific
+// action-catalogue gaps (e.g. hasQortalChatBridgeActions) without re-deriving
+// it from `ui` at every call site.
+export type BridgeHost = 'home2' | 'hub' | 'legacy-home' | 'gateway' | 'browser-dev';
+
 // A loadable value with its fetch lifecycle: idle/loading keep the last value,
 // error carries a message alongside the stale value, ready holds the fresh value.
 export type AsyncState<T> =
@@ -16,6 +23,7 @@ export type AsyncState<T> =
 
 export type BridgeState = {
   actions: QdnAction[];
+  host: BridgeHost;
   isHomeBridge: boolean;
   isUsingPublicNode: boolean;
   transport: BridgeTransport;

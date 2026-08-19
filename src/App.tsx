@@ -1247,6 +1247,7 @@ export default function App() {
   const homeV2AppTab = isHomeV2AppTab(window.location.search);
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
+    host: 'browser-dev',
     isHomeBridge: false,
     isUsingPublicNode: false,
     transport: 'browser-dev',
@@ -1274,6 +1275,7 @@ export default function App() {
   const qortalAvailableRef = useRef(false);
   const [qortalBridge, setQortalBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
+    host: 'browser-dev',
     isHomeBridge: false,
     isUsingPublicNode: false,
     transport: 'browser-dev',
