@@ -1,3 +1,5 @@
+import { buildParagraphHtmlFromPlainText } from './chatText';
+
 type QortalOutgoingMessage = {
   repliedTo: string | null;
   text: string;
@@ -121,16 +123,47 @@ export function buildQortalHubGroupChatReactionPayload(
   });
 }
 
+// Direct-chat Qortal INITIAL sends: unlike the Hub v3 group envelope
+// (`messageText` as a Tiptap doc), the v2 direct envelope carries `message`
+// as paragraph HTML — verified against the interop fixture's
+// directMessage.plaintext (`{"message":"<p>Qortal direct interop</p>",
+// "version":2,"specialId":"h0b-direct","repliedTo":"","type":""}`) and
+// against Hub's own background.ts `sendChatDirect`, which builds
+// `{ message: messageText, version: 2, ...otherData }` from
+// `editorRef.current.getHTML()`, where `otherData` supplies specialId/
+// repliedTo/type in that order. Key order here matches that source (message,
+// version, then specialId/repliedTo/type) rather than this file's usual
+// alphabetical convention, so a diff against the fixture stays legible.
+export function buildQortalDirectChatPayload(
+  outgoing: QortalOutgoingMessage,
+  specialId: string = globalThis.crypto.randomUUID(),
+) {
+  if (!outgoing.text) {
+    throw new Error('Direct chat messages must not be empty.');
+  }
+
+  return JSON.stringify({
+    message: buildParagraphHtmlFromPlainText(outgoing.text),
+    version: 2,
+    specialId,
+    repliedTo: outgoing.repliedTo ?? '',
+    type: '',
+  });
+}
+
 // Direct-chat Qortal envelopes carry the same fields under `message` (not
 // `messageText`) and `version: 2` (not 3) — see review/schemas-home2-
-// actions.md "Direct chat" (Qortal exact-action shapes).
+// actions.md "Direct chat" (Qortal exact-action shapes). `message` is
+// paragraph HTML, the same convention buildQortalDirectChatPayload above
+// uses for the initial send (and the canonical delete envelope already uses
+// literally, via '<p></p>').
 export function buildQortalDirectChatEditPayload(
   outgoing: QortalOutgoingMessage,
   specialId: string = globalThis.crypto.randomUUID(),
 ) {
   return JSON.stringify({
     isEdited: true,
-    message: outgoing.text,
+    message: buildParagraphHtmlFromPlainText(outgoing.text),
     repliedTo: outgoing.repliedTo ?? '',
     specialId,
     type: 'edit',

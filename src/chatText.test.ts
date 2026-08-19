@@ -11,6 +11,12 @@ import {
   isHiddenChatMessage,
   isMachineChatMessage,
 } from './chatText';
+import {
+  buildQortalDirectChatDeletePayload,
+  buildQortalDirectChatEditPayload,
+  buildQortalDirectChatPayload,
+  buildQortalDirectChatReactionPayload,
+} from './qortalChatPayload';
 
 function base64(value: string) {
   const bytes = new TextEncoder().encode(value);
@@ -584,5 +590,96 @@ describe('machine messages', () => {
     expect(isHiddenChatMessage({ data: base64(chessEnvelope), isText: true })).toBe(true);
     expect(isHiddenChatMessage({ data: base64(buildReactionMessageText('👍', true)), isText: true })).toBe(true);
     expect(isHiddenChatMessage({ data: base64('hello'), isText: true })).toBe(false);
+  });
+});
+
+describe('Qortal direct v2 envelopes (P2a)', () => {
+  it('decodes an initial send the same shape a v3 group send produces', () => {
+    const wire = buildQortalDirectChatPayload({ repliedTo: 'reply-sig', text: 'Hello\nQortal' }, 'h0b-direct');
+    const decoded = decodeChatMessage({ data: base64(wire), isText: true });
+
+    expect(decoded).toEqual({
+      body: 'Hello\nQortal',
+      kind: 'text',
+      repliedTo: 'reply-sig',
+    });
+  });
+
+  it('omits repliedTo when the envelope carries an empty string, matching v3 behavior', () => {
+    const wire = buildQortalDirectChatPayload({ repliedTo: null, text: 'Qortal direct interop' }, 'h0b-direct');
+    const decoded = decodeChatMessage({ data: base64(wire), isText: true });
+
+    expect(decoded).toEqual({
+      body: 'Qortal direct interop',
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('decodes an edit envelope to its extracted text, ignoring isEdited (the row supplies chatReference)', () => {
+    const wire = buildQortalDirectChatEditPayload({ repliedTo: null, text: 'fixed typo' }, 'h0b-direct-edit');
+    const decoded = decodeChatMessage({ data: base64(wire), isText: true });
+
+    expect(decoded).toEqual({
+      body: 'fixed typo',
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('decodes the canonical delete envelope to the same empty-body representation as other protocols', () => {
+    const wire = buildQortalDirectChatDeletePayload('h0b-direct-delete');
+    const decoded = decodeChatMessage({ data: base64(wire), isText: true });
+
+    expect(decoded).toEqual({
+      body: '',
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('decodes a reaction envelope the same shape a group reaction produces', () => {
+    const wire = buildQortalDirectChatReactionPayload('🔥', true, 'h0b-direct-reaction');
+    const decoded = decodeChatMessage({ data: base64(wire), isText: true });
+
+    expect(decoded).toEqual({
+      body: '',
+      kind: 'reaction',
+      reaction: { content: '🔥', contentState: true },
+      repliedTo: null,
+    });
+  });
+
+  it('never throws on malformed v2-shaped JSON, falling back to raw text', () => {
+    const malformed = '{"message":"<p>broken","version":2,"specialId":"h0b","repliedTo":"","type":"';
+
+    expect(decodeChatMessage({ data: base64(malformed), isText: true })).toEqual({
+      body: malformed,
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('leaves plain-text qortium direct rows decoding unchanged (regression)', () => {
+    // Chat's own {message, repliedTo} direct envelope never sets `version` or
+    // `specialId`; a bare `{message, version: 2}` object with no specialId
+    // (as legacy/tolerant decode tests above construct) must keep falling
+    // through to the generic branch rather than being treated as a Qortal
+    // envelope — the v2-direct gate additionally requires `specialId`.
+    const data = base64(JSON.stringify({ message: 'private text wrapper', version: 2 }));
+
+    expect(decodeChatMessage({ data, isText: true })).toEqual({
+      body: 'private text wrapper',
+      kind: 'text',
+      repliedTo: null,
+    });
+
+    const opaque = base64('plain qortium direct text');
+
+    expect(decodeChatMessage({ data: opaque, isText: true })).toEqual({
+      body: 'plain qortium direct text',
+      kind: 'text',
+      repliedTo: null,
+    });
   });
 });

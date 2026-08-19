@@ -5,6 +5,7 @@ import { buildDeletedMessageText, buildReactionMessageText } from './chatText';
 import {
   buildQortalDirectChatDeletePayload,
   buildQortalDirectChatEditPayload,
+  buildQortalDirectChatPayload,
   buildQortalDirectChatReactionPayload,
   buildQortalHubGroupChatDeletePayload,
   buildQortalHubGroupChatEditPayload,
@@ -1091,6 +1092,13 @@ function assertDirectMessageByteLimit(message: string) {
 // `chatReference` must not be sent on an initial message (schema doc "Direct
 // chat"); the generic qdnRequest fallback (`legacy-home` hosts only, per the
 // design brief) is unchanged.
+//
+// On qortal, the exact-action path builds the v2 envelope (paragraph HTML,
+// see qortalChatPayload.ts) before sending, and the 3984-byte cap is
+// measured on that built envelope — not the raw text — since the envelope is
+// what actually rides the wire and the schema's limit applies to the final
+// `message` field. The qortium path is unchanged: cap on the raw text, same
+// as before this envelope wiring existed.
 export async function sendDirectChatMessage(
   recipientAddress: string,
   message: string,
@@ -1098,17 +1106,22 @@ export async function sendDirectChatMessage(
   network: ChatNetwork = 'qortium',
   actions?: QdnAction[],
 ) {
-  assertDirectMessageByteLimit(message);
-
   if (hasBridgeAction(actions, 'SEND_DIRECT_CHAT_MESSAGE')) {
+    const wireMessage =
+      network === 'qortal' ? buildQortalDirectChatPayload(normalizeQortalOutgoingMessage(message)) : message;
+
+    assertDirectMessageByteLimit(wireMessage);
+
     return normalizeChatSendResult(
       await bridgeRequest<unknown>(network, {
         action: 'SEND_DIRECT_CHAT_MESSAGE',
-        message,
+        message: wireMessage,
         otherAddress: recipientAddress,
       }),
     );
   }
+
+  assertDirectMessageByteLimit(message);
 
   const request = {
     action: 'SEND_CHAT_MESSAGE',
@@ -1136,12 +1149,15 @@ export async function sendDirectChatEdit(
     throw new Error('Direct chat edits require Qortium Home direct chat revision support.');
   }
 
-  assertDirectMessageByteLimit(message);
-
   const wireMessage =
     network === 'qortal'
       ? buildQortalDirectChatEditPayload(normalizeQortalOutgoingMessage(message))
       : JSON.stringify({ message });
+
+  // Cap on the envelope for qortal (it inflates size) and on the raw text for
+  // qortium (unchanged from before this envelope wiring existed) — same
+  // rationale as sendDirectChatMessage above.
+  assertDirectMessageByteLimit(network === 'qortal' ? wireMessage : message);
 
   return normalizeChatSendResult(
     await bridgeRequest<unknown>(network, {
