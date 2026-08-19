@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Wyłącz powiadomienia czatu',
   'action.notifications.settings': 'Ustawienia powiadomień czatu',
   'notification.settings.scope': 'Aktywność czatu bezpośredniego działa w tle i może obejmować edycje lub reakcje. Wzmianki i odpowiedzi dotyczą tylko otwartej grupy.',
+  'notification.settings.scope.foreground': 'Aktywność czatu bezpośredniego, wzmianki i odpowiedzi powiadamiają tylko wtedy, gdy Chat jest otwarty — nie w tle.',
   'notification.direct.title': 'Nowa wiadomość bezpośrednia',
   'notification.mention.title': 'Wspomniano o Tobie',
   'notification.reply.title': 'Nowa odpowiedź na Twoją wiadomość',

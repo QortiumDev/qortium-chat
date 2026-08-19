@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Dezactivează notificările de chat',
   'action.notifications.settings': 'Setări pentru notificările de chat',
   'notification.settings.scope': 'Activitatea chatului direct funcționează în fundal și poate include editări sau reacții. Mențiunile și răspunsurile se aplică numai grupului deschis.',
+  'notification.settings.scope.foreground': 'Activitatea chatului direct, mențiunile și răspunsurile notifică doar cât timp Chat este deschis — nu în fundal.',
   'notification.direct.title': 'Mesaj direct nou',
   'notification.mention.title': 'Ai fost menționat',
   'notification.reply.title': 'Răspuns nou la mesajul tău',

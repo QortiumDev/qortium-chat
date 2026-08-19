@@ -15,6 +15,7 @@ import {
   getFirstTransferFile,
   isSourceAttachmentExpired,
   QDN_PUBLISH_SOURCE_MAX_BYTES,
+  shouldClearStagedAttachmentOnAccountLock,
 } from './attachments';
 import {
   buildActiveChatsWebSocketUrl,
@@ -63,6 +64,7 @@ import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
 import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
 import { getBridgeErrorCode, isPendingReconciliationRequired } from './bridgeErrors';
 import {
+  clearNetworkKeyedEntries,
   filterChatJournalEntries,
   getForgettableJournalSignatures,
   getJournalConversationKey,
@@ -187,12 +189,15 @@ import {
   getChatAttentionKinds,
   getChatSelfIdentity,
   hasAnyChatNotificationsEnabled,
+  hasNotificationPermission,
   isIncomingChatMessage,
   readChatNotificationPreferences,
   reconcileChatNotifications,
-  showChatAttentionNotification,
+  selectDirectActivityNotification,
+  showChatNotification,
   writeChatNotificationPreferences,
   type ChatNotificationPreferences,
+  type ShowChatNotificationResult,
 } from './notifications';
 import { LatestRequestGuard } from './latestRequest';
 import { loadQortalAccountSnapshot } from './qortalAccountSession';
@@ -1387,6 +1392,15 @@ export default function App() {
   const qortalAccountRefreshPendingRef = useRef(false);
   const refreshingQortalAccountAddressRef = useRef<string | null>(null);
   const qortalActiveChatsRequestGuardRef = useRef(new LatestRequestGuard());
+  // Item D / P6b: fetchPendingJournal has no per-network in-flight tracking
+  // of its own — a slow response from the account that was selected when the
+  // fetch started must never land after a switch to a different account (or
+  // network availability being pulled), overwriting that account's own
+  // journal snapshot. One guard per network, invalidated whenever the owning
+  // account changes (see the Qortium account-reset effect and
+  // clearQortalAccountSessionState below).
+  const journalRequestGuardRef = useRef(new LatestRequestGuard());
+  const qortalJournalRequestGuardRef = useRef(new LatestRequestGuard());
   const groupDiscoveryRequestRef = useRef(0);
   const qortalGroupDiscoveryRequestRef = useRef(0);
   const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
@@ -1884,6 +1898,12 @@ export default function App() {
   const hasUnreadQortalDirect = unreadQortalDirectAddresses.size > 0;
   const canManageNotifications = !!account && canManageChatNotifications(actions);
   const canShowNotifications = canShowChatNotifications(actions);
+  // Home 2 advertises SHOW_NOTIFICATION/NOTIFICATION_HAS_PERMISSION but never
+  // NOTIFICATION_ADD/REMOVE, so canManageNotifications alone would hide the
+  // whole bell UI there. Either tier is enough to let the user control the
+  // stored preferences: legacy hosts drive a durable rule from them, Home 2
+  // drives foreground SHOW_NOTIFICATION triggers from them instead.
+  const canControlChatNotifications = canManageNotifications || (!!account && canShowNotifications);
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
   const selectedGroupMembersLabel = isSelectedGeneralChat ? t('label.common.active') : t('label.common.members');
   const hasSelectedMessages = selectedChatKey !== '' && messagesChatKey === selectedChatKey;
@@ -3392,6 +3412,20 @@ export default function App() {
     setLastReadByQortalAddress(restoredQortalDirectWatermarks);
     setQortalLoadedDirectActivityByAddress(new Map());
 
+    // Item D / P6b: the Qortal pending-transaction journal is account-scoped
+    // (see journalRequestGuardRef's declaration) — drop the previous
+    // account's snapshot and invalidate any fetch still in flight for it so
+    // a late response cannot land under the new account.
+    qortalJournalRequestGuardRef.current.begin();
+    setQortalJournalEntries(emptyJournalEntries);
+
+    // P6b target 3: GET_PRIVATE_GROUP_CHAT_STATE snapshots (isMember, keys,
+    // rotationRequired) are account-relative. Drop every Qortal-network entry
+    // so a stale membership/key snapshot from the previous account can never
+    // render — even transiently while the fetch effect's own request guard
+    // reloads the currently-selected group's state — under the new one.
+    setPrivateGroupChatStateByKey((current) => clearNetworkKeyedEntries(current, 'qortal'));
+
     for (const key of draftsByChatKeyRef.current.keys()) {
       if (key.startsWith('qortal:')) {
         draftsByChatKeyRef.current.delete(key);
@@ -3429,6 +3463,13 @@ export default function App() {
       draftChatKeyRef.current = selectedChatKeyRef.current;
       setDraft('');
       setComposeContext(null);
+      // P6b target 2: a staged attachment's Home-issued source token is
+      // bound to the account that requested it — the Qortium counterpart of
+      // this reset (below, keyed on account?.address) already drops the
+      // stage the same way; this mirrors it for a Qortal identity change so
+      // a stale token cannot survive to fail confusingly at publish time.
+      setStagedAttachment(null);
+      setAttachmentError('');
       setLiveAnnouncement('');
       lastAnnouncedRef.current = { chatKey: '', signature: '' };
       setUnreadDividerTimestamp(null);
@@ -4826,8 +4867,18 @@ export default function App() {
       return;
     }
 
+    // Guard against a response arriving after the owning account has already
+    // changed (see journalRequestGuardRef's declaration) — an in-flight fetch
+    // started for account A must never commit its result once B is current.
+    const guard = network === 'qortal' ? qortalJournalRequestGuardRef.current : journalRequestGuardRef.current;
+    const requestId = guard.begin();
+
     try {
       const result = await getPendingBridgeTransactions(network, networkActions);
+
+      if (!guard.isLatest(requestId)) {
+        return;
+      }
 
       setNetworkJournalEntries(network, result.entries);
     } catch {
@@ -6663,11 +6714,30 @@ export default function App() {
     }
   }
 
+  // A live foreground SHOW_NOTIFICATION call is best-effort and never throws
+  // (see notifications.ts), but a `revoked`/`disabled` result is a signal
+  // worth reflecting: Home is telling Chat its one durable app permission is
+  // gone, so re-registering forever would just keep silently failing. This
+  // mirrors the exact reaction the legacy reconcileChatNotifications effect
+  // already has to a denied permission — turn every preference off locally so
+  // the bell UI stops claiming notifications are on.
+  function reflectRevokedChatNotificationPermission(result: ShowChatNotificationResult) {
+    if (result.shown || (result.reason !== 'revoked' && result.reason !== 'disabled')) {
+      return;
+    }
+
+    const disabledPreferences: ChatNotificationPreferences = { ...DISABLED_CHAT_NOTIFICATION_PREFERENCES };
+
+    chatNotificationsDesiredRef.current = disabledPreferences;
+    writeChatNotificationPreferences(disabledPreferences);
+    setChatNotificationPreferences(disabledPreferences);
+  }
+
   async function updateChatNotificationPreference(
     key: Exclude<keyof ChatNotificationPreferences, 'version'>,
     enabled: boolean,
   ) {
-    if (!account || !canManageNotifications || chatNotificationsBusy) {
+    if (!account || !canControlChatNotifications || chatNotificationsBusy) {
       return;
     }
 
@@ -6679,18 +6749,31 @@ export default function App() {
 
     try {
       const operation = chatNotificationOperationRef.current.then(async () => {
+        // Legacy hosts (NOTIFICATION_ADD/REMOVE advertised) keep registering
+        // the durable background rule exactly as before. Home 2 has no such
+        // rule — the stored preference alone is what the foreground sweeps
+        // below read, so there is nothing to register here beyond priming the
+        // one shared permission from this focused click.
+        if (!canManageNotifications) {
+          if (hasAnyChatNotificationsEnabled(nextPreferences)) {
+            const granted = await hasNotificationPermission('qortium', actions);
+
+            if (!granted) {
+              await showChatNotification('qortium', {
+                text: t('action.notifications.settings'),
+                title: t('action.notifications.enable'),
+              }, actions);
+            }
+          }
+          return;
+        }
+
         let directRuleRegistered = false;
 
         if (hasAnyChatNotificationsEnabled(nextPreferences)) {
-          const permission = await qdnRequest<unknown>({ action: 'NOTIFICATION_HAS_PERMISSION' });
-          const permissionGranted = (
-            !!permission &&
-            typeof permission === 'object' &&
-            'granted' in permission &&
-            permission.granted === true
-          );
+          const granted = await hasNotificationPermission('qortium', actions);
 
-          if (!permissionGranted) {
+          if (!granted) {
             if (nextPreferences.direct) {
               await enableDirectMessageNotifications(account.address, t('notification.direct.title'));
               directRuleRegistered = true;
@@ -6698,7 +6781,10 @@ export default function App() {
               // SHOW_NOTIFICATION uses the same durable Home grant. Because this
               // click occurs in the focused app, Home grants permission and then
               // suppresses the setup notification as already focused.
-              await showChatAttentionNotification(t('action.notifications.enable'));
+              await showChatNotification('qortium', {
+                text: t('action.notifications.settings'),
+                title: t('action.notifications.enable'),
+              }, actions);
             }
           }
         }
@@ -7163,42 +7249,51 @@ export default function App() {
       const decoded = decodeChatMessage(newest, t);
       setLiveAnnouncement(`${getMessageSenderLabel(newest, undefined)}: ${getMessageSnippet(newest, t)}`);
 
-      if (
-        canShowNotifications &&
-        selectedChat?.kind === 'group' &&
-        selfAddress
-      ) {
-        const attention = getChatAttentionKinds({
-          body: decoded.body,
-          message: newest,
-          messages: [...olderMessages, ...list],
-          repliedTo: decoded.repliedTo,
-          selfAddress,
-          selfName,
-        });
+      if (selectedChat?.kind === 'group' && selfAddress) {
+        const attentionNetwork = selectedChat.network ?? 'qortium';
+        const attentionActions = getNetworkActions(attentionNetwork);
 
-        const enabledAttention = getEnabledChatAttentionKind(attention, chatNotificationPreferences);
-
-        if (enabledAttention) {
-          const title = enabledAttention === 'reply'
-            ? t('notification.reply.title')
-            : t('notification.mention.title');
-          void showChatAttentionNotification(title).catch(() => {
-            // Direct/background registration remains enabled. A transient live
-            // notification failure should not interrupt the chat stream.
+        if (canShowChatNotifications(attentionActions)) {
+          const attention = getChatAttentionKinds({
+            body: decoded.body,
+            message: newest,
+            messages: [...olderMessages, ...list],
+            repliedTo: decoded.repliedTo,
+            selfAddress,
+            selfName,
           });
+
+          const enabledAttention = getEnabledChatAttentionKind(attention, chatNotificationPreferences);
+
+          if (enabledAttention) {
+            const title = enabledAttention === 'reply'
+              ? t('notification.reply.title')
+              : t('notification.mention.title');
+            void showChatNotification(attentionNetwork, {
+              source: { conversation: { groupId: selectedChat.group.groupId, kind: 'group' }, kind: 'chat' },
+              text: getMessageSnippet(newest, t),
+              title,
+            }, attentionActions)
+              .then(reflectRevokedChatNotificationPermission)
+              .catch(() => {
+                // A transient live notification failure should not interrupt
+                // the chat stream — showChatNotification already resolves
+                // quietly for everything it can predict.
+              });
+          }
         }
       }
     }
 
     lastAnnouncedRef.current = { chatKey: messagesChatKey, signature };
   }, [
-    canShowNotifications,
+    actionsKey,
     chatNotificationPreferences.mentions,
     chatNotificationPreferences.replies,
     messages,
     messagesChatKey,
     olderMessages,
+    qortalActionsKey,
     selectedChat,
     selfAddress,
     selfName,
@@ -7592,6 +7687,15 @@ export default function App() {
     setApprovalVotes(createState(emptyApprovalVotes));
     setTrackedTransactions({});
     setLoadedDirectActivityByAddress(new Map());
+    // Item D / P6b: mirrors clearQortalAccountSessionState's Qortal-side
+    // reset — the Qortium pending-transaction journal is account-scoped too.
+    journalRequestGuardRef.current.begin();
+    setJournalEntries(emptyJournalEntries);
+    // P6b target 3: drop every Qortium-network GET_PRIVATE_GROUP_CHAT_STATE
+    // snapshot (isMember, keys, rotationRequired are account-relative) so a
+    // stale membership/key snapshot from the previous account can never
+    // render for the new one, even transiently.
+    setPrivateGroupChatStateByKey((current) => clearNetworkKeyedEntries(current, 'qortium'));
     // Restore this account's read watermarks so unread state survives reloads;
     // unseen groups/directs still get baselined to "read" by the effects below.
     const watermarks = account ? readReadWatermarks(account.address) : null;
@@ -7642,6 +7746,31 @@ export default function App() {
     // account's saved chat in the normal effect below.
     userSelectedChatRef.current = selectedChatIsQortal;
   }, [account?.address]);
+
+  // P6b target 2: the reset effect above clears a staged attachment on a
+  // Qortium account SWITCH (address change), and clearQortalAccountSessionState
+  // mirrors that for Qortal — but LOCKING the very same account (address
+  // unchanged, only account.isUnlocked flipping) fires neither, so a token
+  // staged before the lock would otherwise survive and fail confusingly at
+  // publish time. Reuse the same "expired, reselect" notice the reactive
+  // publish-time expiry check already shows for the equivalent stale-token
+  // case. Qortal accounts carry no lock state in this app (qortalAccount has
+  // no isUnlocked field — see types.ts), so this only needs to watch the
+  // Qortium side.
+  useEffect(() => {
+    if (
+      !shouldClearStagedAttachmentOnAccountLock({
+        hasStagedAttachment: !!stagedAttachment,
+        isAccountUnlocked,
+        selectedChatIsQortal: selectedChatKeyRef.current.startsWith('qortal:'),
+      })
+    ) {
+      return;
+    }
+
+    setStagedAttachment(null);
+    setAttachmentError(t('status.attachment.reselect'));
+  }, [isAccountUnlocked]);
 
   // Persist each chain's read state under that chain's selected identity. The
   // skip refs protect the transitional render after an identity-specific load.
@@ -7914,6 +8043,16 @@ export default function App() {
             continue;
           }
 
+          // Captured before the skip check below can short-circuit this
+          // iteration: "never hydrated before" (isInitialHydration) is
+          // exactly the negation of the same has-check the skip-logic uses,
+          // so the two can never disagree. Reusing it here is the
+          // correctness point for foreground direct-activity notifications —
+          // pre-existing history hydrated for the first time must never
+          // notify, only activity strictly newer than what was already known.
+          const isInitialHydration = !loadedDirectActivityRef.current.has(direct.address);
+          const sinceTimestamp = loadedDirectActivityRef.current.get(direct.address) ?? null;
+
           if (!refresh && loadedDirectActivityRef.current.has(direct.address)) {
             continue;
           }
@@ -7934,6 +8073,34 @@ export default function App() {
                 allowTombstone: nextMessages.length < ACTIVITY_SWEEP_MESSAGE_LIMIT,
               }),
             );
+
+            // Home 2 only: legacy hosts already get direct notifications from
+            // their own durable NOTIFICATION_ADD rule (Core-evaluated,
+            // independent of this sweep) — firing here too would double them
+            // up. On Home 2 there is no such rule, so this bounded foreground
+            // sweep is direct activity's only notification source.
+            if (canShowNotifications && !canManageNotifications && account?.address) {
+              const notifiable = selectDirectActivityNotification({
+                isInitialHydration,
+                messages: nextMessages,
+                preferences: chatNotificationPreferences,
+                selfAddress: account.address,
+                sinceTimestamp,
+              });
+
+              if (notifiable) {
+                void showChatNotification('qortium', {
+                  source: { conversation: { kind: 'direct', otherAddress: direct.address }, kind: 'chat' },
+                  text: getMessageSnippet(notifiable, t),
+                  title: t('notification.direct.title'),
+                }, actions)
+                  .then(reflectRevokedChatNotificationPermission)
+                  .catch(() => {
+                    // Best-effort: a transient failure here should not disrupt
+                    // the activity sweep itself.
+                  });
+              }
+            }
           } catch {
             // Direct history is optional in older Home/Core bridge contexts.
           }
@@ -7957,7 +8124,17 @@ export default function App() {
       isDisposed = true;
       window.clearInterval(interval);
     };
-  }, [actionsKey, activeChats.value.direct, canReadPrivateDirectChat, isAccountUnlocked]);
+  }, [
+    account?.address,
+    actionsKey,
+    activeChats.value.direct,
+    canManageNotifications,
+    canReadPrivateDirectChat,
+    canShowNotifications,
+    chatNotificationPreferences.direct,
+    isAccountUnlocked,
+    t,
+  ]);
 
   // Qortal counterpart of the direct activity sweep above — same rationale
   // (Qortal has no protocol-specific websocket route, so a direct chat not
@@ -7997,6 +8174,13 @@ export default function App() {
             continue;
           }
 
+          // See the Qortium sweep above for why this is captured before the
+          // fetch: it is the exact same "never hydrated before" check the
+          // skip-logic just used, and is what keeps pre-existing history from
+          // ever being reported as new activity.
+          const isInitialHydration = !loadedQortalDirectActivityRef.current.has(direct.address);
+          const sinceTimestamp = loadedQortalDirectActivityRef.current.get(direct.address) ?? null;
+
           try {
             const nextMessages = await getDirectMessages(
               direct.address,
@@ -8014,6 +8198,33 @@ export default function App() {
                 allowTombstone: nextMessages.length < ACTIVITY_SWEEP_MESSAGE_LIMIT,
               }),
             );
+
+            // Qortal never had a legacy background rule at all (notifications.ts:
+            // NOTIFICATION_ADD is a Qortium-only qdn action) — this bounded
+            // foreground sweep is the only direct-activity notification source
+            // Qortal chat has ever had, on any host tier.
+            if (qortalAccount?.address && canShowChatNotifications(qortalActionList)) {
+              const notifiable = selectDirectActivityNotification({
+                isInitialHydration,
+                messages: nextMessages,
+                preferences: chatNotificationPreferences,
+                selfAddress: qortalAccount.address,
+                sinceTimestamp,
+              });
+
+              if (notifiable) {
+                void showChatNotification('qortal', {
+                  source: { conversation: { kind: 'direct', otherAddress: direct.address }, kind: 'chat' },
+                  text: getMessageSnippet(notifiable, t),
+                  title: t('notification.direct.title'),
+                }, qortalActionList)
+                  .then(reflectRevokedChatNotificationPermission)
+                  .catch(() => {
+                    // Best-effort: a transient failure here should not disrupt
+                    // the activity sweep itself.
+                  });
+              }
+            }
           } catch {
             // Direct history is optional in older Home/Core bridge contexts.
           }
@@ -8039,9 +8250,12 @@ export default function App() {
     };
   }, [
     qortalBridge.value.actions.join('\n'),
+    qortalAccount?.address,
     qortalActiveChats.value.direct,
     canReadQortalPrivateDirectChat,
+    chatNotificationPreferences.direct,
     isAccountUnlocked,
+    t,
   ]);
 
   // Refresh the decrypted active-chats list on a slow cadence so a brand-new
@@ -8904,6 +9118,7 @@ export default function App() {
       account={account}
       accountError={accountError}
       appVersion={APP_VERSION}
+      canControlChatNotifications={canControlChatNotifications}
       canManageNotifications={canManageNotifications}
       canShowNotifications={canShowNotifications}
       chatNotificationPreferences={chatNotificationPreferences}

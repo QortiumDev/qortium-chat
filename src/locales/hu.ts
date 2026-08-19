@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Csevegési értesítések kikapcsolása',
   'action.notifications.settings': 'Csevegési értesítések beállításai',
   'notification.settings.scope': 'A közvetlen csevegési tevékenység a háttérben működik, és szerkesztéseket vagy reakciókat is tartalmazhat. Az említések és válaszok csak a megnyitott csoportra vonatkoznak.',
+  'notification.settings.scope.foreground': 'A közvetlen csevegési tevékenység, az említések és a válaszok csak akkor értesítenek, amikor a Chat meg van nyitva – a háttérben nem.',
   'notification.direct.title': 'Új közvetlen üzenet',
   'notification.mention.title': 'Megemlítettek',
   'notification.reply.title': 'Új válasz az üzenetedre',

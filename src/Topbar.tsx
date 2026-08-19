@@ -93,6 +93,7 @@ export function Topbar({
   account,
   accountError,
   appVersion,
+  canControlChatNotifications,
   canManageNotifications,
   canShowNotifications,
   chatNotificationPreferences,
@@ -115,6 +116,7 @@ export function Topbar({
   account: QdnSelectedAccount | null;
   accountError: string;
   appVersion: string;
+  canControlChatNotifications: boolean;
   canManageNotifications: boolean;
   canShowNotifications: boolean;
   chatNotificationPreferences: ChatNotificationPreferences;
@@ -149,7 +151,7 @@ export function Topbar({
         )}
       </div>
       <div className="topbar__account">
-        {canManageNotifications ? (
+        {canControlChatNotifications ? (
           <div className="notification-settings" ref={chatNotificationSettingsRef}>
             <button
               aria-controls="chat-notification-settings"
@@ -175,7 +177,9 @@ export function Topbar({
                 <strong className="notification-settings__title">
                   {t('action.notifications.settings')}
                 </strong>
-                <p className="notification-settings__scope">{t('notification.settings.scope')}</p>
+                <p className="notification-settings__scope">
+                  {t(canManageNotifications ? 'notification.settings.scope' : 'notification.settings.scope.foreground')}
+                </p>
                 <fieldset className="notification-settings__choices" disabled={chatNotificationsBusy}>
                   <legend className="sr-only">{t('action.notifications.settings')}</legend>
                   <label className="notification-settings__choice">

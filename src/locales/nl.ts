@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Chatmeldingen uitschakelen',
   'action.notifications.settings': 'Instellingen voor chatmeldingen',
   'notification.settings.scope': 'Directe chatactiviteit werkt op de achtergrond en kan bewerkingen of reacties bevatten. Vermeldingen en antwoorden gelden alleen voor de geopende groep.',
+  'notification.settings.scope.foreground': 'Directe chatactiviteit, vermeldingen en antwoorden geven alleen een melding terwijl Chat open is — niet op de achtergrond.',
   'notification.direct.title': 'Nieuw direct bericht',
   'notification.mention.title': 'Je bent vermeld',
   'notification.reply.title': 'Nieuw antwoord op je bericht',

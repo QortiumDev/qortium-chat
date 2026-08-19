@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Poista keskusteluilmoitukset käytöstä',
   'action.notifications.settings': 'Keskusteluilmoitusten asetukset',
   'notification.settings.scope': 'Yksityiskeskustelun toiminta toimii taustalla ja voi sisältää muokkauksia tai reaktioita. Maininnat ja vastaukset koskevat vain avointa ryhmää.',
+  'notification.settings.scope.foreground': 'Yksityisviestien toiminta, maininnat ja vastaukset ilmoittavat vain, kun Chat on auki – ei taustalla.',
   'notification.direct.title': 'Uusi yksityisviesti',
   'notification.mention.title': 'Sinut mainittiin',
   'notification.reply.title': 'Uusi vastaus viestiisi',

@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Отключить уведомления чата',
   'action.notifications.settings': 'Настройки уведомлений чата',
   'notification.settings.scope': 'Активность личного чата отслеживается в фоновом режиме и может включать изменения или реакции. Упоминания и ответы относятся только к открытой группе.',
+  'notification.settings.scope.foreground': 'Активность личного чата, упоминания и ответы уведомляют только пока открыт Chat — не в фоновом режиме.',
   'notification.direct.title': 'Новое личное сообщение',
   'notification.mention.title': 'Вас упомянули',
   'notification.reply.title': 'Новый ответ на ваше сообщение',

@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'השבתת התראות צ׳אט',
   'action.notifications.settings': 'הגדרות התראות צ׳אט',
   'notification.settings.scope': 'פעילות בצ׳אט ישיר פועלת ברקע ועשויה לכלול עריכות או תגובות. אזכורים ותשובות חלים רק על הקבוצה הפתוחה.',
+  'notification.settings.scope.foreground': 'פעילות בצ׳אט ישיר, אזכורים ותשובות שולחים התראה רק כאשר Chat פתוח — לא ברקע.',
   'notification.direct.title': 'הודעה ישירה חדשה',
   'notification.mention.title': 'הזכירו אותך',
   'notification.reply.title': 'תגובה חדשה להודעה שלך',
