@@ -1778,6 +1778,104 @@ describe('Core API path builders', () => {
         expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'JOIN_GROUP', groupId: 3 });
         expect(qortalRequestMock).not.toHaveBeenCalled();
       });
+
+      // D6: the three join-request readers pick up the same optional trailing
+      // `network` parameter as joinGroup/leaveGroup/approveGroupJoinRequest
+      // above — default 'qortium' keeps every pre-D6 call site byte-identical.
+      it('routes the three join-request readers through the Qortal bridge actions when advertised', async () => {
+        qortalRequestMock
+          .mockResolvedValueOnce([{ groupId: 12, joiner: 'QortalJoiner' }])
+          .mockResolvedValueOnce([{ group: { groupId: 12, groupName: 'Qortal group' }, joinRequests: [] }])
+          .mockResolvedValueOnce([{ groupId: 12, joiner: 'QortalJoiner' }]);
+
+        await expect(
+          getAccountGroupJoinRequests('QortalAddr', ['GET_ACCOUNT_GROUP_JOIN_REQUESTS'], 'qortal'),
+        ).resolves.toEqual([{ groupId: 12, joiner: 'QortalJoiner' }]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+          action: 'GET_ACCOUNT_GROUP_JOIN_REQUESTS',
+          address: 'QortalAddr',
+        });
+
+        await expect(
+          getAdminGroupJoinRequests('QortalAdmin', ['GET_ADMIN_GROUP_JOIN_REQUESTS'], 'qortal'),
+        ).resolves.toEqual([{ group: { groupId: 12, groupName: 'Qortal group' }, joinRequests: [] }]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+          action: 'GET_ADMIN_GROUP_JOIN_REQUESTS',
+          address: 'QortalAdmin',
+        });
+
+        await expect(getGroupJoinRequests(12, ['GET_GROUP_JOIN_REQUESTS'], 'qortal')).resolves.toEqual([
+          { groupId: 12, joiner: 'QortalJoiner' },
+        ]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(3, {
+          action: 'GET_GROUP_JOIN_REQUESTS',
+          groupId: 12,
+        });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('falls back to FETCH_NODE_API against the Qortal node for join-request reads when the actions are not advertised', async () => {
+        qortalRequestMock
+          .mockResolvedValueOnce({
+            data: [{ groupId: 12, joiner: 'QortalJoiner' }],
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+          })
+          .mockResolvedValueOnce({
+            data: [{ group: { groupId: 12, groupName: 'Qortal group' }, joinRequests: [] }],
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+          })
+          .mockResolvedValueOnce({
+            data: [{ groupId: 12, joiner: 'QortalJoiner' }],
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+          });
+
+        await expect(getAccountGroupJoinRequests('QortalAddr', [], 'qortal')).resolves.toEqual([
+          { groupId: 12, joiner: 'QortalJoiner' },
+        ]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(1, {
+          action: 'FETCH_NODE_API',
+          maxBytes: 2097152,
+          path: '/groups/joinrequests/address/QortalAddr',
+        });
+
+        await expect(getAdminGroupJoinRequests('QortalAdmin', [], 'qortal')).resolves.toEqual([
+          { group: { groupId: 12, groupName: 'Qortal group' }, joinRequests: [] },
+        ]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
+          action: 'FETCH_NODE_API',
+          maxBytes: 2097152,
+          path: '/groups/joinrequests/admin/QortalAdmin',
+        });
+
+        await expect(getGroupJoinRequests(12, [], 'qortal')).resolves.toEqual([
+          { groupId: 12, joiner: 'QortalJoiner' },
+        ]);
+        expect(qortalRequestMock).toHaveBeenNthCalledWith(3, {
+          action: 'FETCH_NODE_API',
+          maxBytes: 2097152,
+          path: '/groups/joinrequests/12',
+        });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('defaults the three join-request readers to Qortium when no network is passed', async () => {
+        qdnRequestMock.mockResolvedValueOnce([{ groupId: 3, joiner: 'Qjoiner' }]);
+
+        await expect(getAccountGroupJoinRequests('Qabc', ['GET_ACCOUNT_GROUP_JOIN_REQUESTS'])).resolves.toEqual([
+          { groupId: 3, joiner: 'Qjoiner' },
+        ]);
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'GET_ACCOUNT_GROUP_JOIN_REQUESTS',
+          address: 'Qabc',
+        });
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+      });
     });
 
     describe('private group chat (P3a)', () => {
