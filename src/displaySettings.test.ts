@@ -29,6 +29,7 @@ describe('display settings helpers', () => {
     expect(normalizeLanguage('en_US')).toBe('en');
     expect(normalizeTextSize('extra-large')).toBe('extra-large');
     expect(normalizeAccent('blue')).toBe('blue');
+    expect(normalizeAccent('CLAY')).toBe('clay');
     expect(normalizeUiStyle('MODERN')).toBe('modern');
     expect(normalizeUiStyle(' FUN ')).toBe('fun');
     expect(normalizeUiStyle('chibi')).toBeNull();
@@ -146,6 +147,37 @@ describe('display settings helpers', () => {
 
     expect(getInitialDisplaySettings()).toMatchObject({
       uiStyle: 'classic',
+    });
+  });
+
+  it('defaults to the clay accent when the host supplies nothing', () => {
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+      },
+    });
+
+    expect(getInitialDisplaySettings()).toMatchObject({
+      accent: 'clay',
+    });
+  });
+
+  it('accepts the clay accent via query param and postMessage', () => {
+    vi.stubGlobal('window', {
+      location: {
+        search: '?accent=clay',
+      },
+    });
+
+    expect(getInitialDisplaySettings()).toMatchObject({
+      accent: 'clay',
+    });
+
+    expect(
+      getDisplaySettingsUpdateFromMessage({ action: 'ACCENT_CHANGED', requestedHandler: 'UI', accent: 'clay' }, current),
+    ).toEqual({
+      ...current,
+      accent: 'clay',
     });
   });
 
