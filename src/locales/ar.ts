@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'تعطيل إشعارات الدردشة',
   'action.notifications.settings': 'إعدادات إشعارات الدردشة',
   'notification.settings.scope': 'يعمل نشاط الدردشة المباشرة في الخلفية وقد يتضمن تعديلات أو تفاعلات. تنطبق الإشارات والردود على المجموعة المفتوحة فقط.',
+  'notification.settings.scope.foreground': 'نشاط الدردشة المباشرة والإشارات والردود تُشعرك فقط أثناء فتح تطبيق الدردشة، وليس في الخلفية.',
   'notification.direct.title': 'رسالة مباشرة جديدة',
   'notification.mention.title': 'تمت الإشارة إليك',
   'notification.reply.title': 'رد جديد على رسالتك',

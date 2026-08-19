@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Keela vestluse teavitused',
   'action.notifications.settings': 'Vestluse teavituste seaded',
   'notification.settings.scope': 'Otsevestluse tegevus töötab taustal ja võib hõlmata muudatusi või reaktsioone. Mainimised ja vastused kehtivad ainult avatud grupis.',
+  'notification.settings.scope.foreground': 'Otsevestluse tegevus, mainimised ja vastused teavitavad ainult siis, kui Chat on avatud — mitte taustal.',
   'notification.direct.title': 'Uus otsesõnum',
   'notification.mention.title': 'Sind mainiti',
   'notification.reply.title': 'Uus vastus sinu sõnumile',

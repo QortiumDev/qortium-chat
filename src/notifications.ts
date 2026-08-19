@@ -1,3 +1,5 @@
+import { bridgeRequest } from './chatNetwork';
+import { isHiddenChatMessage } from './chatText';
 import { qdnRequest } from './qdnRequest';
 import type { ChatMessage, ChatNetwork, QdnAction } from './types';
 
@@ -237,9 +239,222 @@ export function getChatAttentionKinds({
   return attention;
 }
 
-export async function showChatAttentionNotification(
-  title: string,
-  request: QdnRequestFunction = qdnRequest,
+// --- Home 2 network-aware notifications (P6a) --------------------------------
+//
+// Home 2 advertises only NOTIFICATION_HAS_PERMISSION and SHOW_NOTIFICATION on
+// BOTH bridge globals (docs/HOME_V2_APP_NOTIFICATIONS.md). The invoked global
+// is the authoritative chain, so every call below is routed through
+// bridgeRequest(network, ...) rather than the qdn-only `qdnRequest` the legacy
+// flow above uses. NOTIFICATION_ADD/REMOVE were deliberately not migrated —
+// legacy hosts only — so this section never touches them.
+
+export const CHAT_NOTIFICATION_TITLE_MAX_LENGTH = 80;
+export const CHAT_NOTIFICATION_TEXT_MAX_LENGTH = 240;
+
+type BridgeRequestFunction = typeof bridgeRequest;
+
+export type ChatNotificationConversationSource =
+  | { conversation: { groupId: number; kind: 'group' }; kind: 'chat' }
+  | { conversation: { kind: 'direct'; otherAddress: string }; kind: 'chat' };
+
+export type ShowChatNotificationInput = {
+  source?: ChatNotificationConversationSource;
+  text: string;
+  title: string;
+};
+
+export type ShowChatNotificationReason =
+  | 'disabled'
+  | 'focused'
+  | 'muted'
+  | 'rate-limited'
+  | 'revoked'
+  | 'unsupported';
+
+export type ShowChatNotificationResult = {
+  network?: ChatNetwork;
+  reason?: ShowChatNotificationReason;
+  shown: boolean;
+  source?: ChatNotificationConversationSource;
+};
+
+function truncateNotificationField(value: string, maxLength: number) {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+// Home already normalizes/strips/collapses whitespace and enforces its own
+// caps server-side; this is a client-side courtesy truncation only, so a long
+// title/text never gets silently rejected instead of shown.
+export function buildShowChatNotificationRequest(input: ShowChatNotificationInput) {
+  return {
+    action: 'SHOW_NOTIFICATION',
+    text: truncateNotificationField(input.text, CHAT_NOTIFICATION_TEXT_MAX_LENGTH),
+    title: truncateNotificationField(input.title, CHAT_NOTIFICATION_TITLE_MAX_LENGTH),
+    ...(input.source ? { source: input.source } : {}),
+  };
+}
+
+// SHOW_NOTIFICATION never throws to its caller: a `shown: false` result (with
+// a reason) and a transient bridge/network failure are both quiet outcomes —
+// the caller is typically inside a live message-detection sweep and a
+// notification is inherently best-effort, never something that should
+// interrupt the chat stream.
+export async function showChatNotification(
+  network: ChatNetwork,
+  input: ShowChatNotificationInput,
+  actions: QdnAction[],
+  request: BridgeRequestFunction = bridgeRequest,
+): Promise<ShowChatNotificationResult> {
+  if (!canShowChatNotifications(actions)) {
+    return { reason: 'unsupported', shown: false };
+  }
+
+  try {
+    const result = await request<unknown>(network, buildShowChatNotificationRequest(input));
+
+    if (isRecord(result) && typeof result.shown === 'boolean') {
+      return result as unknown as ShowChatNotificationResult;
+    }
+
+    return { reason: 'unsupported', shown: false };
+  } catch {
+    return { reason: 'unsupported', shown: false };
+  }
+}
+
+// The one durable app-scoped permission is shared across both bridge
+// protocols/networks (see the contract doc), so either invoked global can
+// answer it; callers still pass the network they care about attributing the
+// check to, matching every other bridgeRequest call in this app.
+export async function hasNotificationPermission(
+  network: ChatNetwork,
+  actions: QdnAction[],
+  request: BridgeRequestFunction = bridgeRequest,
+): Promise<boolean> {
+  if (!hasActionAdvertised(actions, 'NOTIFICATION_HAS_PERMISSION')) {
+    return false;
+  }
+
+  try {
+    const result = await request<unknown>(network, { action: 'NOTIFICATION_HAS_PERMISSION' });
+
+    return isRecord(result) && result.granted === true;
+  } catch {
+    return false;
+  }
+}
+
+function hasActionAdvertised(actions: QdnAction[], action: string) {
+  return actions.some((candidate) => candidate.toUpperCase() === action);
+}
+
+// --- Foreground trigger-decision logic (P6a) ---------------------------------
+//
+// Home 2 owns no durable subscription rule, so Chat's own foreground
+// detection decides whether a piece of freshly-observed activity is worth a
+// SHOW_NOTIFICATION call. These are pure functions: no bridge calls, no
+// storage, no React state — every input is explicit so the decision is fully
+// unit-testable.
+
+export type ChatNotificationTriggerKind = 'direct' | 'mention' | 'reply';
+
+export function isChatNotificationTriggerEnabled(
+  kind: ChatNotificationTriggerKind,
+  preferences: ChatNotificationPreferences,
 ) {
-  return request({ action: 'SHOW_NOTIFICATION', title });
+  if (kind === 'direct') {
+    return preferences.direct;
+  }
+
+  return kind === 'reply' ? preferences.replies : preferences.mentions;
+}
+
+// A message is eligible to drive a foreground notification only when it is a
+// real, freshly-arrived, other-party message: not a reaction/machine envelope
+// (isHiddenChatMessage — the same filter the sidebar activity/unread state
+// already applies), not an edit/delete revision of an earlier message (a
+// chatReference-bearing message modifies something already seen, it is not
+// new activity), and not sent by the selected account itself.
+export function isNotifiableChatActivityMessage(message: ChatMessage, selfAddress: string) {
+  return (
+    !isHiddenChatMessage(message) &&
+    !message.chatReference &&
+    message.sender !== selfAddress
+  );
+}
+
+// Picks at most one message per call — the correctness point for both the
+// initial-hydration/fresh-activity distinction and the "one notification per
+// conversation per sweep" collapse:
+//
+// - `isInitialHydration` is true exactly when the caller has never hydrated
+//   this conversation's activity before (mirrors the App.tsx skip-check
+//   `!loadedDirectActivityRef.current.has(address)` used for the sidebar
+//   activity sweep) — pre-existing history must never be reported as new.
+// - `sinceTimestamp` is the conversation's previously-known activity
+//   timestamp (App.tsx's loadedDirectActivityByAddress/loadedGroupActivityById
+//   value before this fetch, or null if none is known yet); only messages
+//   strictly newer are candidates, so a sweep that re-fetches the same window
+//   never re-notifies for activity it already reported.
+// - Collapse to a single candidate (the newest eligible message) so a sweep
+//   that discovers several new messages for one conversation at once still
+//   triggers at most one SHOW_NOTIFICATION call for it, mirroring how the
+//   legacy background rule surfaced one "new direct message" event rather
+//   than one per message.
+export function selectNewChatActivityMessage({
+  isInitialHydration,
+  messages,
+  selfAddress,
+  sinceTimestamp,
+}: {
+  isInitialHydration: boolean;
+  messages: ChatMessage[];
+  selfAddress: string;
+  sinceTimestamp: number | null;
+}): ChatMessage | null {
+  if (isInitialHydration) {
+    return null;
+  }
+
+  let candidate: ChatMessage | null = null;
+
+  for (const message of messages) {
+    if (!isNotifiableChatActivityMessage(message, selfAddress)) {
+      continue;
+    }
+
+    if (sinceTimestamp !== null && message.timestamp <= sinceTimestamp) {
+      continue;
+    }
+
+    if (!candidate || message.timestamp > candidate.timestamp) {
+      candidate = message;
+    }
+  }
+
+  return candidate;
+}
+
+// Combines the message selection above with the per-choice preference gate,
+// for the common case of "is there a message here worth a direct-activity
+// notification at all" — given preferences + message classification +
+// baseline state → notify or not.
+export function selectDirectActivityNotification({
+  isInitialHydration,
+  messages,
+  preferences,
+  selfAddress,
+  sinceTimestamp,
+}: {
+  isInitialHydration: boolean;
+  messages: ChatMessage[];
+  preferences: ChatNotificationPreferences;
+  selfAddress: string;
+  sinceTimestamp: number | null;
+}): ChatMessage | null {
+  if (!isChatNotificationTriggerEnabled('direct', preferences)) {
+    return null;
+  }
+
+  return selectNewChatActivityMessage({ isInitialHydration, messages, selfAddress, sinceTimestamp });
 }

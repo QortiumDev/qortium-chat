@@ -323,6 +323,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Slå av chatvarsler',
   'action.notifications.settings': 'Innstillinger for chatvarsler',
   'notification.settings.scope': 'Direktechataktivitet fungerer i bakgrunnen og kan inkludere redigeringer eller reaksjoner. Omtaler og svar gjelder bare for den åpne gruppen.',
+  'notification.settings.scope.foreground': 'Direktemeldingsaktivitet, omtaler og svar varsler bare mens Chat er åpen — ikke i bakgrunnen.',
   'notification.direct.title': 'Ny direktemelding',
   'notification.mention.title': 'Du ble nevnt',
   'notification.reply.title': 'Nytt svar på meldingen din',

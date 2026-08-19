@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Desativar notificações do chat',
   'action.notifications.settings': 'Configurações de notificações do chat',
   'notification.settings.scope': 'A atividade do chat direto funciona em segundo plano e pode incluir edições ou reações. Menções e respostas se aplicam apenas ao grupo aberto.',
+  'notification.settings.scope.foreground': 'A atividade do chat direto, as menções e as respostas notificam apenas enquanto o Chat está aberto — não em segundo plano.',
   'notification.direct.title': 'Nova mensagem direta',
   'notification.mention.title': 'Você foi mencionado',
   'notification.reply.title': 'Nova resposta à sua mensagem',

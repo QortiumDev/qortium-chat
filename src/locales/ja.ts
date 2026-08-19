@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'チャット通知を無効にする',
   'action.notifications.settings': 'チャット通知設定',
   'notification.settings.scope': 'ダイレクトチャットのアクティビティはバックグラウンドで動作し、編集やリアクションを含む場合があります。メンションと返信は開いているグループにのみ適用されます。',
+  'notification.settings.scope.foreground': 'ダイレクトチャットのアクティビティ、メンション、返信は、Chat が開いている間のみ通知されます。バックグラウンドでは通知されません。',
   'notification.direct.title': '新しいダイレクトメッセージ',
   'notification.mention.title': 'あなたがメンションされました',
   'notification.reply.title': 'メッセージへの新しい返信',

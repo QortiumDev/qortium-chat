@@ -1,12 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from './types';
+import type { ChatMessage, ChatNetwork } from './types';
 import {
+  CHAT_NOTIFICATION_TEXT_MAX_LENGTH,
+  CHAT_NOTIFICATION_TITLE_MAX_LENGTH,
   CHAT_NOTIFICATIONS_STORAGE_KEY,
   DIRECT_MESSAGE_NOTIFICATION_ID,
   DIRECT_MESSAGE_SUBSCRIPTION_FILTER_KEYS,
   LEGACY_CHAT_NOTIFICATIONS_STORAGE_KEY,
+  buildShowChatNotificationRequest,
   canManageChatNotifications,
   enableDirectMessageNotifications,
+  hasNotificationPermission,
+  isChatNotificationTriggerEnabled,
+  isNotifiableChatActivityMessage,
   getEnabledChatAttentionKind,
   getChatSelfIdentity,
   getChatAttentionKinds,
@@ -14,7 +20,11 @@ import {
   isIncomingChatMessage,
   readChatNotificationPreferences,
   reconcileChatNotifications,
+  selectDirectActivityNotification,
+  selectNewChatActivityMessage,
+  showChatNotification,
   writeChatNotificationPreferences,
+  type ChatNotificationPreferences,
 } from './notifications';
 
 function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -248,5 +258,226 @@ describe('selected-chat self identity', () => {
     expect(isIncomingChatMessage('QortalOldOrOther', null)).toBe(false);
     expect(isIncomingChatMessage('QortalMe', 'QortalMe')).toBe(false);
     expect(isIncomingChatMessage('QortalOther', 'QortalMe')).toBe(true);
+  });
+});
+
+function base64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+
+  return btoa(String.fromCharCode(...bytes));
+}
+
+const machineEnvelope = base64(JSON.stringify({ app: 'chess', qch1: { type: 'move', move: 'e2e4' } }));
+const reactionEnvelope = base64(JSON.stringify({ content: '👍', contentState: true, message: '', type: 'reaction' }));
+
+describe('Home 2 network-aware SHOW_NOTIFICATION (P6a)', () => {
+  it('routes through the invoked network bridge and caps title/text client-side', async () => {
+    const request = vi.fn().mockResolvedValue({ network: 'qortium', shown: true });
+    const overlongTitle = 'T'.repeat(CHAT_NOTIFICATION_TITLE_MAX_LENGTH + 20);
+    const overlongText = 'B'.repeat(CHAT_NOTIFICATION_TEXT_MAX_LENGTH + 20);
+
+    const result = await showChatNotification(
+      'qortium',
+      { title: overlongTitle, text: overlongText },
+      ['SHOW_NOTIFICATION'],
+      request,
+    );
+
+    expect(result).toEqual({ network: 'qortium', shown: true });
+    expect(request).toHaveBeenCalledTimes(1);
+    const [network, sentRequest] = request.mock.calls[0] as [ChatNetwork, { text: string; title: string }];
+    expect(network).toBe('qortium');
+    expect(sentRequest.title).toHaveLength(CHAT_NOTIFICATION_TITLE_MAX_LENGTH);
+    expect(sentRequest.text).toHaveLength(CHAT_NOTIFICATION_TEXT_MAX_LENGTH);
+  });
+
+  it('never sends a title/text under the cap', () => {
+    expect(buildShowChatNotificationRequest({ title: 'short', text: 'short' })).toEqual({
+      action: 'SHOW_NOTIFICATION',
+      text: 'short',
+      title: 'short',
+    });
+  });
+
+  it('includes the chain-qualified conversation source only when supplied', () => {
+    expect(buildShowChatNotificationRequest({
+      source: { conversation: { groupId: 12, kind: 'group' }, kind: 'chat' },
+      text: 'Alice mentioned you in Builders',
+      title: 'New mention',
+    })).toEqual({
+      action: 'SHOW_NOTIFICATION',
+      source: { conversation: { groupId: 12, kind: 'group' }, kind: 'chat' },
+      text: 'Alice mentioned you in Builders',
+      title: 'New mention',
+    });
+  });
+
+  it('never calls the bridge when SHOW_NOTIFICATION is not advertised — quiet, not thrown', async () => {
+    const request = vi.fn();
+
+    await expect(showChatNotification('qortal', { title: 't', text: 'x' }, [], request)).resolves.toEqual({
+      reason: 'unsupported',
+      shown: false,
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('passes a suppressed shown:false result straight through as quiet state, not an error', async () => {
+    const request = vi.fn().mockResolvedValue({ network: 'qortal', reason: 'focused', shown: false });
+
+    await expect(
+      showChatNotification('qortal', { title: 't', text: 'x' }, ['SHOW_NOTIFICATION'], request),
+    ).resolves.toEqual({ network: 'qortal', reason: 'focused', shown: false });
+  });
+
+  it('swallows a transient bridge failure into a quiet unsupported outcome', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('offline'));
+
+    await expect(
+      showChatNotification('qortium', { title: 't', text: 'x' }, ['SHOW_NOTIFICATION'], request),
+    ).resolves.toEqual({ reason: 'unsupported', shown: false });
+  });
+
+  it('checks the durable app permission only when advertised, per network', async () => {
+    const granted = vi.fn().mockResolvedValue({ granted: true });
+
+    await expect(hasNotificationPermission('qortal', ['NOTIFICATION_HAS_PERMISSION'], granted)).resolves.toBe(true);
+    expect(granted).toHaveBeenCalledWith('qortal', { action: 'NOTIFICATION_HAS_PERMISSION' });
+
+    const notAdvertised = vi.fn();
+    await expect(hasNotificationPermission('qortium', [], notAdvertised)).resolves.toBe(false);
+    expect(notAdvertised).not.toHaveBeenCalled();
+
+    const denied = vi.fn().mockResolvedValue({ granted: false });
+    await expect(hasNotificationPermission('qortium', ['NOTIFICATION_HAS_PERMISSION'], denied)).resolves.toBe(false);
+
+    const throws = vi.fn().mockRejectedValue(new Error('offline'));
+    await expect(hasNotificationPermission('qortium', ['NOTIFICATION_HAS_PERMISSION'], throws)).resolves.toBe(false);
+  });
+});
+
+describe('foreground notification trigger decision (P6a)', () => {
+  const enabledPreferences: ChatNotificationPreferences = { direct: true, mentions: true, replies: true, version: 2 };
+  const directOnlyPreferences: ChatNotificationPreferences = { direct: true, mentions: false, replies: false, version: 2 };
+
+  it('maps each trigger kind to its own bell preference', () => {
+    expect(isChatNotificationTriggerEnabled('direct', directOnlyPreferences)).toBe(true);
+    expect(isChatNotificationTriggerEnabled('mention', directOnlyPreferences)).toBe(false);
+    expect(isChatNotificationTriggerEnabled('reply', directOnlyPreferences)).toBe(false);
+    expect(isChatNotificationTriggerEnabled('mention', enabledPreferences)).toBe(true);
+    expect(isChatNotificationTriggerEnabled('reply', enabledPreferences)).toBe(true);
+  });
+
+  it('classifies own messages, machine envelopes, reactions, and edits as not notifiable', () => {
+    expect(isNotifiableChatActivityMessage(message({ sender: 'Qme' }), 'Qme')).toBe(false);
+    expect(isNotifiableChatActivityMessage(
+      message({ data: machineEnvelope, isText: true, sender: 'Qother' }),
+      'Qme',
+    )).toBe(false);
+    expect(isNotifiableChatActivityMessage(
+      message({ data: reactionEnvelope, isText: true, sender: 'Qother' }),
+      'Qme',
+    )).toBe(false);
+    // An edit/delete revision targets an earlier message via chatReference —
+    // it is not new activity from the other party's perspective.
+    expect(isNotifiableChatActivityMessage(
+      message({ chatReference: 'original-signature', data: base64('edited body'), isText: true, sender: 'Qother' }),
+      'Qme',
+    )).toBe(false);
+    expect(isNotifiableChatActivityMessage(
+      message({ data: base64('hi'), isText: true, sender: 'Qother' }),
+      'Qme',
+    )).toBe(true);
+  });
+
+  describe('selectNewChatActivityMessage', () => {
+    it('never reports pre-existing history as new on the first hydration of a conversation', () => {
+      const candidate = selectNewChatActivityMessage({
+        isInitialHydration: true,
+        messages: [message({ data: base64('hi'), isText: true, sender: 'Qother', timestamp: 100 })],
+        selfAddress: 'Qme',
+        sinceTimestamp: null,
+      });
+
+      expect(candidate).toBeNull();
+    });
+
+    it('only reports activity strictly newer than the previously-known baseline', () => {
+      const stale = message({ data: base64('old'), isText: true, sender: 'Qother', timestamp: 100 });
+      const fresh = message({ data: base64('new'), isText: true, sender: 'Qother', timestamp: 150 });
+
+      expect(selectNewChatActivityMessage({
+        isInitialHydration: false,
+        messages: [stale],
+        selfAddress: 'Qme',
+        sinceTimestamp: 100,
+      })).toBeNull();
+
+      expect(selectNewChatActivityMessage({
+        isInitialHydration: false,
+        messages: [stale, fresh],
+        selfAddress: 'Qme',
+        sinceTimestamp: 100,
+      })).toEqual(fresh);
+    });
+
+    it('never own-message or machine/reaction envelopes, even when strictly newer', () => {
+      const own = message({ data: base64('mine'), isText: true, sender: 'Qme', timestamp: 200 });
+      const machine = message({ data: machineEnvelope, isText: true, sender: 'Qother', timestamp: 201 });
+
+      expect(selectNewChatActivityMessage({
+        isInitialHydration: false,
+        messages: [own, machine],
+        selfAddress: 'Qme',
+        sinceTimestamp: 100,
+      })).toBeNull();
+    });
+
+    it('collapses several new messages in one sweep into a single (the newest) candidate', () => {
+      const first = message({ data: base64('one'), isText: true, sender: 'Qother', signature: 'sig-1', timestamp: 110 });
+      const second = message({ data: base64('two'), isText: true, sender: 'Qother', signature: 'sig-2', timestamp: 120 });
+      const third = message({ data: base64('three'), isText: true, sender: 'Qother', signature: 'sig-3', timestamp: 130 });
+
+      const candidate = selectNewChatActivityMessage({
+        isInitialHydration: false,
+        messages: [first, third, second],
+        selfAddress: 'Qme',
+        sinceTimestamp: 100,
+      });
+
+      expect(candidate).toEqual(third);
+    });
+  });
+
+  describe('selectDirectActivityNotification', () => {
+    const incoming = message({ data: base64('hi'), isText: true, sender: 'Qother', timestamp: 150 });
+
+    it('gates on the direct-activity preference before the message selection', () => {
+      expect(selectDirectActivityNotification({
+        isInitialHydration: false,
+        messages: [incoming],
+        preferences: { direct: false, mentions: true, replies: true, version: 2 },
+        selfAddress: 'Qme',
+        sinceTimestamp: 100,
+      })).toBeNull();
+
+      expect(selectDirectActivityNotification({
+        isInitialHydration: false,
+        messages: [incoming],
+        preferences: directOnlyPreferences,
+        selfAddress: 'Qme',
+        sinceTimestamp: 100,
+      })).toEqual(incoming);
+    });
+
+    it('still suppresses on initial hydration even when the preference is on', () => {
+      expect(selectDirectActivityNotification({
+        isInitialHydration: true,
+        messages: [incoming],
+        preferences: directOnlyPreferences,
+        selfAddress: 'Qme',
+        sinceTimestamp: null,
+      })).toBeNull();
+    });
   });
 });

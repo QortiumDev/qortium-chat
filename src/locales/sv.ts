@@ -325,6 +325,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Inaktivera chattaviseringar',
   'action.notifications.settings': 'Inställningar för chattaviseringar',
   'notification.settings.scope': 'Direktchattaktivitet fungerar i bakgrunden och kan omfatta redigeringar eller reaktioner. Omnämnanden och svar gäller endast den öppna gruppen.',
+  'notification.settings.scope.foreground': 'Direktchattaktivitet, omnämnanden och svar aviserar bara medan Chat är öppen — inte i bakgrunden.',
   'notification.direct.title': 'Nytt direktmeddelande',
   'notification.mention.title': 'Du omnämndes',
   'notification.reply.title': 'Nytt svar på ditt meddelande',

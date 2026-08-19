@@ -329,6 +329,7 @@ export const EN_STRINGS = {
   'action.notifications.disable': 'Disable chat notifications',
   'action.notifications.settings': 'Chat notification settings',
   'notification.settings.scope': 'Direct chat activity works in the background and may include edits or reactions. Mentions and replies apply only to the open group.',
+  'notification.settings.scope.foreground': 'Direct chat activity, mentions, and replies notify only while Chat is open — not in the background.',
   'notification.direct.title': 'New direct message',
   'notification.mention.title': 'You were mentioned',
   'notification.reply.title': 'New reply to your message',

@@ -187,12 +187,15 @@ import {
   getChatAttentionKinds,
   getChatSelfIdentity,
   hasAnyChatNotificationsEnabled,
+  hasNotificationPermission,
   isIncomingChatMessage,
   readChatNotificationPreferences,
   reconcileChatNotifications,
-  showChatAttentionNotification,
+  selectDirectActivityNotification,
+  showChatNotification,
   writeChatNotificationPreferences,
   type ChatNotificationPreferences,
+  type ShowChatNotificationResult,
 } from './notifications';
 import { LatestRequestGuard } from './latestRequest';
 import { loadQortalAccountSnapshot } from './qortalAccountSession';
@@ -1884,6 +1887,12 @@ export default function App() {
   const hasUnreadQortalDirect = unreadQortalDirectAddresses.size > 0;
   const canManageNotifications = !!account && canManageChatNotifications(actions);
   const canShowNotifications = canShowChatNotifications(actions);
+  // Home 2 advertises SHOW_NOTIFICATION/NOTIFICATION_HAS_PERMISSION but never
+  // NOTIFICATION_ADD/REMOVE, so canManageNotifications alone would hide the
+  // whole bell UI there. Either tier is enough to let the user control the
+  // stored preferences: legacy hosts drive a durable rule from them, Home 2
+  // drives foreground SHOW_NOTIFICATION triggers from them instead.
+  const canControlChatNotifications = canManageNotifications || (!!account && canShowNotifications);
   const isSelectedGeneralChat = isGeneralChatGroup(selectedGroup);
   const selectedGroupMembersLabel = isSelectedGeneralChat ? t('label.common.active') : t('label.common.members');
   const hasSelectedMessages = selectedChatKey !== '' && messagesChatKey === selectedChatKey;
@@ -6663,11 +6672,30 @@ export default function App() {
     }
   }
 
+  // A live foreground SHOW_NOTIFICATION call is best-effort and never throws
+  // (see notifications.ts), but a `revoked`/`disabled` result is a signal
+  // worth reflecting: Home is telling Chat its one durable app permission is
+  // gone, so re-registering forever would just keep silently failing. This
+  // mirrors the exact reaction the legacy reconcileChatNotifications effect
+  // already has to a denied permission — turn every preference off locally so
+  // the bell UI stops claiming notifications are on.
+  function reflectRevokedChatNotificationPermission(result: ShowChatNotificationResult) {
+    if (result.shown || (result.reason !== 'revoked' && result.reason !== 'disabled')) {
+      return;
+    }
+
+    const disabledPreferences: ChatNotificationPreferences = { ...DISABLED_CHAT_NOTIFICATION_PREFERENCES };
+
+    chatNotificationsDesiredRef.current = disabledPreferences;
+    writeChatNotificationPreferences(disabledPreferences);
+    setChatNotificationPreferences(disabledPreferences);
+  }
+
   async function updateChatNotificationPreference(
     key: Exclude<keyof ChatNotificationPreferences, 'version'>,
     enabled: boolean,
   ) {
-    if (!account || !canManageNotifications || chatNotificationsBusy) {
+    if (!account || !canControlChatNotifications || chatNotificationsBusy) {
       return;
     }
 
@@ -6679,18 +6707,31 @@ export default function App() {
 
     try {
       const operation = chatNotificationOperationRef.current.then(async () => {
+        // Legacy hosts (NOTIFICATION_ADD/REMOVE advertised) keep registering
+        // the durable background rule exactly as before. Home 2 has no such
+        // rule — the stored preference alone is what the foreground sweeps
+        // below read, so there is nothing to register here beyond priming the
+        // one shared permission from this focused click.
+        if (!canManageNotifications) {
+          if (hasAnyChatNotificationsEnabled(nextPreferences)) {
+            const granted = await hasNotificationPermission('qortium', actions);
+
+            if (!granted) {
+              await showChatNotification('qortium', {
+                text: t('action.notifications.settings'),
+                title: t('action.notifications.enable'),
+              }, actions);
+            }
+          }
+          return;
+        }
+
         let directRuleRegistered = false;
 
         if (hasAnyChatNotificationsEnabled(nextPreferences)) {
-          const permission = await qdnRequest<unknown>({ action: 'NOTIFICATION_HAS_PERMISSION' });
-          const permissionGranted = (
-            !!permission &&
-            typeof permission === 'object' &&
-            'granted' in permission &&
-            permission.granted === true
-          );
+          const granted = await hasNotificationPermission('qortium', actions);
 
-          if (!permissionGranted) {
+          if (!granted) {
             if (nextPreferences.direct) {
               await enableDirectMessageNotifications(account.address, t('notification.direct.title'));
               directRuleRegistered = true;
@@ -6698,7 +6739,10 @@ export default function App() {
               // SHOW_NOTIFICATION uses the same durable Home grant. Because this
               // click occurs in the focused app, Home grants permission and then
               // suppresses the setup notification as already focused.
-              await showChatAttentionNotification(t('action.notifications.enable'));
+              await showChatNotification('qortium', {
+                text: t('action.notifications.settings'),
+                title: t('action.notifications.enable'),
+              }, actions);
             }
           }
         }
@@ -7163,42 +7207,51 @@ export default function App() {
       const decoded = decodeChatMessage(newest, t);
       setLiveAnnouncement(`${getMessageSenderLabel(newest, undefined)}: ${getMessageSnippet(newest, t)}`);
 
-      if (
-        canShowNotifications &&
-        selectedChat?.kind === 'group' &&
-        selfAddress
-      ) {
-        const attention = getChatAttentionKinds({
-          body: decoded.body,
-          message: newest,
-          messages: [...olderMessages, ...list],
-          repliedTo: decoded.repliedTo,
-          selfAddress,
-          selfName,
-        });
+      if (selectedChat?.kind === 'group' && selfAddress) {
+        const attentionNetwork = selectedChat.network ?? 'qortium';
+        const attentionActions = getNetworkActions(attentionNetwork);
 
-        const enabledAttention = getEnabledChatAttentionKind(attention, chatNotificationPreferences);
-
-        if (enabledAttention) {
-          const title = enabledAttention === 'reply'
-            ? t('notification.reply.title')
-            : t('notification.mention.title');
-          void showChatAttentionNotification(title).catch(() => {
-            // Direct/background registration remains enabled. A transient live
-            // notification failure should not interrupt the chat stream.
+        if (canShowChatNotifications(attentionActions)) {
+          const attention = getChatAttentionKinds({
+            body: decoded.body,
+            message: newest,
+            messages: [...olderMessages, ...list],
+            repliedTo: decoded.repliedTo,
+            selfAddress,
+            selfName,
           });
+
+          const enabledAttention = getEnabledChatAttentionKind(attention, chatNotificationPreferences);
+
+          if (enabledAttention) {
+            const title = enabledAttention === 'reply'
+              ? t('notification.reply.title')
+              : t('notification.mention.title');
+            void showChatNotification(attentionNetwork, {
+              source: { conversation: { groupId: selectedChat.group.groupId, kind: 'group' }, kind: 'chat' },
+              text: getMessageSnippet(newest, t),
+              title,
+            }, attentionActions)
+              .then(reflectRevokedChatNotificationPermission)
+              .catch(() => {
+                // A transient live notification failure should not interrupt
+                // the chat stream — showChatNotification already resolves
+                // quietly for everything it can predict.
+              });
+          }
         }
       }
     }
 
     lastAnnouncedRef.current = { chatKey: messagesChatKey, signature };
   }, [
-    canShowNotifications,
+    actionsKey,
     chatNotificationPreferences.mentions,
     chatNotificationPreferences.replies,
     messages,
     messagesChatKey,
     olderMessages,
+    qortalActionsKey,
     selectedChat,
     selfAddress,
     selfName,
@@ -7914,6 +7967,16 @@ export default function App() {
             continue;
           }
 
+          // Captured before the skip check below can short-circuit this
+          // iteration: "never hydrated before" (isInitialHydration) is
+          // exactly the negation of the same has-check the skip-logic uses,
+          // so the two can never disagree. Reusing it here is the
+          // correctness point for foreground direct-activity notifications —
+          // pre-existing history hydrated for the first time must never
+          // notify, only activity strictly newer than what was already known.
+          const isInitialHydration = !loadedDirectActivityRef.current.has(direct.address);
+          const sinceTimestamp = loadedDirectActivityRef.current.get(direct.address) ?? null;
+
           if (!refresh && loadedDirectActivityRef.current.has(direct.address)) {
             continue;
           }
@@ -7934,6 +7997,34 @@ export default function App() {
                 allowTombstone: nextMessages.length < ACTIVITY_SWEEP_MESSAGE_LIMIT,
               }),
             );
+
+            // Home 2 only: legacy hosts already get direct notifications from
+            // their own durable NOTIFICATION_ADD rule (Core-evaluated,
+            // independent of this sweep) — firing here too would double them
+            // up. On Home 2 there is no such rule, so this bounded foreground
+            // sweep is direct activity's only notification source.
+            if (canShowNotifications && !canManageNotifications && account?.address) {
+              const notifiable = selectDirectActivityNotification({
+                isInitialHydration,
+                messages: nextMessages,
+                preferences: chatNotificationPreferences,
+                selfAddress: account.address,
+                sinceTimestamp,
+              });
+
+              if (notifiable) {
+                void showChatNotification('qortium', {
+                  source: { conversation: { kind: 'direct', otherAddress: direct.address }, kind: 'chat' },
+                  text: getMessageSnippet(notifiable, t),
+                  title: t('notification.direct.title'),
+                }, actions)
+                  .then(reflectRevokedChatNotificationPermission)
+                  .catch(() => {
+                    // Best-effort: a transient failure here should not disrupt
+                    // the activity sweep itself.
+                  });
+              }
+            }
           } catch {
             // Direct history is optional in older Home/Core bridge contexts.
           }
@@ -7957,7 +8048,17 @@ export default function App() {
       isDisposed = true;
       window.clearInterval(interval);
     };
-  }, [actionsKey, activeChats.value.direct, canReadPrivateDirectChat, isAccountUnlocked]);
+  }, [
+    account?.address,
+    actionsKey,
+    activeChats.value.direct,
+    canManageNotifications,
+    canReadPrivateDirectChat,
+    canShowNotifications,
+    chatNotificationPreferences.direct,
+    isAccountUnlocked,
+    t,
+  ]);
 
   // Qortal counterpart of the direct activity sweep above — same rationale
   // (Qortal has no protocol-specific websocket route, so a direct chat not
@@ -7997,6 +8098,13 @@ export default function App() {
             continue;
           }
 
+          // See the Qortium sweep above for why this is captured before the
+          // fetch: it is the exact same "never hydrated before" check the
+          // skip-logic just used, and is what keeps pre-existing history from
+          // ever being reported as new activity.
+          const isInitialHydration = !loadedQortalDirectActivityRef.current.has(direct.address);
+          const sinceTimestamp = loadedQortalDirectActivityRef.current.get(direct.address) ?? null;
+
           try {
             const nextMessages = await getDirectMessages(
               direct.address,
@@ -8014,6 +8122,33 @@ export default function App() {
                 allowTombstone: nextMessages.length < ACTIVITY_SWEEP_MESSAGE_LIMIT,
               }),
             );
+
+            // Qortal never had a legacy background rule at all (notifications.ts:
+            // NOTIFICATION_ADD is a Qortium-only qdn action) — this bounded
+            // foreground sweep is the only direct-activity notification source
+            // Qortal chat has ever had, on any host tier.
+            if (qortalAccount?.address && canShowChatNotifications(qortalActionList)) {
+              const notifiable = selectDirectActivityNotification({
+                isInitialHydration,
+                messages: nextMessages,
+                preferences: chatNotificationPreferences,
+                selfAddress: qortalAccount.address,
+                sinceTimestamp,
+              });
+
+              if (notifiable) {
+                void showChatNotification('qortal', {
+                  source: { conversation: { kind: 'direct', otherAddress: direct.address }, kind: 'chat' },
+                  text: getMessageSnippet(notifiable, t),
+                  title: t('notification.direct.title'),
+                }, qortalActionList)
+                  .then(reflectRevokedChatNotificationPermission)
+                  .catch(() => {
+                    // Best-effort: a transient failure here should not disrupt
+                    // the activity sweep itself.
+                  });
+              }
+            }
           } catch {
             // Direct history is optional in older Home/Core bridge contexts.
           }
@@ -8039,9 +8174,12 @@ export default function App() {
     };
   }, [
     qortalBridge.value.actions.join('\n'),
+    qortalAccount?.address,
     qortalActiveChats.value.direct,
     canReadQortalPrivateDirectChat,
+    chatNotificationPreferences.direct,
     isAccountUnlocked,
+    t,
   ]);
 
   // Refresh the decrypted active-chats list on a slow cadence so a brand-new
@@ -8904,6 +9042,7 @@ export default function App() {
       account={account}
       accountError={accountError}
       appVersion={APP_VERSION}
+      canControlChatNotifications={canControlChatNotifications}
       canManageNotifications={canManageNotifications}
       canShowNotifications={canShowNotifications}
       chatNotificationPreferences={chatNotificationPreferences}

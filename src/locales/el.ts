@@ -323,6 +323,7 @@ export const STRINGS = {
   'action.notifications.disable': 'Απενεργοποίηση ειδοποιήσεων συνομιλίας',
   'action.notifications.settings': 'Ρυθμίσεις ειδοποιήσεων συνομιλίας',
   'notification.settings.scope': 'Η δραστηριότητα άμεσης συνομιλίας λειτουργεί στο παρασκήνιο και μπορεί να περιλαμβάνει επεξεργασίες ή αντιδράσεις. Οι αναφορές και οι απαντήσεις ισχύουν μόνο για την ανοιχτή ομάδα.',
+  'notification.settings.scope.foreground': 'Η δραστηριότητα άμεσων μηνυμάτων, οι αναφορές και οι απαντήσεις ειδοποιούν μόνο όσο το Chat είναι ανοιχτό — όχι στο παρασκήνιο.',
   'notification.direct.title': 'Νέο άμεσο μήνυμα',
   'notification.mention.title': 'Σας ανέφεραν',
   'notification.reply.title': 'Νέα απάντηση στο μήνυμά σας',
