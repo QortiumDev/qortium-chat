@@ -782,8 +782,10 @@ samp,
   flex: none;
   font-size: var(--qc-text-heading);
   display: inline-block;
-  width: 2.3em;
-  height: 2.3em;
+  /* Must not track --qc-text-scale 1:1 — at 'huge' (2.1x) a bare 2.3em icon
+     grows past 100px and overruns a narrow mobile topbar (issue #28). */
+  width: clamp(32px, 2.3em, 44px);
+  height: clamp(32px, 2.3em, 44px);
   object-fit: contain;
   filter: none;
 }
@@ -1853,19 +1855,22 @@ samp,
   --qc-color-border: #d8cec1;
   --qc-color-border-strong: #bcae9e;
   --qc-color-border-subtle: #e4dbd0;
-  --qc-color-accent: #a75d36;
-  --qc-color-accent-hover: #874726;
-  --qc-color-accent-readable: #874726;
+  /* P5c: was its own near-clay rust palette (#a75d36/#874726) — a Home-v2
+     tab must read as the SAME clay as the rest of the app, not a second
+     warm accent. Pinned to the exact `[data-accent='clay']` literals since
+     this class overrides --qc-color-accent itself (can't var()-reference
+     its own property). */
+  --qc-color-accent: #9a6750;
+  --qc-color-accent-hover: #7f523f;
+  --qc-color-accent-readable: #7f523f;
   --qc-color-accent-text: #ffffff;
-  --qc-color-accent-ring: rgb(167 93 54 / 18%);
-  --qc-color-accent-soft: rgb(167 93 54 / 10%);
-  --qc-color-accent-glow: rgb(167 93 54 / 18%);
-  --qc-color-avatar: #9d765f;
-  --qc-color-row-hover: #f3e7dd;
-  --qc-color-row-hover-border: #cfaa91;
-  --qc-gradient-primary: #a75d36;
-  --qc-gradient-primary-hover: #974f2c;
-  --qc-gradient-primary-active: #874726;
+  --qc-color-accent-ring: rgb(154 103 80 / 20%);
+  --qc-color-accent-soft: rgb(154 103 80 / 10%);
+  --qc-color-accent-glow: rgb(154 103 80 / 22%);
+  --qc-color-avatar: var(--qc-color-accent);
+  --qc-gradient-primary: var(--qc-color-accent);
+  --qc-gradient-primary-hover: var(--qc-color-accent-hover);
+  --qc-gradient-primary-active: #6c4433;
   --qc-shadow-card: 0 1px 2px rgb(52 39 28 / 5%);
   --qc-shadow-card-hover: 0 2px 8px rgb(52 39 28 / 8%);
   --qc-shadow-bar: 0 1px 2px rgb(52 39 28 / 4%);
@@ -1886,19 +1891,18 @@ samp,
   --qc-color-border: #4a4038;
   --qc-color-border-strong: #716156;
   --qc-color-border-subtle: #382f29;
-  --qc-color-accent: #e29a6f;
-  --qc-color-accent-hover: #cf855b;
-  --qc-color-accent-readable: #f0aa80;
-  --qc-color-accent-text: #24140c;
-  --qc-color-accent-ring: rgb(226 154 111 / 20%);
-  --qc-color-accent-soft: rgb(226 154 111 / 12%);
-  --qc-color-avatar: #b77d5c;
-  --qc-color-avatar-text: #1f120b;
-  --qc-color-row-hover: #35271f;
-  --qc-color-row-hover-border: #865d45;
-  --qc-gradient-primary: #e29a6f;
-  --qc-gradient-primary-hover: #eda77e;
-  --qc-gradient-primary-active: #cf855b;
+  /* Same reconciliation as the light block above, dark clay literals. */
+  --qc-color-accent: #c18b72;
+  --qc-color-accent-hover: #d09b80;
+  --qc-color-accent-readable: #c18b72;
+  --qc-color-accent-text: #2a1a10;
+  --qc-color-accent-ring: rgb(193 139 114 / 20%);
+  --qc-color-accent-soft: rgb(193 139 114 / 12%);
+  --qc-color-avatar: var(--qc-color-accent);
+  --qc-color-avatar-text: var(--qc-color-accent-text);
+  --qc-gradient-primary: var(--qc-color-accent);
+  --qc-gradient-primary-hover: var(--qc-color-accent-hover);
+  --qc-gradient-primary-active: #a97557;
 }
 
 .app-shell--home-v2 .topbar {
@@ -4080,6 +4084,13 @@ button.message__reply-preview:focus-visible,
     width: 100%;
   }
 
+  /* Must take its own full row here — without a flex-basis it sits between
+     two 100%-basis siblings (textarea, toolbar) at its own tight content
+     width, so `text-align: end` has no room to right-align against. */
+  .composer__byte-counter {
+    flex: 1 1 100%;
+  }
+
   .composer__toolbar {
     flex: 1 1 100%;
     justify-content: flex-end;
@@ -4353,6 +4364,21 @@ button.message__reply-preview:focus-visible,
     width: 44px;
     height: 44px;
   }
+
+  /* Unpadded text link (name only, no icon chrome) — its box is just the
+     line-height of one line of text (~23px) with no touch margin. */
+  .member-chip__name-button {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  /* The reply-context "Cancel" button is a standalone control (not a dense
+     per-message action row), so it gets the same 40px floor as the rest of
+     this block instead of the message-row 34px compromise. */
+  .composer__context .button {
+    min-height: 40px;
+  }
 }
 
 /* Fun UI: a restrained, full-bleed adaptation of ChibiHub's hand-drawn style. */
@@ -4386,6 +4412,11 @@ button.message__reply-preview:focus-visible,
   --qc-color-chip-bg: #f2f7ed;
   --qc-color-row-hover: color-mix(in srgb, var(--qc-color-accent) 18%, #fffef8);
   --qc-color-row-hover-border: var(--qc-fun-outline);
+  /* Fun's own green identity for the avatar fallback — this uiStyle never
+     picked up an accent-driven avatar (P5b's `--qc-color-avatar: #6b5245`
+     clay default reads muted next to fun's green-tinted neutrals above). */
+  --qc-color-avatar: #21824a;
+  --qc-color-avatar-text: #ffffff;
   --qc-shadow-card: 5px 5px 0 var(--qc-fun-ink);
   --qc-shadow-card-hover: 7px 7px 0 var(--qc-fun-ink);
   --qc-shadow-bar: 0 4px 0 var(--qc-fun-ink);
@@ -4421,6 +4452,42 @@ button.message__reply-preview:focus-visible,
   --qc-color-chip-bg: #1d2d28;
   --qc-color-row-hover: color-mix(in srgb, var(--qc-color-accent) 22%, #172420);
   --qc-color-row-hover-border: var(--qc-fun-outline);
+  --qc-color-avatar: #87d99b;
+  --qc-color-avatar-text: #0e1411;
+}
+
+/* Fun never set its own --qc-color-accent, so it always inherited whatever
+   `data-accent` resolved to. That was harmless while the resolved default
+   was green (fun's native palette); now that clay is the default, an
+   unset/default accent choice renders fun's buttons and CTAs in a flat
+   muted brown next to its bright green-tinted candy background. Only the
+   'clay' value is special-cased (mirrors `[data-ui='modern'][data-accent=
+   'green']` above) — an explicit non-clay accent choice (blue, purple, …)
+   still applies normally inside fun. */
+:root[data-ui='fun'][data-accent='clay'] {
+  --qc-color-accent: #21824a;
+  --qc-color-accent-hover: #196a3a;
+  --qc-color-accent-readable: #196a3a;
+  --qc-color-accent-text: #ffffff;
+  --qc-color-accent-ring: rgb(33 130 74 / 18%);
+  --qc-color-accent-soft: rgb(33 130 74 / 10%);
+  --qc-color-accent-glow: rgb(33 130 74 / 22%);
+  --qc-gradient-primary: linear-gradient(180deg, #21824a 0%, #1f7a45 55%, #1d7341 100%);
+  --qc-gradient-primary-hover: linear-gradient(180deg, #24854c 0%, #21824a 55%, #1f7845 100%);
+  --qc-gradient-primary-active: linear-gradient(180deg, #1d7341 0%, #196a3a 100%);
+}
+
+:root[data-theme='dark'][data-ui='fun'][data-accent='clay'] {
+  --qc-color-accent: #87d99b;
+  --qc-color-accent-hover: #6fcd87;
+  --qc-color-accent-readable: #87d99b;
+  --qc-color-accent-text: #0e1411;
+  --qc-color-accent-ring: rgb(135 217 155 / 20%);
+  --qc-color-accent-soft: rgb(135 217 155 / 12%);
+  --qc-color-accent-glow: rgb(135 217 155 / 22%);
+  --qc-gradient-primary: linear-gradient(180deg, #95e0a7 0%, #87d99b 55%, #79cf8e 100%);
+  --qc-gradient-primary-hover: linear-gradient(180deg, #a2e6b2 0%, #93e0a5 55%, #84d698 100%);
+  --qc-gradient-primary-active: linear-gradient(180deg, #79cf8e 0%, #6fc683 100%);
 }
 
 :root[data-ui='fun'] h1,
