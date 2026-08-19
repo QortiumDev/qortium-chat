@@ -1,7 +1,7 @@
 import { isRtlLanguage, normalizeLanguage as normalizeSupportedLanguage, type SupportedLanguage } from './i18n';
 
 export const TEXT_SIZE_VALUES = ['extra-small', 'small', 'medium', 'large', 'extra-large', 'huge'] as const;
-export const ACCENT_OPTIONS = ['green', 'blue', 'orange', 'purple', 'red', 'teal', 'cyan', 'pink', 'yellow'] as const;
+export const ACCENT_OPTIONS = ['clay', 'green', 'blue', 'orange', 'purple', 'red', 'teal', 'cyan', 'pink', 'yellow'] as const;
 export const UI_STYLE_OPTIONS = ['classic', 'modern', 'fun'] as const;
 
 export type QdnTheme = 'dark' | 'light';
@@ -33,11 +33,15 @@ type QdnHostWindow = Window & {
   _qdnUIStyle?: unknown;
 };
 
+// clay is Home 2's default accent (design brief P5, 2026-08-19) — 'green' is
+// kept as a selectable ACCENT_OPTIONS entry for hosts/users who explicitly
+// choose it (see `[data-accent='green']` in styles.css), but the resolved
+// default when nothing is supplied is now clay, matching Home v2.
 const DEFAULT_DISPLAY_SETTINGS: QdnDisplaySettings = {
   language: 'en',
   textSize: 'medium',
   theme: 'light',
-  accent: 'green',
+  accent: 'clay',
   uiStyle: 'classic',
 };
 

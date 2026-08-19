@@ -62,7 +62,7 @@
   --qc-color-surface-raised: #ffffff;
   --qc-color-control-bg: #f0ece3;
   --qc-color-control-hover: #e7e1d6;
-  --qc-color-control-selected: #e9f3ec;
+  --qc-color-control-selected: #efe6da;
   --qc-color-input-bg: #ffffff;
   --qc-color-message-bg: #ffffff;
   --qc-color-border: #d7d0c4;
@@ -73,23 +73,26 @@
   --qc-color-text-soft: #44504e;
   --qc-color-muted: #67716f;
   --qc-color-text-faint: #677067;
-  --qc-color-avatar: #446b5a;
+  --qc-color-avatar: #6b5245;
   --qc-color-avatar-text: #ffffff;
-  --qc-color-accent: #21824a;
-  --qc-color-accent-hover: #196a3a;
-  --qc-color-accent-readable: #196a3a;
+  --qc-color-accent: #9a6750;
+  --qc-color-accent-hover: #7f523f;
+  --qc-color-accent-readable: #7f523f;
   --qc-color-accent-text: #ffffff;
-  --qc-color-accent-ring: rgb(33 130 74 / 18%);
-  --qc-color-accent-soft: rgb(33 130 74 / 10%);
-  --qc-color-accent-glow: rgb(33 130 74 / 22%);
+  --qc-color-accent-ring: rgb(154 103 80 / 18%);
+  --qc-color-accent-soft: rgb(154 103 80 / 10%);
+  --qc-color-accent-glow: rgb(154 103 80 / 22%);
   --qc-color-error: #bd332e;
   --qc-color-error-soft: #d85a52;
   --qc-color-warning: #8f641b;
   --qc-color-info: #2f6aa3;
   --qc-color-link: #236fb8;
   --qc-color-chip-bg: #f4f7f2;
-  --qc-color-row-hover: #e9f3ec;
-  --qc-color-row-hover-border: #a9c4ae;
+  --qc-color-row-hover: #efe6da;
+  --qc-color-row-hover-border: #cdb6a0;
+  /* Kept green on purpose: this is the confirmed-transaction status color
+     (universal "success" semantic), not the accent — see the P5 de-greening
+     report for the full hardcoded-green sweep. */
   --qc-color-transaction-confirmed: #196a3a;
   --qc-color-transaction-failed: #bd332e;
   --qc-color-transaction-pending: #8f641b;
@@ -98,24 +101,26 @@
   --qc-color-scrollbar-thumb: rgb(35 31 24 / 22%);
   --qc-color-scrollbar-thumb-hover: rgb(35 31 24 / 34%);
   --qc-color-skeleton-shimmer: rgb(255 255 255 / 60%);
-  --qc-gradient-primary: linear-gradient(180deg, #21824a 0%, #1f7a45 55%, #1d7341 100%);
-  --qc-gradient-primary-hover: linear-gradient(180deg, #24854c 0%, #21824a 55%, #1f7845 100%);
-  --qc-gradient-primary-active: linear-gradient(180deg, #1d7341 0%, #196a3a 100%);
+  /* v2 has no gradient CTAs — flat accent fills, same property names so
+     consumers (.button etc.) don't change. */
+  --qc-gradient-primary: #9a6750;
+  --qc-gradient-primary-hover: #7f523f;
+  --qc-gradient-primary-active: #6c4433;
   --qc-shadow-card: 0 1px 2px rgb(35 31 24 / 4%), 0 8px 24px rgb(35 31 24 / 6%);
   --qc-shadow-card-hover: 0 2px 4px rgb(35 31 24 / 5%), 0 12px 28px rgb(35 31 24 / 9%);
   --qc-shadow-bar: 0 1px 2px rgb(35 31 24 / 4%), 0 4px 16px rgb(35 31 24 / 3%);
   --qc-shadow-pop: 0 18px 48px rgb(35 31 24 / 18%);
   --qc-shadow-primary-button:
     inset 0 1px 0 rgb(255 255 255 / 18%),
-    0 2px 8px rgb(33 130 74 / 25%),
+    0 2px 8px rgb(154 103 80 / 25%),
     0 0 16px var(--qc-color-accent-glow);
   --qc-shadow-primary-button-hover:
     inset 0 1px 0 rgb(255 255 255 / 22%),
-    0 4px 12px rgb(33 130 74 / 30%),
+    0 4px 12px rgb(154 103 80 / 30%),
     0 0 20px var(--qc-color-accent-glow);
   --qc-shadow-primary-button-active:
     inset 0 1px 0 rgb(255 255 255 / 10%),
-    0 1px 4px rgb(33 130 74 / 22%);
+    0 1px 4px rgb(154 103 80 / 22%);
   --qc-ease-pop: cubic-bezier(0.2, 0, 0, 1);
   --qc-transition-control:
     background-color 170ms ease,
@@ -157,23 +162,24 @@
   --qc-color-text-soft: #cbd5d5;
   --qc-color-muted: #a9b6b6;
   --qc-color-text-faint: #8b9a9a;
-  --qc-color-avatar: #79a98f;
-  --qc-color-avatar-text: #08120d;
-  --qc-color-accent: #87d99b;
-  --qc-color-accent-hover: #6fcd87;
-  --qc-color-accent-readable: #87d99b;
-  --qc-color-accent-text: #0e1411;
-  --qc-color-accent-ring: rgb(135 217 155 / 20%);
-  --qc-color-accent-soft: rgb(135 217 155 / 12%);
-  --qc-color-accent-glow: rgb(135 217 155 / 22%);
+  --qc-color-avatar: #b98f7a;
+  --qc-color-avatar-text: #1c120c;
+  --qc-color-accent: #c18b72;
+  --qc-color-accent-hover: #d09b80;
+  --qc-color-accent-readable: #c18b72;
+  --qc-color-accent-text: #2a1a10;
+  --qc-color-accent-ring: rgb(193 139 114 / 20%);
+  --qc-color-accent-soft: rgb(193 139 114 / 12%);
+  --qc-color-accent-glow: rgb(193 139 114 / 22%);
   --qc-color-error: #ef8b84;
   --qc-color-error-soft: #ffb5ae;
   --qc-color-warning: #e4c06d;
   --qc-color-info: #8bb8ef;
   --qc-color-link: #7fb7ff;
   --qc-color-chip-bg: #1d2823;
-  --qc-color-row-hover: #1d2d25;
-  --qc-color-row-hover-border: #52715f;
+  --qc-color-row-hover: #362c22;
+  --qc-color-row-hover-border: #6b5645;
+  /* Kept green on purpose — see the light-theme comment above. */
   --qc-color-transaction-confirmed: #87d99b;
   --qc-color-transaction-failed: #ef8b84;
   --qc-color-transaction-pending: #e4c06d;
@@ -182,9 +188,9 @@
   --qc-color-scrollbar-thumb: rgb(255 255 255 / 14%);
   --qc-color-scrollbar-thumb-hover: rgb(255 255 255 / 24%);
   --qc-color-skeleton-shimmer: rgb(255 255 255 / 7%);
-  --qc-gradient-primary: linear-gradient(180deg, #95e0a7 0%, #87d99b 55%, #79cf8e 100%);
-  --qc-gradient-primary-hover: linear-gradient(180deg, #a2e6b2 0%, #93e0a5 55%, #84d698 100%);
-  --qc-gradient-primary-active: linear-gradient(180deg, #79cf8e 0%, #6fc683 100%);
+  --qc-gradient-primary: #c18b72;
+  --qc-gradient-primary-hover: #d09b80;
+  --qc-gradient-primary-active: #a97557;
   --qc-shadow-card: 0 1px 2px rgb(0 0 0 / 20%), 0 8px 20px rgb(0 0 0 / 25%);
   --qc-shadow-card-hover: 0 2px 4px rgb(0 0 0 / 24%), 0 12px 26px rgb(0 0 0 / 32%);
   --qc-shadow-bar: 0 1px 2px rgb(0 0 0 / 25%), 0 4px 16px rgb(0 0 0 / 18%);
@@ -200,6 +206,22 @@
   --qc-shadow-primary-button-active:
     inset 0 1px 0 rgb(255 255 255 / 20%),
     0 1px 4px rgb(0 0 0 / 30%);
+}
+
+/* Home 2's default accent (design brief P5, 2026-08-19). Flat fill, no
+   gradient, matching v2's language — unlike the other 9 accents below, which
+   keep Chat's existing gradient CTA style. */
+:root[data-accent='clay'] {
+  --qc-color-accent: #9a6750;
+  --qc-color-accent-hover: #7f523f;
+  --qc-color-accent-readable: #7f523f;
+  --qc-color-accent-text: #ffffff;
+  --qc-color-accent-ring: rgb(154 103 80 / 20%);
+  --qc-color-accent-soft: rgb(154 103 80 / 10%);
+  --qc-color-accent-glow: rgb(154 103 80 / 22%);
+  --qc-gradient-primary: #9a6750;
+  --qc-gradient-primary-hover: #7f523f;
+  --qc-gradient-primary-active: #6c4433;
 }
 
 :root[data-accent='green'] {
@@ -319,6 +341,19 @@
   --qc-gradient-primary-active: linear-gradient(180deg, #c79a20 0%, #bd8f20 100%);
 }
 
+:root[data-theme='dark'][data-accent='clay'] {
+  --qc-color-accent: #c18b72;
+  --qc-color-accent-hover: #d09b80;
+  --qc-color-accent-readable: #c18b72;
+  --qc-color-accent-text: #2a1a10;
+  --qc-color-accent-ring: rgb(193 139 114 / 20%);
+  --qc-color-accent-soft: rgb(193 139 114 / 12%);
+  --qc-color-accent-glow: rgb(193 139 114 / 22%);
+  --qc-gradient-primary: #c18b72;
+  --qc-gradient-primary-hover: #d09b80;
+  --qc-gradient-primary-active: #a97557;
+}
+
 :root[data-theme='dark'][data-accent='green'] {
   --qc-color-accent: #87d99b;
   --qc-color-accent-hover: #6fcd87;
@@ -327,6 +362,12 @@
   --qc-color-accent-ring: rgb(135 217 155 / 20%);
   --qc-color-accent-soft: rgb(135 217 155 / 12%);
   --qc-color-accent-glow: rgb(135 217 155 / 22%);
+  /* Base :root[data-theme='dark'] no longer has a green gradient (P5
+     de-greening), so 'green' now needs its own explicit gradient to keep
+     rendering as it always did. */
+  --qc-gradient-primary: linear-gradient(180deg, #95e0a7 0%, #87d99b 55%, #79cf8e 100%);
+  --qc-gradient-primary-hover: linear-gradient(180deg, #a2e6b2 0%, #93e0a5 55%, #84d698 100%);
+  --qc-gradient-primary-active: linear-gradient(180deg, #79cf8e 0%, #6fc683 100%);
 }
 
 :root[data-theme='dark'][data-accent='blue'] {
@@ -458,39 +499,48 @@
 }
 
 :root[data-ui='modern'] {
-  --qc-color-page-bg: #f2efe6;
-  --qc-color-frame-bg: #f2efe6;
-  --qc-color-frame-surface: #ffffff;
-  --qc-color-surface: #ffffff;
-  --qc-color-surface-alt: #f7f4ec;
-  --qc-color-surface-raised: #ffffff;
-  --qc-color-control-bg: #f7f4ec;
-  --qc-color-control-hover: #ddd9d0;
-  --qc-color-control-selected: #ddd9d0;
-  --qc-color-input-bg: #ffffff;
-  --qc-color-message-bg: #ffffff;
-  --qc-color-border: #ddd9d0;
-  --qc-color-border-strong: #ddd9d0;
-  --qc-color-border-subtle: #ddd9d0;
-  --qc-color-text: #0d0d0d;
-  --qc-color-text-secondary: #6b6b6b;
-  --qc-color-text-soft: #6b6b6b;
-  --qc-color-muted: #6b6b6b;
-  --qc-color-text-faint: #6b6b6b;
-  --qc-color-avatar: #6b6b6b;
+  /* Home 2 token table (design brief P5, 2026-08-19 / home-v2-prototype.css)
+     mapped onto Chat's existing --qc-* layer: bg/chrome/surface/surface-raised
+     land on page-bg/frame-bg/{frame-surface,surface}/surface-raised; ink/muted
+     collapse Chat's 3 text tiers + avatar to the 2 v2 has; line is border.
+     Tokens v2 doesn't specify (surface-alt, control-*, chip-bg, border tiers)
+     are derived between the nearest two named v2 tiers to stay in-family. */
+  --qc-color-page-bg: #edece8;
+  --qc-color-frame-bg: #e7e4de;
+  --qc-color-frame-surface: #f8f7f3;
+  --qc-color-surface: #f8f7f3;
+  --qc-color-surface-alt: #f2f0ea;
+  --qc-color-surface-raised: #fffefa;
+  --qc-color-control-bg: #f2f0ea;
+  --qc-color-control-hover: #e6e2d9;
+  --qc-color-control-selected: #e6e2d9;
+  --qc-color-input-bg: #fffefa;
+  --qc-color-message-bg: #fffefa;
+  --qc-color-border: #d5d1ca;
+  --qc-color-border-strong: #bfbab0;
+  --qc-color-border-subtle: #e3e0d8;
+  --qc-color-text: #302f2d;
+  --qc-color-text-secondary: #716e69;
+  --qc-color-text-soft: #716e69;
+  --qc-color-muted: #716e69;
+  --qc-color-text-faint: #716e69;
+  --qc-color-avatar: #716e69;
   --qc-color-avatar-text: #ffffff;
-  --qc-color-chip-bg: #f7f4ec;
-  --qc-color-row-hover: #ddd9d0;
-  --qc-color-row-hover-border: #ddd9d0;
+  --qc-color-chip-bg: #f2f0ea;
+  --qc-color-row-hover: #e6e2d9;
+  --qc-color-row-hover-border: #d5d1ca;
   --qc-color-warning-bg: #fff8e9;
   --qc-color-warning-border: #d7b96d;
   --qc-color-scrollbar-thumb: rgb(13 13 13 / 18%);
   --qc-color-scrollbar-thumb-hover: rgb(13 13 13 / 28%);
   --qc-color-skeleton-shimmer: rgb(255 255 255 / 68%);
-  --qc-shadow-card: none;
-  --qc-shadow-card-hover: 0 0 0 1.5px var(--qc-color-border);
-  --qc-shadow-bar: none;
-  --qc-shadow-pop: 0 18px 44px rgb(13 13 13 / 16%);
+  /* v2 soft diffuse elevation, replacing the old flat/borderless treatment. */
+  --qc-shadow-card: 0 12px 30px rgb(48 44 39 / 9%);
+  --qc-shadow-card-hover: 0 16px 38px rgb(48 44 39 / 13%);
+  --qc-shadow-bar: 0 1px 2px rgb(48 44 39 / 4%), 0 6px 18px rgb(48 44 39 / 6%);
+  --qc-shadow-pop: 0 18px 44px rgb(48 44 39 / 16%);
+  --qc-radius-sm: 9px;
+  --qc-radius-md: 12px;
 
   font-family:
     "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -498,44 +548,83 @@
 }
 
 :root[data-theme='dark'][data-ui='modern'] {
-  --qc-color-page-bg: #111318;
-  --qc-color-frame-bg: #111318;
-  --qc-color-frame-surface: #1c1f28;
-  --qc-color-surface: #1c1f28;
-  --qc-color-surface-alt: #222633;
-  --qc-color-surface-raised: #222633;
-  --qc-color-control-bg: #222633;
-  --qc-color-control-hover: #2e3340;
-  --qc-color-control-selected: #252a36;
-  --qc-color-input-bg: #222633;
-  --qc-color-message-bg: #1c1f28;
-  --qc-color-border: #2e3340;
-  --qc-color-border-strong: #2e3340;
-  --qc-color-border-subtle: #2e3340;
-  --qc-color-text: #e4e8f0;
-  --qc-color-text-secondary: #8892a4;
-  --qc-color-text-soft: #8892a4;
+  --qc-color-page-bg: #242423;
+  --qc-color-frame-bg: #2d2c2a;
+  --qc-color-frame-surface: #32312f;
+  --qc-color-surface: #32312f;
+  --qc-color-surface-alt: #383530;
+  --qc-color-surface-raised: #403e3a;
+  --qc-color-control-bg: #383530;
+  --qc-color-control-hover: #423f3a;
+  --qc-color-control-selected: #423f3a;
+  --qc-color-input-bg: #32312f;
+  --qc-color-message-bg: #32312f;
+  --qc-color-border: #4d4b47;
+  --qc-color-border-strong: #68655f;
+  --qc-color-border-subtle: #3f3e3b;
+  --qc-color-text: #e8e5df;
+  --qc-color-text-secondary: #aaa69e;
+  --qc-color-text-soft: #aaa69e;
   /* WCAG AA (≥4.5:1) on every dark-Modern background these tokens sit on —
-     #1c1f28 (5.08), #222633 (4.65), #111318 (5.74) — matching the AA bar the
-     Classic dark palette was raised to; a step dimmer than text-secondary so
-     the hierarchy holds. Timestamps and the always-visible message action
-     buttons render at 11px, so the 4.5:1 normal-text threshold applies. */
-  --qc-color-muted: #8390a3;
-  --qc-color-text-faint: #8390a3;
-  --qc-color-avatar: #6f7a8c;
-  --qc-color-avatar-text: #111318;
-  --qc-color-chip-bg: #222633;
-  --qc-color-row-hover: #252a36;
-  --qc-color-row-hover-border: #2e3340;
+     v2's single "muted" tier (#aaa69e) checks out at ~5.4:1 on surface
+     (#32312f) and ~4.6:1 on surface-raised (#403e3a), matching the AA bar
+     the Classic dark palette was raised to. Timestamps and the
+     always-visible message action buttons render at 11px, so the 4.5:1
+     normal-text threshold applies. */
+  --qc-color-muted: #aaa69e;
+  --qc-color-text-faint: #aaa69e;
+  --qc-color-avatar: #aaa69e;
+  --qc-color-avatar-text: #242423;
+  --qc-color-chip-bg: #383530;
+  --qc-color-row-hover: #423f3a;
+  --qc-color-row-hover-border: #4d4b47;
   --qc-color-warning-bg: #282414;
   --qc-color-warning-border: #72642a;
   --qc-color-scrollbar-thumb: rgb(228 232 240 / 14%);
   --qc-color-scrollbar-thumb-hover: rgb(228 232 240 / 24%);
   --qc-color-skeleton-shimmer: rgb(255 255 255 / 7%);
-  --qc-shadow-card: none;
-  --qc-shadow-card-hover: 0 0 0 1.5px var(--qc-color-border);
-  --qc-shadow-bar: none;
-  --qc-shadow-pop: 0 18px 44px rgb(0 0 0 / 32%);
+  --qc-shadow-card: 0 18px 44px rgb(0 0 0 / 32%);
+  --qc-shadow-card-hover: 0 22px 50px rgb(0 0 0 / 38%);
+  --qc-shadow-bar: 0 1px 2px rgb(0 0 0 / 25%), 0 6px 18px rgb(0 0 0 / 18%);
+  --qc-shadow-pop: 0 18px 44px rgb(0 0 0 / 40%);
+}
+
+/* Default accent inside Modern is clay (Home 2's default), even though the
+   resolved accent value from a host that hasn't adopted clay yet may still
+   be the legacy default 'green'. A 3-attribute selector beats both
+   `:root[data-ui='modern']` (2 attrs) and `:root[data-accent='green']`
+   (2 attrs) regardless of source order, so this wins deterministically —
+   while `[data-accent='blue'][data-ui='modern']` etc. simply don't match
+   here and fall through to the normal accent block, so an explicit
+   non-green accent choice still renders as chosen.
+   TEMPORARY: remove this override (and its dark twin below) once Home
+   passes `clay` through to apps (planned after Chat 2.0.0 publishes) —
+   clay then arrives natively as data-accent='clay' and green must become
+   selectable in Modern again. */
+:root[data-ui='modern'][data-accent='green'] {
+  --qc-color-accent: #9a6750;
+  --qc-color-accent-hover: #7f523f;
+  --qc-color-accent-readable: #7f523f;
+  --qc-color-accent-text: #ffffff;
+  --qc-color-accent-ring: rgb(154 103 80 / 20%);
+  --qc-color-accent-soft: rgb(154 103 80 / 10%);
+  --qc-color-accent-glow: rgb(154 103 80 / 22%);
+  --qc-gradient-primary: #9a6750;
+  --qc-gradient-primary-hover: #7f523f;
+  --qc-gradient-primary-active: #6c4433;
+}
+
+:root[data-theme='dark'][data-ui='modern'][data-accent='green'] {
+  --qc-color-accent: #c18b72;
+  --qc-color-accent-hover: #d09b80;
+  --qc-color-accent-readable: #c18b72;
+  --qc-color-accent-text: #2a1a10;
+  --qc-color-accent-ring: rgb(193 139 114 / 20%);
+  --qc-color-accent-soft: rgb(193 139 114 / 12%);
+  --qc-color-accent-glow: rgb(193 139 114 / 22%);
+  --qc-gradient-primary: #c18b72;
+  --qc-gradient-primary-hover: #d09b80;
+  --qc-gradient-primary-active: #a97557;
 }
 
 * {
@@ -693,8 +782,10 @@ samp,
   flex: none;
   font-size: var(--qc-text-heading);
   display: inline-block;
-  width: 2.3em;
-  height: 2.3em;
+  /* Must not track --qc-text-scale 1:1 — at 'huge' (2.1x) a bare 2.3em icon
+     grows past 100px and overruns a narrow mobile topbar (issue #28). */
+  width: clamp(32px, 2.3em, 44px);
+  height: clamp(32px, 2.3em, 44px);
   object-fit: contain;
   filter: none;
 }
@@ -925,20 +1016,24 @@ samp,
   text-transform: uppercase;
 }
 
+/* Network badge colors per the Home 2 token table (design brief P5,
+   2026-08-19) — the qortium green here is the one deliberate exception to
+   the P5 de-greening pass: it's semantic (matches Home's --v2-qortium), not
+   the accent. */
 .network-section--qortium .network-section__title {
-  color: #9a5530;
+  color: #2f7953;
 }
 
 .network-section--qortal .network-section__title {
-  color: #5f6e86;
+  color: #356da5;
 }
 
 :root[data-theme='dark'] .network-section--qortium .network-section__title {
-  color: #e0a27e;
+  color: #75c797;
 }
 
 :root[data-theme='dark'] .network-section--qortal .network-section__title {
-  color: #aab9d1;
+  color: #83b5e3;
 }
 
 .panel__header,
@@ -1760,19 +1855,22 @@ samp,
   --qc-color-border: #d8cec1;
   --qc-color-border-strong: #bcae9e;
   --qc-color-border-subtle: #e4dbd0;
-  --qc-color-accent: #a75d36;
-  --qc-color-accent-hover: #874726;
-  --qc-color-accent-readable: #874726;
+  /* P5c: was its own near-clay rust palette (#a75d36/#874726) — a Home-v2
+     tab must read as the SAME clay as the rest of the app, not a second
+     warm accent. Pinned to the exact `[data-accent='clay']` literals since
+     this class overrides --qc-color-accent itself (can't var()-reference
+     its own property). */
+  --qc-color-accent: #9a6750;
+  --qc-color-accent-hover: #7f523f;
+  --qc-color-accent-readable: #7f523f;
   --qc-color-accent-text: #ffffff;
-  --qc-color-accent-ring: rgb(167 93 54 / 18%);
-  --qc-color-accent-soft: rgb(167 93 54 / 10%);
-  --qc-color-accent-glow: rgb(167 93 54 / 18%);
-  --qc-color-avatar: #9d765f;
-  --qc-color-row-hover: #f3e7dd;
-  --qc-color-row-hover-border: #cfaa91;
-  --qc-gradient-primary: #a75d36;
-  --qc-gradient-primary-hover: #974f2c;
-  --qc-gradient-primary-active: #874726;
+  --qc-color-accent-ring: rgb(154 103 80 / 20%);
+  --qc-color-accent-soft: rgb(154 103 80 / 10%);
+  --qc-color-accent-glow: rgb(154 103 80 / 22%);
+  --qc-color-avatar: var(--qc-color-accent);
+  --qc-gradient-primary: var(--qc-color-accent);
+  --qc-gradient-primary-hover: var(--qc-color-accent-hover);
+  --qc-gradient-primary-active: #6c4433;
   --qc-shadow-card: 0 1px 2px rgb(52 39 28 / 5%);
   --qc-shadow-card-hover: 0 2px 8px rgb(52 39 28 / 8%);
   --qc-shadow-bar: 0 1px 2px rgb(52 39 28 / 4%);
@@ -1793,19 +1891,18 @@ samp,
   --qc-color-border: #4a4038;
   --qc-color-border-strong: #716156;
   --qc-color-border-subtle: #382f29;
-  --qc-color-accent: #e29a6f;
-  --qc-color-accent-hover: #cf855b;
-  --qc-color-accent-readable: #f0aa80;
-  --qc-color-accent-text: #24140c;
-  --qc-color-accent-ring: rgb(226 154 111 / 20%);
-  --qc-color-accent-soft: rgb(226 154 111 / 12%);
-  --qc-color-avatar: #b77d5c;
-  --qc-color-avatar-text: #1f120b;
-  --qc-color-row-hover: #35271f;
-  --qc-color-row-hover-border: #865d45;
-  --qc-gradient-primary: #e29a6f;
-  --qc-gradient-primary-hover: #eda77e;
-  --qc-gradient-primary-active: #cf855b;
+  /* Same reconciliation as the light block above, dark clay literals. */
+  --qc-color-accent: #c18b72;
+  --qc-color-accent-hover: #d09b80;
+  --qc-color-accent-readable: #c18b72;
+  --qc-color-accent-text: #2a1a10;
+  --qc-color-accent-ring: rgb(193 139 114 / 20%);
+  --qc-color-accent-soft: rgb(193 139 114 / 12%);
+  --qc-color-avatar: var(--qc-color-accent);
+  --qc-color-avatar-text: var(--qc-color-accent-text);
+  --qc-gradient-primary: var(--qc-color-accent);
+  --qc-gradient-primary-hover: var(--qc-color-accent-hover);
+  --qc-gradient-primary-active: #a97557;
 }
 
 .app-shell--home-v2 .topbar {
@@ -3439,7 +3536,10 @@ button.message__reply-preview:focus-visible,
 :root[data-ui='modern'] .members-drawer__close,
 :root[data-ui='modern'] .account-dialog__close,
 :root[data-ui='modern'] .direct-row__remove,
-:root[data-ui='modern'] .message__reaction-quick-row button {
+:root[data-ui='modern'] .message__reaction-quick-row button,
+:root[data-ui='modern'] .composer__attachment,
+:root[data-ui='modern'] .message__attachment-chip,
+:root[data-ui='modern'] .message__image-preview-reveal {
   border-width: 1.5px;
 }
 
@@ -3467,6 +3567,9 @@ button.message__reply-preview:focus-visible,
   box-shadow: inset -3px 0 0 var(--qc-color-accent);
 }
 
+/* v2 soft-shadow card elevation (design brief P5) — 12px radius via the
+   shared --qc-radius-md token (9px controls / 12px cards), real shadow
+   instead of the old flat/borderless treatment. */
 :root[data-ui='modern'] .message,
 :root[data-ui='modern'] .join-request,
 :root[data-ui='modern'] .tx-status,
@@ -3481,19 +3584,18 @@ button.message__reply-preview:focus-visible,
 :root[data-ui='modern'] .empty,
 :root[data-ui='modern'] .skeleton--row {
   border-width: 1.5px;
-  border-radius: 8px;
-  box-shadow: none;
+  border-radius: var(--qc-radius-md);
+  box-shadow: var(--qc-shadow-card);
 }
 
 /* Nested reply/edit affordances keep their accent rail (Modern uses the same
-   rail language for selected rows) but adopt Modern's radius and border
-   weight elsewhere, matching the sibling image-preview/code-block conversions
-   above. */
+   rail language for selected rows) but adopt Modern's border weight
+   elsewhere, matching the sibling image-preview/code-block conversions
+   above; radius comes from the bumped --qc-radius-sm (9px) automatically. */
 :root[data-ui='modern'] .message__reply-preview,
 :root[data-ui='modern'] .composer__context {
   border-width: 1.5px;
   border-inline-start-width: 3px;
-  border-radius: 8px;
 }
 
 :root[data-ui='modern'] .account-dialog {
@@ -3854,6 +3956,9 @@ button.message__reply-preview:focus-visible,
     display: grid;
   }
 
+  /* Home v2 app-shell override (<=860px) — the single-view swap above already
+     collapses the grid to one column; this keeps the members-open variant
+     collapsed the same way instead of reopening its extra column. */
   .app-shell--home-v2 .layout,
   .app-shell--home-v2 .layout--members-open {
     grid-template-columns: minmax(0, 1fr);
@@ -3924,52 +4029,6 @@ button.message__reply-preview:focus-visible,
     margin-top: 12px;
   }
 
-  .app-shell--home-v2 .topbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-    padding-block: 6px;
-    padding-inline: calc(10px + env(safe-area-inset-left, 0px)) calc(10px + env(safe-area-inset-right, 0px));
-  }
-
-  .app-shell--home-v2 .topbar__account {
-    justify-content: flex-end;
-    margin-top: 0;
-  }
-
-  .app-shell--home-v2 .topbar__host-context,
-  .app-shell--home-v2 .account-summary__status {
-    display: none;
-  }
-
-  .app-shell--home-v2 .topbar__account .account-connect {
-    display: flex;
-    max-width: min(56vw, 240px);
-  }
-
-  .app-shell--home-v2 .topbar__account .account-connect .muted {
-    display: none;
-  }
-
-  .app-shell--home-v2 .topbar__account .account-connect .button {
-    min-width: 0;
-    min-height: 36px;
-    padding: 6px 10px;
-  }
-
-  .app-shell--home-v2 .panel {
-    padding: 10px 12px;
-  }
-
-  .app-shell--home-v2 .network-section__header {
-    padding: 12px 12px 4px;
-  }
-
-  .app-shell--home-v2 .chat-pane {
-    padding: 10px 12px;
-    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-  }
-
   .notification-settings__popover {
     inset-inline-start: 0;
     inset-inline-end: auto;
@@ -4025,22 +4084,16 @@ button.message__reply-preview:focus-visible,
     width: 100%;
   }
 
+  /* Must take its own full row here — without a flex-basis it sits between
+     two 100%-basis siblings (textarea, toolbar) at its own tight content
+     width, so `text-align: end` has no room to right-align against. */
+  .composer__byte-counter {
+    flex: 1 1 100%;
+  }
+
   .composer__toolbar {
     flex: 1 1 100%;
     justify-content: flex-end;
-  }
-
-  .app-shell--home-v2 .composer {
-    flex-wrap: nowrap;
-  }
-
-  .app-shell--home-v2 .composer textarea {
-    flex-basis: auto;
-    width: auto;
-  }
-
-  .app-shell--home-v2 .composer__toolbar {
-    flex: 0 0 auto;
   }
 
   .account-dialog {
@@ -4057,6 +4110,68 @@ button.message__reply-preview:focus-visible,
 
   .account-dialog__actions .button {
     flex: 1 1 140px;
+  }
+
+  /* Home v2 app-shell overrides (<=600px) — co-located here (was previously
+     interleaved with the generic rules above) so the bridge-mode deltas for
+     this breakpoint are all in one place. Selectors/declarations unchanged. */
+  .app-shell--home-v2 .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-block: 6px;
+    padding-inline: calc(10px + env(safe-area-inset-left, 0px)) calc(10px + env(safe-area-inset-right, 0px));
+  }
+
+  .app-shell--home-v2 .topbar__account {
+    justify-content: flex-end;
+    margin-top: 0;
+  }
+
+  .app-shell--home-v2 .topbar__host-context,
+  .app-shell--home-v2 .account-summary__status {
+    display: none;
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect {
+    display: flex;
+    max-width: min(56vw, 240px);
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect .muted {
+    display: none;
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect .button {
+    min-width: 0;
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+
+  .app-shell--home-v2 .panel {
+    padding: 10px 12px;
+  }
+
+  .app-shell--home-v2 .network-section__header {
+    padding: 12px 12px 4px;
+  }
+
+  .app-shell--home-v2 .chat-pane {
+    padding: 10px 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-shell--home-v2 .composer {
+    flex-wrap: nowrap;
+  }
+
+  .app-shell--home-v2 .composer textarea {
+    flex-basis: auto;
+    width: auto;
+  }
+
+  .app-shell--home-v2 .composer__toolbar {
+    flex: 0 0 auto;
   }
 }
 
@@ -4249,6 +4364,21 @@ button.message__reply-preview:focus-visible,
     width: 44px;
     height: 44px;
   }
+
+  /* Unpadded text link (name only, no icon chrome) — its box is just the
+     line-height of one line of text (~23px) with no touch margin. */
+  .member-chip__name-button {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  /* The reply-context "Cancel" button is a standalone control (not a dense
+     per-message action row), so it gets the same 40px floor as the rest of
+     this block instead of the message-row 34px compromise. */
+  .composer__context .button {
+    min-height: 40px;
+  }
 }
 
 /* Fun UI: a restrained, full-bleed adaptation of ChibiHub's hand-drawn style. */
@@ -4282,6 +4412,11 @@ button.message__reply-preview:focus-visible,
   --qc-color-chip-bg: #f2f7ed;
   --qc-color-row-hover: color-mix(in srgb, var(--qc-color-accent) 18%, #fffef8);
   --qc-color-row-hover-border: var(--qc-fun-outline);
+  /* Fun's own green identity for the avatar fallback — this uiStyle never
+     picked up an accent-driven avatar (P5b's `--qc-color-avatar: #6b5245`
+     clay default reads muted next to fun's green-tinted neutrals above). */
+  --qc-color-avatar: #21824a;
+  --qc-color-avatar-text: #ffffff;
   --qc-shadow-card: 5px 5px 0 var(--qc-fun-ink);
   --qc-shadow-card-hover: 7px 7px 0 var(--qc-fun-ink);
   --qc-shadow-bar: 0 4px 0 var(--qc-fun-ink);
@@ -4317,6 +4452,42 @@ button.message__reply-preview:focus-visible,
   --qc-color-chip-bg: #1d2d28;
   --qc-color-row-hover: color-mix(in srgb, var(--qc-color-accent) 22%, #172420);
   --qc-color-row-hover-border: var(--qc-fun-outline);
+  --qc-color-avatar: #87d99b;
+  --qc-color-avatar-text: #0e1411;
+}
+
+/* Fun never set its own --qc-color-accent, so it always inherited whatever
+   `data-accent` resolved to. That was harmless while the resolved default
+   was green (fun's native palette); now that clay is the default, an
+   unset/default accent choice renders fun's buttons and CTAs in a flat
+   muted brown next to its bright green-tinted candy background. Only the
+   'clay' value is special-cased (mirrors `[data-ui='modern'][data-accent=
+   'green']` above) — an explicit non-clay accent choice (blue, purple, …)
+   still applies normally inside fun. */
+:root[data-ui='fun'][data-accent='clay'] {
+  --qc-color-accent: #21824a;
+  --qc-color-accent-hover: #196a3a;
+  --qc-color-accent-readable: #196a3a;
+  --qc-color-accent-text: #ffffff;
+  --qc-color-accent-ring: rgb(33 130 74 / 18%);
+  --qc-color-accent-soft: rgb(33 130 74 / 10%);
+  --qc-color-accent-glow: rgb(33 130 74 / 22%);
+  --qc-gradient-primary: linear-gradient(180deg, #21824a 0%, #1f7a45 55%, #1d7341 100%);
+  --qc-gradient-primary-hover: linear-gradient(180deg, #24854c 0%, #21824a 55%, #1f7845 100%);
+  --qc-gradient-primary-active: linear-gradient(180deg, #1d7341 0%, #196a3a 100%);
+}
+
+:root[data-theme='dark'][data-ui='fun'][data-accent='clay'] {
+  --qc-color-accent: #87d99b;
+  --qc-color-accent-hover: #6fcd87;
+  --qc-color-accent-readable: #87d99b;
+  --qc-color-accent-text: #0e1411;
+  --qc-color-accent-ring: rgb(135 217 155 / 20%);
+  --qc-color-accent-soft: rgb(135 217 155 / 12%);
+  --qc-color-accent-glow: rgb(135 217 155 / 22%);
+  --qc-gradient-primary: linear-gradient(180deg, #95e0a7 0%, #87d99b 55%, #79cf8e 100%);
+  --qc-gradient-primary-hover: linear-gradient(180deg, #a2e6b2 0%, #93e0a5 55%, #84d698 100%);
+  --qc-gradient-primary-active: linear-gradient(180deg, #79cf8e 0%, #6fc683 100%);
 }
 
 :root[data-ui='fun'] h1,
