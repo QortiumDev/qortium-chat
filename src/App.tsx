@@ -1277,6 +1277,17 @@ export default function App() {
   // below). Also backs the Qortal join/leave affordance's membership check
   // (isConfirmedJoinedQortalGroup / isJoinableQortalGroup).
   const [qortalMemberGroups, setQortalMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
+  // D6: qortal mirror of accountJoinRequests/adminJoinRequests — the
+  // connected Qortal account's own pending join requests (requester side)
+  // and, for groups it administers, the requests waiting on it (admin
+  // side). Separate state, not merged into the Qortium ones above, so a
+  // same-numeric groupId can never cross-fire between chains (see
+  // pendingTrackedQortalJoinGroupIds' comment for the same rule applied to
+  // locally tracked transactions).
+  const [qortalAccountJoinRequests, setQortalAccountJoinRequests] =
+    useState<AsyncState<GroupJoinRequest[]>>(createState(emptyJoinRequests));
+  const [qortalAdminJoinRequests, setQortalAdminJoinRequests] =
+    useState<AsyncState<GroupWithJoinRequests[]>>(createState(emptyAdminJoinRequests));
   const [qortalActiveChats, setQortalActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [qortalJournalEntries, setQortalJournalEntries] = useState<PendingBridgeTransactionEntry[]>(emptyJournalEntries);
   const [qortalGroupDiscoveries, setQortalGroupDiscoveries] =
@@ -2007,12 +2018,25 @@ export default function App() {
     () => new Map(adminJoinRequests.value.map((entry) => [entry.group.groupId, entry])),
     [adminJoinRequests.value],
   );
+  // D6: qortal mirror of adminJoinRequestGroups above — kept as a separate
+  // map (not merged) for the same same-numeric-groupId collision reason as
+  // qortalPendingJoinGroupIds/pendingJoinGroupIds.
+  const qortalAdminJoinRequestGroups = useMemo(
+    () => new Map(qortalAdminJoinRequests.value.map((entry) => [entry.group.groupId, entry])),
+    [qortalAdminJoinRequests.value],
+  );
   const isSelectedQortiumGroup =
     selectedChat?.kind === 'group' && selectedChat.network !== 'qortal';
+  const isSelectedQortalGroupForAdminRequests =
+    selectedChat?.kind === 'group' && selectedChat.network === 'qortal';
   const selectedAdminJoinRequests =
-    !isSelectedQortiumGroup || selectedGroupId === null || isSelectedGeneralChat
+    selectedGroupId === null || isSelectedGeneralChat
       ? []
-      : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
+      : isSelectedQortalGroupForAdminRequests
+        ? qortalAdminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? []
+        : !isSelectedQortiumGroup
+          ? []
+          : adminJoinRequestGroups.get(selectedGroupId)?.joinRequests ?? [];
   // One-line last-message previews for the sidebar rows. The active-chats entry
   // owns activity ordering/timestamps; a matching loaded conversation thread
   // can replace only its stale original body with the latest accepted edit.
@@ -2800,17 +2824,33 @@ export default function App() {
   // separate from the Qortium equivalents above.
   const canJoinQortalGroup = hasAction(qortalBridge.value.actions, 'JOIN_GROUP');
   const canLeaveQortalGroup = hasAction(qortalBridge.value.actions, 'LEAVE_GROUP');
+  // D6: mirrors canApproveGroupJoinRequests above for the Qortal bridge — the
+  // join-request approval (GROUP_INVITE wire) admin surface, not the
+  // Qortium-only GROUP_APPROVAL chain-governance vote machinery.
+  const canReadQortalAccountJoinRequests = hasAction(qortalBridge.value.actions, 'GET_ACCOUNT_GROUP_JOIN_REQUESTS');
+  const canReadQortalAdminJoinRequests = hasAction(qortalBridge.value.actions, 'GET_ADMIN_GROUP_JOIN_REQUESTS');
+  const canApproveQortalGroupJoinRequests = hasAction(qortalBridge.value.actions, 'APPROVE_GROUP_JOIN_REQUEST');
   const hasPendingQortalJoinTransaction =
     selectedGroupId !== null && pendingTrackedQortalJoinGroupIds.has(selectedGroupId);
   const hasPendingQortalLeaveTransaction =
     selectedGroupId !== null && pendingTrackedQortalLeaveGroupIds.has(selectedGroupId);
+  // D6: server-side truth that a join request is already pending for the
+  // selected Qortal group (mirrors hasPendingJoinRequest/pendingJoinGroupIds
+  // above) — distinct from hasPendingQortalJoinTransaction, which is only the
+  // locally tracked in-flight JOIN_GROUP tx.
+  const qortalPendingJoinGroupIds = useMemo(
+    () => new Set(qortalAccountJoinRequests.value.map((request) => request.groupId)),
+    [qortalAccountJoinRequests.value],
+  );
+  const hasPendingQortalJoinRequest = selectedGroupId !== null && qortalPendingJoinGroupIds.has(selectedGroupId);
   const isJoinableQortalGroup =
     isSelectedQortalGroup &&
     selectedGroupId !== null &&
     selectedGroupId > 0 &&
     qortalMemberGroups.phase === 'ready' &&
     !isConfirmedJoinedQortalGroup &&
-    !hasPendingQortalJoinTransaction;
+    !hasPendingQortalJoinTransaction &&
+    !hasPendingQortalJoinRequest;
   const canSubmitQortalJoin =
     canUseQortalAccount && !!selectedGroup && canJoinQortalGroup && isJoinableQortalGroup && !joinPending;
   const canSubmitQortalLeave =
@@ -3201,7 +3241,9 @@ export default function App() {
             !canSubmitQortalJoin
           ? hasPendingQortalJoinTransaction
             ? t('button.join.transaction.pending')
-            : groupJoinUnavailableLabel
+            : hasPendingQortalJoinRequest
+              ? t('button.join.request.pending')
+              : groupJoinUnavailableLabel
           : isSelectedQortalGroup &&
               selectedGroupId !== null &&
               selectedGroupId > 0 &&
@@ -3401,6 +3443,15 @@ export default function App() {
     setLastReadByQortalGroupId(restoredQortalWatermarks);
     setQortalGroupActivityById(new Map());
 
+    // D6: the previous Qortal account's join-request state (its own pending
+    // requests, and any it administers) must never survive an identity
+    // switch — refreshQortalSelectedAccount re-fetches for the new address
+    // right after this call returns (loadQortalJoinRequestState), but this
+    // reset makes the switch synchronous so a stale request can never render
+    // under the new identity even for the one tick before that fetch lands.
+    setQortalAccountJoinRequests({ phase: 'loading', value: emptyJoinRequests });
+    setQortalAdminJoinRequests({ phase: 'loading', value: emptyAdminJoinRequests });
+
     // Qortal direct watermarks have no legacy migration to coordinate with
     // (see the persist effect's comment), so this is a plain per-account read.
     const restoredQortalDirectWatermarks = nextAccountAddress
@@ -3551,8 +3602,31 @@ export default function App() {
     setQortalMemberGroups({ phase: 'loading', value: emptyGroups });
     setQortalGroups({ phase: 'loading', value: emptyGroups });
     setQortalActiveChats({ phase: 'loading', value: emptyActiveChats });
+    setQortalAccountJoinRequests({ phase: 'loading', value: emptyJoinRequests });
+    setQortalAdminJoinRequests({ phase: 'loading', value: emptyAdminJoinRequests });
     qortalGroupDiscoveryRequestRef.current += 1;
     setQortalGroupDiscoveries(createState([]));
+
+    // D6: fetch the connected Qortal account's own pending join requests and,
+    // for groups it administers, the requests waiting on it — gated on the
+    // qortal bridge advertising each action (same "advertisement + account
+    // present" rule as every other new D6 fetch). Neither action changes
+    // membership, so both can be requested from every snapshot outcome below
+    // that resolves an account, independent of whether memberGroups itself
+    // succeeded.
+    function loadQortalJoinRequestState(address: string) {
+      if (hasAction(actionList, 'GET_ACCOUNT_GROUP_JOIN_REQUESTS')) {
+        void loadQortalAccountJoinRequests(address, actionList);
+      } else {
+        setQortalAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
+      }
+
+      if (hasAction(actionList, 'GET_ADMIN_GROUP_JOIN_REQUESTS')) {
+        void loadQortalAdminJoinRequests(address, actionList);
+      } else {
+        setQortalAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
+      }
+    }
 
     try {
       const snapshot = await loadQortalAccountSnapshot(actionList);
@@ -3581,6 +3655,7 @@ export default function App() {
           value: emptyGroups,
         });
         void loadQortalActiveChats(snapshot.account.address, actionList);
+        loadQortalJoinRequestState(snapshot.account.address);
         return;
       }
 
@@ -3594,6 +3669,7 @@ export default function App() {
         value: snapshot.memberGroups.filter((group) => group.groupId !== GENERAL_CHAT_GROUP_ID),
       });
       void loadQortalActiveChats(snapshot.account.address, actionList);
+      loadQortalJoinRequestState(nextAccountAddress);
     } catch (error) {
       if (!qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
         return;
@@ -3606,6 +3682,8 @@ export default function App() {
       setQortalMemberGroups({ phase: 'ready', value: emptyGroups });
       setQortalGroups({ phase: 'ready', value: emptyGroups });
       setQortalActiveChats({ phase: 'ready', value: emptyActiveChats });
+      setQortalAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
+      setQortalAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
     } finally {
       if (qortalAccountRefreshGuardRef.current.isLatest(requestId)) {
         qortalAccountRefreshPendingRef.current = false;
@@ -3726,6 +3804,75 @@ export default function App() {
       }
 
       setAdminJoinRequests((current) => ({
+        error: getBridgeErrorMessage(error, t('status.loadingError.groupApprovals'), t),
+        phase: 'error',
+        value: current.value,
+      }));
+    }
+  }
+
+  // D6: mirrors loadAccountJoinRequests for the Qortal bridge/identity — a
+  // separate loader (not a merged network-aware one), consistent with
+  // loadQortalMemberGroups above and handleJoinQortalGroup below.
+  async function loadQortalAccountJoinRequests(
+    address: string,
+    actionList = qortalBridge.value.actions,
+    options: { isCurrent?: () => boolean; quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setQortalAccountJoinRequests({ phase: 'loading', value: qortalAccountJoinRequests.value });
+    }
+
+    try {
+      const value = await getAccountGroupJoinRequests(address, actionList, 'qortal');
+
+      if (options.isCurrent && !options.isCurrent()) {
+        return;
+      }
+
+      setQortalAccountJoinRequests({ phase: 'ready', value });
+    } catch (error) {
+      // Quiet 30s refreshes keep the last good value on a transient blip;
+      // this error renders as a persistent banner over every chat otherwise.
+      if (options.quiet || (options.isCurrent && !options.isCurrent())) {
+        return;
+      }
+
+      setQortalAccountJoinRequests((current) => ({
+        error: getBridgeErrorMessage(error, t('status.loadingError.joinRequests'), t),
+        phase: 'error',
+        value: current.value,
+      }));
+    }
+  }
+
+  // Mirrors loadAdminJoinRequests for the Qortal bridge/identity — see
+  // loadQortalAccountJoinRequests' comment above.
+  async function loadQortalAdminJoinRequests(
+    address: string,
+    actionList = qortalBridge.value.actions,
+    options: { isCurrent?: () => boolean; quiet?: boolean } = {},
+  ) {
+    if (!options.quiet) {
+      setQortalAdminJoinRequests({ phase: 'loading', value: qortalAdminJoinRequests.value });
+    }
+
+    try {
+      const value = await getAdminGroupJoinRequests(address, actionList, 'qortal');
+
+      if (options.isCurrent && !options.isCurrent()) {
+        return;
+      }
+
+      setQortalAdminJoinRequests({ phase: 'ready', value });
+    } catch (error) {
+      // Quiet 30s refreshes keep the last good value on a transient blip;
+      // this error renders as a persistent banner over every chat otherwise.
+      if (options.quiet || (options.isCurrent && !options.isCurrent())) {
+        return;
+      }
+
+      setQortalAdminJoinRequests((current) => ({
         error: getBridgeErrorMessage(error, t('status.loadingError.groupApprovals'), t),
         phase: 'error',
         value: current.value,
@@ -4718,6 +4865,15 @@ export default function App() {
       });
 
       await loadQortalMemberGroups(qortalAddress);
+      // D6: a closed group's JOIN_GROUP reports membership 'requested' rather
+      // than 'joined' — refresh the account's own join-request list right
+      // away (mirrors handleJoinGroup calling loadAccountData, which
+      // includes loadAccountJoinRequests) so hasPendingQortalJoinRequest
+      // flips to the request-pending button/hint state immediately, without
+      // waiting for the 30s quiet refresh.
+      if (canReadQortalAccountJoinRequests) {
+        await loadQortalAccountJoinRequests(qortalAddress);
+      }
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.join'), t));
     } finally {
@@ -5620,6 +5776,66 @@ export default function App() {
       });
 
       await loadAdminJoinRequests(selectedAccount);
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.approveJoin'), t));
+    } finally {
+      setApprovePendingJoiner(null);
+    }
+  }
+
+  // D6: mirrors handleApproveJoinRequest for the Qortal bridge/identity — a
+  // separate handler (not a merged network-aware one), consistent with
+  // handleJoinQortalGroup/handleJoinGroup above. This is the join-request
+  // approval (GROUP_INVITE wire) admin surface only — the Qortium-only
+  // GROUP_APPROVAL chain-governance vote machinery (submitGroupApproval) is
+  // never extended to Qortal.
+  async function handleApproveQortalJoinRequest(request: GroupJoinRequest) {
+    if (
+      !selectedGroup ||
+      !canApproveQortalGroupJoinRequests ||
+      !canUseQortalAccount ||
+      approvePendingJoiner ||
+      !qortalAccount
+    ) {
+      return;
+    }
+
+    const group = selectedGroup;
+    const chatKey = selectedChatKey;
+    const qortalAddress = qortalAccount.address;
+
+    if (request.groupId !== group.groupId) {
+      return;
+    }
+
+    setApprovePendingJoiner(request.joiner);
+    setWriteError('');
+
+    try {
+      // Qortal has no unlock shortcut of its own — reuses the shared Home
+      // wallet's Qortium unlock gate (see handleJoinQortalGroup's comment).
+      const selectedAccount = await ensureSelectedAccountUnlocked();
+
+      if (!selectedAccount || !isCurrentQortalGroupActionContext(qortalAddress, chatKey, group.groupId)) {
+        return;
+      }
+
+      const result = await approveGroupJoinRequest(request.groupId, request.joiner, 'qortal');
+
+      if (!isCurrentQortalGroupActionContext(qortalAddress, chatKey, group.groupId)) {
+        return;
+      }
+
+      trackTransaction({
+        action: 'approve',
+        group,
+        joiner: request.joiner,
+        message: t('status.approval.submitted'),
+        network: 'qortal',
+        result,
+      });
+
+      await loadQortalAdminJoinRequests(qortalAddress);
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.approveJoin'), t));
     } finally {
@@ -8962,6 +9178,34 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [account?.address, actionsKey]);
 
+  // D6: mirrors the Qortium join-request/admin-request refresh interval
+  // above, gated per-action on the Qortal bridge (see
+  // canReadQortalAccountJoinRequests/canReadQortalAdminJoinRequests).
+  useEffect(() => {
+    if (!qortalAccount) {
+      return undefined;
+    }
+
+    const qortalAddress = qortalAccount.address;
+    const isCurrent = () => currentQortalAccountAddressRef.current === qortalAddress;
+    const interval = window.setInterval(() => {
+      if (canReadQortalAccountJoinRequests) {
+        void loadQortalAccountJoinRequests(qortalAddress, qortalBridge.value.actions, { isCurrent, quiet: true });
+      }
+
+      if (canReadQortalAdminJoinRequests) {
+        void loadQortalAdminJoinRequests(qortalAddress, qortalBridge.value.actions, { isCurrent, quiet: true });
+      }
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [
+    qortalAccount?.address,
+    canReadQortalAccountJoinRequests,
+    canReadQortalAdminJoinRequests,
+    qortalBridge.value.actions.join('\n'),
+  ]);
+
   useEffect(() => {
     if (!selectedGroup || isGeneralChatGroup(selectedGroup)) {
       return undefined;
@@ -9009,9 +9253,11 @@ export default function App() {
           title={
             hasPendingQortalJoinTransaction
               ? t('button.join.transaction.pending')
-              : canUseQortalAccount && canJoinQortalGroup
-                ? t('button.join')
-                : groupJoinUnavailableLabel
+              : hasPendingQortalJoinRequest
+                ? t('button.join.request.pending')
+                : canUseQortalAccount && canJoinQortalGroup
+                  ? t('button.join')
+                  : groupJoinUnavailableLabel
           }
           type="button"
         >
@@ -9019,7 +9265,9 @@ export default function App() {
             ? t('button.joining')
             : hasPendingQortalJoinTransaction
               ? t('button.join.pending')
-              : t('button.join')}
+              : hasPendingQortalJoinRequest
+                ? t('button.join.request.pending')
+                : t('button.join')}
         </button>
       );
     }
@@ -9795,6 +10043,12 @@ export default function App() {
               ) : null}
               {accountJoinRequests.phase === 'error' ? <p className="error">{accountJoinRequests.error}</p> : null}
               {adminJoinRequests.phase === 'error' ? <p className="error">{adminJoinRequests.error}</p> : null}
+              {qortalAccountJoinRequests.phase === 'error' ? (
+                <p className="error">{qortalAccountJoinRequests.error}</p>
+              ) : null}
+              {qortalAdminJoinRequests.phase === 'error' ? (
+                <p className="error">{qortalAdminJoinRequests.error}</p>
+              ) : null}
               {showMintingControls && mintingStatus.phase === 'error' ? <p className="error">{mintingStatus.error}</p> : null}
               {showApprovalControls && pendingApprovals.phase === 'error' ? (
                 <p className="error">{pendingApprovals.error}</p>
@@ -9905,6 +10159,7 @@ export default function App() {
             <div aria-live="polite" className="composer composer--notice">
               <div>
                 <p>{qortalGroupComposerNotice}</p>
+                <p>{t('hint.groupApprovalDelay')}</p>
               </div>
               {qortalMemberGroups.phase === 'ready' ? renderJoinGroupButton() : null}
             </div>
@@ -10007,18 +10262,24 @@ export default function App() {
             accountRequiredLabel={accountRequiredLabel}
             approvePendingJoiner={approvePendingJoiner}
             avatarProfiles={selectedAvatarProfiles}
-            canApproveGroupJoinRequests={canApproveGroupJoinRequests}
-            canUseSelectedAccount={canUseSelectedAccount}
+            canApproveGroupJoinRequests={
+              isSelectedQortalGroupForAdminRequests ? canApproveQortalGroupJoinRequests : canApproveGroupJoinRequests
+            }
+            canUseSelectedAccount={isSelectedQortalGroupForAdminRequests ? canUseQortalAccount : canUseSelectedAccount}
             group={isSelectedGeneralChat ? null : selectedGroup}
             groupTitle={getGroupTitle(selectedGroup, t)}
-            hasAccount={!!account}
+            hasAccount={isSelectedQortalGroupForAdminRequests ? !!qortalAccount : !!account}
             isOverlay={isMembersOverlay}
             members={selectedGroupMembers}
             membersCloseRef={membersCloseRef}
             membersError={selectedGroupMembersError}
             membersLabel={selectedGroupMembersLabel}
             membersPhase={selectedGroupMembersPhase}
-            onApproveJoinRequest={(request) => void handleApproveJoinRequest(request)}
+            onApproveJoinRequest={(request) =>
+              void (isSelectedQortalGroupForAdminRequests
+                ? handleApproveQortalJoinRequest(request)
+                : handleApproveJoinRequest(request))
+            }
             onClose={() => setMembersOpen(false)}
             onOpenAccount={(target) => setAccountInfoTarget({ ...target, network: selectedChat?.network ?? 'qortium' })}
             onOpenAvatar={setAvatarLightboxImage}

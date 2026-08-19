@@ -424,37 +424,58 @@ export async function getGroupMembers(network: ChatNetwork, groupId: number, act
   );
 }
 
-export async function getAccountGroupJoinRequests(address: string, actions?: QdnAction[]) {
+// `network` picks Qortium vs Qortal (default 'qortium' keeps every
+// pre-dual-chain call site byte-identical). Home 2 advertises
+// GET_ACCOUNT_GROUP_JOIN_REQUESTS on both bridge globals (review/
+// schemas-home2-actions.md "Group join requests"), so only the dispatch
+// target and the FETCH_NODE_API fallback's node change with the network.
+export async function getAccountGroupJoinRequests(
+  address: string,
+  actions?: QdnAction[],
+  network: ChatNetwork = 'qortium',
+) {
   if (hasBridgeAction(actions, 'GET_ACCOUNT_GROUP_JOIN_REQUESTS')) {
-    return qdnRequest<GroupJoinRequest[]>({
+    return bridgeRequest<GroupJoinRequest[]>(network, {
       action: 'GET_ACCOUNT_GROUP_JOIN_REQUESTS',
       address,
     });
   }
 
-  return fetchNodeApiData<GroupJoinRequest[]>(buildAccountGroupJoinRequestsPath(address), 'Join requests');
+  return fetchNodeApiDataFor<GroupJoinRequest[]>(
+    network,
+    buildAccountGroupJoinRequestsPath(address),
+    'Join requests',
+  );
 }
 
-export async function getAdminGroupJoinRequests(address: string, actions?: QdnAction[]) {
+export async function getAdminGroupJoinRequests(
+  address: string,
+  actions?: QdnAction[],
+  network: ChatNetwork = 'qortium',
+) {
   if (hasBridgeAction(actions, 'GET_ADMIN_GROUP_JOIN_REQUESTS')) {
-    return qdnRequest<GroupWithJoinRequests[]>({
+    return bridgeRequest<GroupWithJoinRequests[]>(network, {
       action: 'GET_ADMIN_GROUP_JOIN_REQUESTS',
       address,
     });
   }
 
-  return fetchNodeApiData<GroupWithJoinRequests[]>(buildAdminGroupJoinRequestsPath(address), 'Admin join requests');
+  return fetchNodeApiDataFor<GroupWithJoinRequests[]>(
+    network,
+    buildAdminGroupJoinRequestsPath(address),
+    'Admin join requests',
+  );
 }
 
-export async function getGroupJoinRequests(groupId: number, actions?: QdnAction[]) {
+export async function getGroupJoinRequests(groupId: number, actions?: QdnAction[], network: ChatNetwork = 'qortium') {
   if (hasBridgeAction(actions, 'GET_GROUP_JOIN_REQUESTS')) {
-    return qdnRequest<GroupJoinRequest[]>({
+    return bridgeRequest<GroupJoinRequest[]>(network, {
       action: 'GET_GROUP_JOIN_REQUESTS',
       groupId,
     });
   }
 
-  return fetchNodeApiData<GroupJoinRequest[]>(buildGroupJoinRequestsPath(groupId), 'Group join requests');
+  return fetchNodeApiDataFor<GroupJoinRequest[]>(network, buildGroupJoinRequestsPath(groupId), 'Group join requests');
 }
 
 export async function getTransactionStatus(signature: string) {
