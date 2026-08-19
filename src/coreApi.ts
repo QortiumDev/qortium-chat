@@ -5,6 +5,7 @@ import { buildDeletedMessageText, buildReactionMessageText } from './chatText';
 import {
   buildQortalDirectChatDeletePayload,
   buildQortalDirectChatEditPayload,
+  buildQortalDirectChatPayload,
   buildQortalDirectChatReactionPayload,
   buildQortalHubGroupChatDeletePayload,
   buildQortalHubGroupChatEditPayload,
@@ -309,16 +310,39 @@ export async function getAccountNames(address: string, actions?: QdnAction[]) {
 }
 
 // Resolve a registered name to its owner address so a direct chat can be opened
-// by name. Returns null when the name is unregistered (Core answers 404). This is
-// a keyless, CORS-open read that works through the Home bridge and in browser dev.
-export async function getNameOwnerAddress(name: string): Promise<string | null> {
+// by name. Returns null when the name is unregistered (Core answers 404, or a
+// Qortal GET_NAME_DATA lookup throws — Home's Qortal bridge has no reserved
+// "not found" shape of its own to check against). Qortium always reads through
+// FETCH_NODE_API (its Home bridge never advertises a GET_NAME_DATA-equivalent
+// exact action); Qortal prefers the exact GET_NAME_DATA action when Home
+// advertises it, else falls back to the same FETCH_NODE_API path Qortium uses,
+// against the Qortal node. Both paths are keyless, CORS-open reads that work
+// through the Home bridge and in browser dev.
+export async function getNameOwnerAddressForNetwork(
+  network: ChatNetwork,
+  name: string,
+  actions?: QdnAction[],
+): Promise<string | null> {
   const trimmedName = name.trim();
 
   if (!trimmedName) {
     return null;
   }
 
-  const result = await qdnRequest<NodeApiFetchResult<NameSummary | null>>({
+  if (network === 'qortal' && hasBridgeAction(actions, 'GET_NAME_DATA')) {
+    try {
+      const data = await bridgeRequest<NameSummary | null>('qortal', {
+        action: 'GET_NAME_DATA',
+        name: trimmedName,
+      });
+
+      return data && typeof data.owner === 'string' && data.owner ? data.owner : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const result = await bridgeRequest<NodeApiFetchResult<NameSummary | null>>(network, {
     action: 'FETCH_NODE_API',
     maxBytes: DEFAULT_MAX_BYTES,
     path: buildNameInfoPath(trimmedName),
@@ -331,6 +355,10 @@ export async function getNameOwnerAddress(name: string): Promise<string | null> 
   const data = assertOk(result, 'Name lookup');
 
   return data && typeof data.owner === 'string' && data.owner ? data.owner : null;
+}
+
+export async function getNameOwnerAddress(name: string): Promise<string | null> {
+  return getNameOwnerAddressForNetwork('qortium', name);
 }
 
 // Home's RESOLVE_IDENTITIES resolves a batch of addresses to their registered
@@ -1091,6 +1119,13 @@ function assertDirectMessageByteLimit(message: string) {
 // `chatReference` must not be sent on an initial message (schema doc "Direct
 // chat"); the generic qdnRequest fallback (`legacy-home` hosts only, per the
 // design brief) is unchanged.
+//
+// On qortal, the exact-action path builds the v2 envelope (paragraph HTML,
+// see qortalChatPayload.ts) before sending, and the 3984-byte cap is
+// measured on that built envelope — not the raw text — since the envelope is
+// what actually rides the wire and the schema's limit applies to the final
+// `message` field. The qortium path is unchanged: cap on the raw text, same
+// as before this envelope wiring existed.
 export async function sendDirectChatMessage(
   recipientAddress: string,
   message: string,
@@ -1098,17 +1133,22 @@ export async function sendDirectChatMessage(
   network: ChatNetwork = 'qortium',
   actions?: QdnAction[],
 ) {
-  assertDirectMessageByteLimit(message);
-
   if (hasBridgeAction(actions, 'SEND_DIRECT_CHAT_MESSAGE')) {
+    const wireMessage =
+      network === 'qortal' ? buildQortalDirectChatPayload(normalizeQortalOutgoingMessage(message)) : message;
+
+    assertDirectMessageByteLimit(wireMessage);
+
     return normalizeChatSendResult(
       await bridgeRequest<unknown>(network, {
         action: 'SEND_DIRECT_CHAT_MESSAGE',
-        message,
+        message: wireMessage,
         otherAddress: recipientAddress,
       }),
     );
   }
+
+  assertDirectMessageByteLimit(message);
 
   const request = {
     action: 'SEND_CHAT_MESSAGE',
@@ -1136,12 +1176,15 @@ export async function sendDirectChatEdit(
     throw new Error('Direct chat edits require Qortium Home direct chat revision support.');
   }
 
-  assertDirectMessageByteLimit(message);
-
   const wireMessage =
     network === 'qortal'
       ? buildQortalDirectChatEditPayload(normalizeQortalOutgoingMessage(message))
       : JSON.stringify({ message });
+
+  // Cap on the envelope for qortal (it inflates size) and on the raw text for
+  // qortium (unchanged from before this envelope wiring existed) — same
+  // rationale as sendDirectChatMessage above.
+  assertDirectMessageByteLimit(network === 'qortal' ? wireMessage : message);
 
   return normalizeChatSendResult(
     await bridgeRequest<unknown>(network, {

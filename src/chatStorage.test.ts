@@ -5,15 +5,20 @@ import {
   lastChatNetworkStorageKey,
   mergePersistedDirect,
   persistedDirectsStorageKey,
+  qortalPersistedDirectsStorageKey,
+  qortiumPersistedDirectsStorageKey,
   readLastChat,
   readLastChatNetwork,
   readPersistedDirects,
+  readPersistedDirectsForNetwork,
+  readQortalDirectReadWatermarks,
   readQortalLastChat,
   readQortalReadWatermarks,
   readQortalScrollBookmarks,
   readReadWatermarks,
   readScrollBookmarks,
   readWatermarksStorageKey,
+  qortalDirectReadWatermarksStorageKey,
   qortalLastChatStorageKey,
   qortalLegacyOwnerStorageKey,
   qortalReadWatermarksStorageKey,
@@ -25,6 +30,8 @@ import {
   writeLastChat,
   writeLastChatNetwork,
   writePersistedDirects,
+  writePersistedDirectsForNetwork,
+  writeQortalDirectReadWatermarks,
   writeQortalLastChat,
   writeQortalReadWatermarks,
   writeQortalScrollBookmarks,
@@ -208,6 +215,45 @@ describe('storage round-trips', () => {
       JSON.stringify([{ address: 'Qok' }, { name: 'no-address' }, null, 7]),
     );
     expect(readPersistedDirects(ADDRESS)).toEqual([{ address: 'Qok' }]);
+  });
+
+  it('scopes persisted directs by network, migrating the pre-network Qortium list once', () => {
+    // Legacy pre-network-split record — predates Qortal DM.
+    writePersistedDirects(ADDRESS, [{ address: 'Qalice', name: 'alice' }]);
+
+    // First read migrates it into the v2 qortium key and returns it.
+    expect(readPersistedDirectsForNetwork('qortium', ADDRESS)).toEqual([{ address: 'Qalice', name: 'alice' }]);
+    expect(window.localStorage.getItem(qortiumPersistedDirectsStorageKey(ADDRESS))).not.toBeNull();
+    // The pre-v2 key is untouched and still readable.
+    expect(readPersistedDirects(ADDRESS)).toEqual([{ address: 'Qalice', name: 'alice' }]);
+
+    // Qortal has no legacy data to migrate — a first read is just empty.
+    expect(readPersistedDirectsForNetwork('qortal', ADDRESS)).toEqual([]);
+
+    writePersistedDirectsForNetwork('qortal', ADDRESS, [{ address: 'Qbob' }]);
+    expect(readPersistedDirectsForNetwork('qortal', ADDRESS)).toEqual([{ address: 'Qbob' }]);
+    // Writing the qortal list never touches the qortium one.
+    expect(readPersistedDirectsForNetwork('qortium', ADDRESS)).toEqual([{ address: 'Qalice', name: 'alice' }]);
+    expect(window.localStorage.getItem(qortalPersistedDirectsStorageKey(ADDRESS))).not.toBeNull();
+  });
+
+  it('filters malformed entries from a network-scoped persisted-directs record', () => {
+    window.localStorage.setItem(
+      qortalPersistedDirectsStorageKey(ADDRESS),
+      JSON.stringify([{ address: 'Qok' }, { name: 'no-address' }, null, 7]),
+    );
+
+    expect(readPersistedDirectsForNetwork('qortal', ADDRESS)).toEqual([{ address: 'Qok' }]);
+  });
+
+  it('persists and reads back Qortal direct read watermarks independently of group watermarks', () => {
+    writeQortalDirectReadWatermarks('Qortal-one', new Map([['Qalice', 1000]]));
+    writeQortalReadWatermarks('Qortal-one', new Map([[42, 3000]]));
+
+    expect([...readQortalDirectReadWatermarks('Qortal-one')]).toEqual([['Qalice', 1000]]);
+    expect([...readQortalReadWatermarks('Qortal-one')]).toEqual([[42, 3000]]);
+    expect([...readQortalDirectReadWatermarks('Qortal-two')]).toEqual([]);
+    expect(window.localStorage.getItem(qortalDirectReadWatermarksStorageKey('Qortal-one'))).not.toBeNull();
   });
 
   it('persists and reads back read watermarks', () => {

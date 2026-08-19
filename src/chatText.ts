@@ -506,6 +506,45 @@ function extractSafeHubText(value: unknown) {
   return htmlToPlainText(value);
 }
 
+function normalizeExtractedHubText(value: string) {
+  return value.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function escapeParagraphHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Qortal direct-message envelopes carry `message` as paragraph HTML rather
+// than the Tiptap doc group messages use — verified against both the
+// interop fixture (directMessage.plaintext: `{"message":"<p>Qortal direct
+// interop</p>",...}`) and Qortal Hub's own background.ts `sendChatDirect`,
+// which builds `{ message: messageText, version: 2, ...otherData }` from
+// `editorRef.current.getHTML()` (a Tiptap/ProseMirror HTML string, one `<p>`
+// per paragraph). Chat's composer is plain text, so this is the encode side
+// of that convention: one `<p>` per line, with an empty line becoming an
+// empty `<p></p>` — the same literal string the canonical delete envelope
+// uses for "no content".
+export function buildParagraphHtmlFromPlainText(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => `<p>${line ? escapeParagraphHtmlText(line) : ''}</p>`)
+    .join('');
+}
+
+// Inverse of buildParagraphHtmlFromPlainText for decode. Reuses the same
+// hardened HTML-to-text walk (htmlToPlainText) that Hub v3 group payloads
+// already go through via extractSafeHubText, so there is exactly one HTML
+// parser in this file rather than a second one grown for direct messages.
+export function extractPlainTextFromParagraphHtml(html: string): string {
+  return normalizeExtractedHubText(htmlToPlainText(html));
+}
+
 function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
   let candidate = value;
 
@@ -632,17 +671,32 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
       contentState?: unknown;
       message?: unknown;
       repliedTo?: unknown;
+      specialId?: unknown;
       type?: unknown;
       version?: unknown;
       messageText?: unknown;
       images?: unknown;
     };
 
+    // Reaction envelopes self-identify via `type: 'reaction'` regardless of
+    // `version` — group reactions carry no version field at all, while
+    // Qortal direct reactions carry `version: 2`. Check first so a versioned
+    // reaction envelope is never misrouted into the message-text branches
+    // below.
+    if (typeof envelope.message === 'string') {
+      reaction = getEnvelopeReaction(envelope);
+
+      if (reaction) {
+        body = envelope.message;
+        break;
+      }
+    }
+
     // Qortal Hub v3 messages carry a Tiptap document instead of Chat's small
     // `{ message, repliedTo }` envelope. Decode it here so the same message
     // list renders both Home 1.7/ChibiHub traffic and Home 2 traffic.
     if (envelope.version === 3) {
-      body = extractSafeHubText(envelope.messageText).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      body = normalizeExtractedHubText(extractSafeHubText(envelope.messageText));
       hubImages = getQortalHubImageRefs(envelope.images);
 
       if (typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
@@ -652,14 +706,32 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
       break;
     }
 
-    if (typeof envelope.message !== 'string') {
+    // Qortal direct messages (initial/edit) carry `version: 2` and `message`
+    // as paragraph HTML, plus the required `specialId`/`type` fields the
+    // exact-action schema always sets (review/schemas-home2-actions.md
+    // "Direct chat"). Gate on `specialId` too, not just `version === 2`: a
+    // human-typed `{message, version}` object (or Chat's own reply wrapper,
+    // which never sets `version`) has no `specialId` and must keep falling
+    // through to the generic branch below unchanged. The canonical delete
+    // envelope's `message: '<p></p>'` decodes to body '' here, matching the
+    // existing deleted-message representation.
+    if (
+      envelope.version === 2 &&
+      typeof envelope.message === 'string' &&
+      typeof envelope.specialId === 'string' &&
+      envelope.specialId.length > 0 &&
+      typeof envelope.type === 'string'
+    ) {
+      body = extractPlainTextFromParagraphHtml(envelope.message);
+
+      if (typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
+        repliedTo = envelope.repliedTo;
+      }
+
       break;
     }
 
-    reaction = getEnvelopeReaction(envelope);
-
-    if (reaction) {
-      body = envelope.message;
+    if (typeof envelope.message !== 'string') {
       break;
     }
 

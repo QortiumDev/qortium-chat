@@ -269,6 +269,28 @@ export function writeQortalReadWatermarks(
   });
 }
 
+// Qortal direct-chat read watermarks. A separate key (not folded into the
+// group watermarks above) because Qortal DM never existed before this was
+// added — there is no legacy single-key record to split apart, so this
+// skips the legacy-migration coordination readQortalReadWatermarks/
+// initializeQortalUiStorage do for groups.
+export function qortalDirectReadWatermarksStorageKey(qortalAccountAddress: string) {
+  return `${PREFIX}:v2:read:qortal-direct:${qortalAccountAddress}`;
+}
+
+export function readQortalDirectReadWatermarks(qortalAccountAddress: string): Map<string, number> {
+  const value = readJson<Record<string, unknown>>(qortalDirectReadWatermarksStorageKey(qortalAccountAddress));
+
+  return toTimestampMap(value, (key) => (key.length > 0 ? key : null));
+}
+
+export function writeQortalDirectReadWatermarks(
+  qortalAccountAddress: string,
+  watermarks: ReadonlyMap<string, number>,
+): void {
+  writeJson(qortalDirectReadWatermarksStorageKey(qortalAccountAddress), Object.fromEntries(watermarks));
+}
+
 function toGroupTimestampMap(value: unknown) {
   return toTimestampMap(value, (key) => {
     const groupId = Number(key);
@@ -440,6 +462,10 @@ export function writeLastChatNetwork(network: ChatNetwork): void {
   writeJson(lastChatNetworkStorageKey(), network);
 }
 
+function isPersistedDirect(entry: unknown): entry is PersistedDirect {
+  return !!entry && typeof entry === 'object' && typeof (entry as PersistedDirect).address === 'string';
+}
+
 export function readPersistedDirects(accountAddress: string): PersistedDirect[] {
   const value = readJson<unknown>(persistedDirectsStorageKey(accountAddress));
 
@@ -447,14 +473,59 @@ export function readPersistedDirects(accountAddress: string): PersistedDirect[] 
     return [];
   }
 
-  return value.filter(
-    (entry): entry is PersistedDirect =>
-      !!entry && typeof entry === 'object' && typeof (entry as PersistedDirect).address === 'string',
-  );
+  return value.filter(isPersistedDirect);
 }
 
 export function writePersistedDirects(accountAddress: string, directs: PersistedDirect[]): void {
   writeJson(persistedDirectsStorageKey(accountAddress), directs);
+}
+
+// Network-scoped persisted-directs keys, replacing the single pre-network-split
+// `directs:` key above. Qortium's existing list predates Qortal DM and is
+// read once as the Qortium list (one-way migration on first read: copied into
+// the v2 qortium key below; the pre-v2 key is left in place, still readable,
+// never written again after that). Qortal has no legacy data to migrate — it
+// never had a direct-chat feature before this key existed.
+export function qortiumPersistedDirectsStorageKey(accountAddress: string) {
+  return `${PREFIX}:v2:directs:qortium:${accountAddress}`;
+}
+
+export function qortalPersistedDirectsStorageKey(accountAddress: string) {
+  return `${PREFIX}:v2:directs:qortal:${accountAddress}`;
+}
+
+function persistedDirectsStorageKeyForNetwork(network: ChatNetwork, accountAddress: string) {
+  return network === 'qortal'
+    ? qortalPersistedDirectsStorageKey(accountAddress)
+    : qortiumPersistedDirectsStorageKey(accountAddress);
+}
+
+export function readPersistedDirectsForNetwork(network: ChatNetwork, accountAddress: string): PersistedDirect[] {
+  const value = readJson<unknown>(persistedDirectsStorageKeyForNetwork(network, accountAddress));
+
+  if (Array.isArray(value)) {
+    return value.filter(isPersistedDirect);
+  }
+
+  if (network !== 'qortium') {
+    return [];
+  }
+
+  const legacy = readPersistedDirects(accountAddress);
+
+  if (legacy.length > 0) {
+    writeJson(qortiumPersistedDirectsStorageKey(accountAddress), legacy);
+  }
+
+  return legacy;
+}
+
+export function writePersistedDirectsForNetwork(
+  network: ChatNetwork,
+  accountAddress: string,
+  directs: PersistedDirect[],
+): void {
+  writeJson(persistedDirectsStorageKeyForNetwork(network, accountAddress), directs);
 }
 
 // Add or refresh a direct in the list, preferring a newly-seen name. Returns the

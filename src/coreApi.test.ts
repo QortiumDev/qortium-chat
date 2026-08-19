@@ -40,6 +40,7 @@ import {
   getGroupApprovalVotes,
   getMintingStatus,
   getNameOwnerAddress,
+  getNameOwnerAddressForNetwork,
   getQortalUserAccount,
   getTransactionStatus,
   getPrivateDirectActiveChats,
@@ -403,6 +404,38 @@ describe('Core API path builders', () => {
 
     await expect(getNameOwnerAddress('   ')).resolves.toBeNull();
     expect(qdnRequestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a Qortal name via the exact GET_NAME_DATA action when advertised', async () => {
+    qortalRequestMock.mockResolvedValueOnce({ name: 'bob', owner: 'QbobOwner' });
+
+    await expect(getNameOwnerAddressForNetwork('qortal', ' bob ', ['GET_NAME_DATA'])).resolves.toBe('QbobOwner');
+    expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'GET_NAME_DATA', name: 'bob' });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to FETCH_NODE_API against the Qortal node when GET_NAME_DATA is not advertised', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: '{"name":"bob","owner":"QbobOwner"}',
+      contentType: 'application/json',
+      data: { name: 'bob', owner: 'QbobOwner' },
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getNameOwnerAddressForNetwork('qortal', 'bob', [])).resolves.toBe('QbobOwner');
+    expect(qortalRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/names/bob',
+    });
+  });
+
+  it('treats a failed GET_NAME_DATA lookup as an unregistered name rather than throwing', async () => {
+    qortalRequestMock.mockRejectedValueOnce(new Error('not found'));
+
+    await expect(getNameOwnerAddressForNetwork('qortal', 'ghost', ['GET_NAME_DATA'])).resolves.toBeNull();
   });
 
   it('uses the group members bridge action when available', async () => {
@@ -1498,16 +1531,22 @@ describe('Core API path builders', () => {
         });
       });
 
-      it('routes the exact SEND_DIRECT_CHAT_MESSAGE action to Qortal when network is qortal', async () => {
+      it('routes the exact SEND_DIRECT_CHAT_MESSAGE action to Qortal when network is qortal, building the v2 envelope', async () => {
         qortalRequestMock.mockResolvedValueOnce({ signature: 'qortal-direct-sig', timestamp: 1700000000220 });
 
         await sendDirectChatMessage('QortalPeer', 'hi there', undefined, 'qortal', ['SEND_DIRECT_CHAT_MESSAGE']);
 
-        expect(qortalRequestMock).toHaveBeenCalledWith({
-          action: 'SEND_DIRECT_CHAT_MESSAGE',
-          message: 'hi there',
-          otherAddress: 'QortalPeer',
-        });
+        expect(qortalRequestMock).toHaveBeenCalledTimes(1);
+        const call = qortalRequestMock.mock.calls[0][0];
+
+        expect(call.action).toBe('SEND_DIRECT_CHAT_MESSAGE');
+        expect(call.otherAddress).toBe('QortalPeer');
+
+        const payload = JSON.parse(call.message);
+
+        expect(payload).toMatchObject({ message: '<p>hi there</p>', repliedTo: '', type: '', version: 2 });
+        expect(typeof payload.specialId).toBe('string');
+        expect(payload.specialId.length).toBeGreaterThan(0);
         expect(qdnRequestMock).not.toHaveBeenCalled();
       });
 
@@ -1521,6 +1560,34 @@ describe('Core API path builders', () => {
         await expect(sendDirectChatMessage('Qpeer', 'x'.repeat(3984))).resolves.toMatchObject({
           signature: 'boundary-sig',
         });
+      });
+
+      it('measures the 3984-byte cap on the built v2 envelope for qortal, not the raw text', async () => {
+        // Exactly at the cap as raw text (and thus fine on qortium, per the
+        // boundary case above), but the v2 envelope's JSON structure and
+        // <p></p> wrapping push the actual wire bytes over the limit.
+        const text = 'x'.repeat(3984);
+
+        await expect(
+          sendDirectChatMessage('QortalPeer', text, undefined, 'qortal', ['SEND_DIRECT_CHAT_MESSAGE']),
+        ).rejects.toThrow('Direct chat messages must be at most 3984 UTF-8 bytes.');
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+
+        // The identical raw text still passes on qortium, where the cap
+        // applies to the text itself (unchanged behavior).
+        qdnRequestMock.mockResolvedValueOnce({ signature: 'qortium-envelope-boundary-sig', timestamp: 1700000000232 });
+        await expect(
+          sendDirectChatMessage('Qpeer', text, undefined, 'qortium', ['SEND_DIRECT_CHAT_MESSAGE']),
+        ).resolves.toMatchObject({ signature: 'qortium-envelope-boundary-sig' });
+      });
+
+      it('measures the 3984-byte cap on the built v2 edit envelope for qortal, not the raw text', async () => {
+        const text = 'x'.repeat(3984);
+
+        await expect(
+          sendDirectChatEdit('qortal', 'QortalPeer', text, 'ref', ['SEND_DIRECT_CHAT_EDIT']),
+        ).rejects.toThrow('Direct chat messages must be at most 3984 UTF-8 bytes.');
+        expect(qortalRequestMock).not.toHaveBeenCalled();
       });
 
       it('throws a clear error for direct revisions when the exact action is not advertised (no generic fallback)', async () => {
@@ -1575,7 +1642,13 @@ describe('Core API path builders', () => {
         await sendDirectChatEdit('qortal', 'QortalPeer', 'fixed typo', 'ref', ['SEND_DIRECT_CHAT_EDIT']);
         let payload = JSON.parse(qortalRequestMock.mock.calls[0][0].message);
 
-        expect(payload).toMatchObject({ isEdited: true, message: 'fixed typo', repliedTo: '', type: 'edit', version: 2 });
+        expect(payload).toMatchObject({
+          isEdited: true,
+          message: '<p>fixed typo</p>',
+          repliedTo: '',
+          type: 'edit',
+          version: 2,
+        });
         expect(Object.keys(payload).sort()).toEqual(
           ['isEdited', 'message', 'repliedTo', 'specialId', 'type', 'version'].sort(),
         );
