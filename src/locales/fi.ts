@@ -31,6 +31,7 @@ export const STRINGS = {
   'status.bridge.missingRecipientPublicKey': "This recipient has no public key on chain yet, so an encrypted direct message can't be sent.",
   'status.bridge.missingGroupKey': 'The private group key needed to read or send in this group is missing.',
   'status.bridge.pendingReconciliationRequired': 'A previous send to this chat is still awaiting confirmation. Wait for it to resolve before sending again.',
+  'status.bridge.pendingJournalNotice': 'A previous send in this conversation is still awaiting confirmation from Qortium Home.',
   'status.bridge.validationFailed': 'The request was rejected as invalid.',
   'status.bridge.staleContext': 'This action no longer matches the current chat or account; try again.',
   'status.bridge.generic': 'Qortium Home reported an unexpected error.',

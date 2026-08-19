@@ -35,9 +35,11 @@ import {
   getMissingPrivateGroupKeyRequests,
   getMintingStatus,
   getNameOwnerAddress,
+  getPendingBridgeTransactions,
   getPendingGroupApprovals,
   getTransactionStatus,
   getPrivateDirectActiveChats,
+  forgetPendingBridgeTransaction,
   isChatSendRejectedError,
   leaveGroup,
   joinGroup,
@@ -56,8 +58,14 @@ import {
   startMinting,
   submitGroupApproval,
 } from './coreApi';
-import { getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
-import { getBridgeErrorCode } from './bridgeErrors';
+import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
+import { getBridgeErrorCode, isPendingReconciliationRequired } from './bridgeErrors';
+import {
+  filterChatJournalEntries,
+  getForgettableJournalSignatures,
+  getJournalConversationKey,
+  shouldFetchPendingJournal,
+} from './bridgeJournal';
 import { hasLegacyQortalBridgeCandidate, hasQortalChatBridgeActions } from './qortalRequest';
 import { computeApprovalProgress, NULL_ACCOUNT_ADDRESS } from './approvalProgress';
 import {
@@ -252,6 +260,7 @@ import type {
   MintingStatus,
   AsyncState,
   PendingApprovalTransaction,
+  PendingBridgeTransactionEntry,
   QdnAction,
   QdnSelectedAccount,
   TrackedTransaction,
@@ -269,6 +278,7 @@ const emptyApprovalVotes: GroupApprovalVote[] = [];
 const emptyActiveChats: ActiveChats = { direct: [], groups: [] };
 const emptyInvites: GroupInvite[] = [];
 const emptyPendingSends: PendingSend[] = [];
+const emptyJournalEntries: PendingBridgeTransactionEntry[] = [];
 // The 30s sidebar activity sweeps only need the latest real (non-reaction)
 // message timestamp per chat, not a full transcript page — a small window cuts
 // each probe's payload ~10x. Deep enough that a burst of reactions rarely
@@ -1313,6 +1323,11 @@ export default function App() {
   const [groupDiscoveries, setGroupDiscoveries] =
     useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
   const [activeChats, setActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
+  // Home 2's restart-safe pending-transaction journal (item D — see
+  // bridgeJournal.ts). Raw fetch results, one array per network, mirroring
+  // every other per-network state in this file (bridge/qortalBridge,
+  // account/qortalAccount, ...) rather than a single network-keyed map.
+  const [journalEntries, setJournalEntries] = useState<PendingBridgeTransactionEntry[]>(emptyJournalEntries);
   // Qortal keeps its chain-specific bridge/account state separate, while the
   // rendered group rows are normalized later into the same source-qualified
   // conversation model as Qortium. Home 2 supplies window.qortalRequest;
@@ -1337,6 +1352,7 @@ export default function App() {
   // (isConfirmedJoinedQortalGroup / isJoinableQortalGroup).
   const [qortalMemberGroups, setQortalMemberGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [qortalActiveChats, setQortalActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
+  const [qortalJournalEntries, setQortalJournalEntries] = useState<PendingBridgeTransactionEntry[]>(emptyJournalEntries);
   const [qortalGroupDiscoveries, setQortalGroupDiscoveries] =
     useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
   const [qortalSearch, setQortalSearch] = useState('');
@@ -2777,6 +2793,20 @@ export default function App() {
     : qortalBridge.value.isHomeBridge
       ? t('action.groupMessagesUnavailable')
       : t('action.groupMessagesUnavailableBrowser');
+  // Item D: journal entries (chat-send targets only) attributed to the
+  // selected conversation, keyed the same way selectedChatKey is built (see
+  // getJournalConversationKey). A conversation with at least one entry here
+  // shows the reused ambiguous-send notice below — Home already blocks a
+  // same-target retry until this reconciles, so the notice matters most
+  // right when the composer's own optimistic state has nothing to show
+  // (e.g. right after a restart, before this app ever sent the message
+  // itself).
+  const selectedChatJournalEntries = selectedChat
+    ? filterChatJournalEntries(
+        selectedChat.network === 'qortal' ? qortalJournalEntries : journalEntries,
+      ).filter((entry) => getJournalConversationKey(selectedChat.network ?? 'qortium', entry) === selectedChatKey)
+    : [];
+  const hasSelectedChatJournalNotice = selectedChatJournalEntries.length > 0;
   const selectedDirectHistoryUnavailable =
     selectedChat?.kind === 'direct' && (!isAccountUnlocked || !canReadPrivateDirectChat);
   const selectedClosedGroupHistoryUnavailable =
@@ -3619,6 +3649,8 @@ export default function App() {
         setLoadedDirectActivityByAddress((current) => mergeActivityTimestamp(current, chat.direct.address, nextMessages));
       }
 
+      reconcileJournalWithMessages(chat.network ?? 'qortium', nextMessages);
+
       setMessagesChatKey(chatKey);
       setMessages((current) => {
         const value = options.quiet
@@ -3718,6 +3750,8 @@ export default function App() {
       }
 
       setQortalGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+
+      reconcileJournalWithMessages('qortal', nextMessages);
 
       setMessagesChatKey(chatKey);
       setMessages((current) => {
@@ -4217,6 +4251,84 @@ export default function App() {
     return network === 'qortal' ? qortalBridge.value.actions : actions;
   }
 
+  function setNetworkJournalEntries(network: ChatNetwork, entries: PendingBridgeTransactionEntry[]) {
+    if (network === 'qortal') {
+      setQortalJournalEntries(entries);
+    } else {
+      setJournalEntries(entries);
+    }
+  }
+
+  function getNetworkJournalEntries(network: ChatNetwork) {
+    return network === 'qortal' ? qortalJournalEntries : journalEntries;
+  }
+
+  // One-shot fetch of a network's pending journal (item D). Best-effort: a
+  // failed fetch just leaves the previous snapshot in place — the next
+  // trigger (bridge/account ready, a send resolving ambiguous, a blocked
+  // duplicate-mutation error) retries. Never throws.
+  async function fetchPendingJournal(network: ChatNetwork) {
+    const networkActions = getNetworkActions(network);
+
+    if (!hasAction(networkActions, 'GET_PENDING_TRANSACTIONS')) {
+      return;
+    }
+
+    try {
+      const result = await getPendingBridgeTransactions(network, networkActions);
+
+      setNetworkJournalEntries(network, result.entries);
+    } catch {
+      // Best-effort read; keep whatever snapshot is already in state.
+    }
+  }
+
+  // Drops a forgotten entry from state regardless of whether Home's own
+  // FORGET_PENDING_TRANSACTION call succeeded — a failed forget is retried on
+  // the next reconcile pass off the still-fresh next fetch, not by keeping a
+  // stale local copy around.
+  async function forgetJournalEntry(network: ChatNetwork, signature: string) {
+    const networkActions = getNetworkActions(network);
+
+    try {
+      await forgetPendingBridgeTransaction(network, signature, networkActions);
+    } catch {
+      // Non-fatal (see item D scope): keep trying on the next reconcile pass
+      // rather than surfacing a banner for a housekeeping call.
+    }
+
+    setNetworkJournalEntries(
+      network,
+      getNetworkJournalEntries(network).filter((entry) => entry.signature !== signature),
+    );
+  }
+
+  // Reconciles a network's journal against a freshly loaded/refreshed message
+  // list (item D step: "when message lists load/refresh for a conversation").
+  // Only entries whose signature actually showed up in `messages` are
+  // forgotten — never merely because the journal was fetched.
+  function reconcileJournalWithMessages(network: ChatNetwork, messages: readonly ChatMessage[]) {
+    const chatEntries = filterChatJournalEntries(getNetworkJournalEntries(network));
+
+    if (chatEntries.length === 0) {
+      return;
+    }
+
+    const observedSignatures = new Set<string>();
+
+    for (const message of messages) {
+      if (message.signature) {
+        observedSignatures.add(getMessageNetworkIdentity(network, message));
+      }
+    }
+
+    const forgettable = getForgettableJournalSignatures(chatEntries, observedSignatures);
+
+    for (const entry of forgettable) {
+      void forgetJournalEntry(network, entry.signature);
+    }
+  }
+
   // New messages and replies (kind: 'message') always ride the generic
   // SEND_CHAT_MESSAGE / SEND_DIRECT_CHAT_MESSAGE envelope — there is no
   // exact-action alternative for a brand-new message, only for revisions.
@@ -4396,6 +4508,14 @@ export default function App() {
         setWriteError(t('message.delivery.ambiguous'));
       }
 
+      // Item D: an ambiguous outcome is exactly the moment Home records a new
+      // pending-journal entry (a signed mutation with an unknown broadcast
+      // result) — refresh the journal so the conversation notice appears
+      // without waiting for the next unrelated bridge/account-ready trigger.
+      if (result.outcome === 'ambiguous') {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
+
       if (chat.kind === 'direct' && isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         void loadActiveChats(selectedAccount, actions, { quiet: true });
       }
@@ -4418,6 +4538,14 @@ export default function App() {
 
       const fallback = entry.kind === 'reaction' ? t('status.loadingError.sendReaction') : t('status.loadingError.sendMessage');
       const message = getBridgeErrorMessage(error, fallback, t);
+
+      // Item D: Home blocked this attempt because a pending entry for the same
+      // action+target already exists — refresh the journal immediately so the
+      // conversation-level notice (see selectedChatJournalNotice) shows up
+      // alongside the banner this error's code already produces.
+      if (isPendingReconciliationRequired(error)) {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
 
       updatePendingSends((current) =>
         current.map((candidate) =>
@@ -4481,6 +4609,12 @@ export default function App() {
         ),
       );
 
+      // Item D: same as runPendingSend — an ambiguous revision outcome is
+      // exactly when Home records a new journal entry.
+      if (result.outcome === 'ambiguous') {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
+
       if (chat.kind === 'direct' && isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
         void loadActiveChats(selectedAccount, actions, { quiet: true });
       }
@@ -4497,6 +4631,12 @@ export default function App() {
       }
 
       const message = getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t);
+
+      // Item D: same as runPendingSend's catch — surface the journal notice
+      // immediately when Home blocks a duplicate same-target mutation.
+      if (isPendingReconciliationRequired(error)) {
+        void fetchPendingJournal(entry.target.network ?? 'qortium');
+      }
 
       updatePendingRevisions((current) =>
         current.map((candidate) =>
@@ -7083,6 +7223,44 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [qortalAccount?.address, qortalAvailable, qortalBridge.value.actions.join('\n')]);
 
+  // Item D: once Qortium's bridge is ready and an account is connected, fetch
+  // its pending-transaction journal once (gated on GET_PENDING_TRANSACTIONS
+  // being advertised — see shouldFetchPendingJournal). Re-runs whenever the
+  // advertised action set or the connected account changes, matching every
+  // other per-network "bridge ready" effect in this file.
+  useEffect(() => {
+    if (
+      !shouldFetchPendingJournal({
+        accountAddress: account?.address ?? null,
+        actions,
+        bridgeReady: bridge.phase === 'ready',
+      })
+    ) {
+      return;
+    }
+
+    void fetchPendingJournal('qortium');
+  }, [account?.address, actionsKey, bridge.phase]);
+
+  // Qortal counterpart — additionally gated on qortalAvailable (Home 1.7's
+  // Qortal-prefixed catalogue never advertises the journal actions, so this
+  // is effectively a no-op there; kept for symmetry with the other qortal*
+  // gates in this file).
+  useEffect(() => {
+    if (
+      !shouldFetchPendingJournal({
+        accountAddress: qortalAccount?.address ?? null,
+        actions: qortalBridge.value.actions,
+        bridgeReady: qortalBridge.phase === 'ready',
+        networkAvailable: qortalAvailable,
+      })
+    ) {
+      return;
+    }
+
+    void fetchPendingJournal('qortal');
+  }, [qortalAccount?.address, qortalAvailable, qortalBridge.phase, qortalBridge.value.actions.join('\n')]);
+
   useEffect(() => {
     applyDisplaySettings(displaySettings);
   }, [displaySettings]);
@@ -7366,6 +7544,8 @@ export default function App() {
           reconnectDelay = WS_RECONNECT_BASE_MS;
 
           setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+
+          reconcileJournalWithMessages('qortium', nextMessages);
 
           if (!receivedInitialMessages) {
             receivedInitialMessages = true;
@@ -8337,6 +8517,7 @@ export default function App() {
               {selectedClosedGroupHistoryUnavailable ? (
                 <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
               ) : null}
+              {hasSelectedChatJournalNotice ? <p className="muted">{t('status.bridge.pendingJournalNotice')}</p> : null}
             </div>
             <div aria-atomic="true" aria-live="polite" className="sr-only" role="log">
               {liveAnnouncement}
