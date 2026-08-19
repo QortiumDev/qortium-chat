@@ -32,6 +32,7 @@ import {
   getAdminGroupJoinRequests,
   getDirectMessages,
   getGroupJoinRequests,
+  getChatAttachmentStreamUrl,
   getGroup,
   getGroupMembers,
   getGroupMessages,
@@ -41,21 +42,33 @@ import {
   getMintingStatus,
   getNameOwnerAddress,
   getNameOwnerAddressForNetwork,
+  getQdnResourceStreamUrl,
+  getQdnResourceUrl,
   getQortalUserAccount,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   getPrivateGroupActiveChats,
   getPrivateGroupChatState,
+  isPrivateAttachmentDescriptor,
+  isPublishSourceTokenError,
   isQortalPrivateGroupChatState,
   isQortiumPrivateGroupChatState,
   joinGroup,
   leaveGroup,
+  openChatAttachmentViewer,
+  openQdnResourceViewer,
+  publishChatAttachment,
+  publishQdnAttachment,
+  publishQdnResource,
   requestPrivateGroupChatKey,
   RESOLVE_IDENTITIES_LIMIT,
   resolveIdentities,
   resolvePrivateGroupChatKeyRequests,
   rotatePrivateGroupChatKey,
+  saveChatAttachment,
+  saveQdnResource,
   searchGroups,
+  selectQdnPublishSource,
   sendChatDelete,
   sendChatEdit,
   sendChatMessage,
@@ -70,6 +83,7 @@ import {
   sendPrivateGroupChatReaction,
   startMinting,
 } from './coreApi';
+import type { PrivateAttachmentDescriptor } from './types';
 
 const qdnRequestMock = vi.hoisted(() => vi.fn());
 // Chat 2.0 slice 2: coreApi's network-aware functions dispatch through
@@ -2267,6 +2281,738 @@ describe('Core API path builders', () => {
           forgetPendingBridgeTransaction('qortium', 'sig-a', ['FORGET_PENDING_TRANSACTION']),
         ).resolves.toEqual({ forgotten: true, network: 'qortium', signature: 'sig-a' });
         expect(qdnRequestMock).toHaveBeenCalledWith({ action: 'FORGET_PENDING_TRANSACTION', signature: 'sig-a' });
+      });
+    });
+  });
+
+  describe('P4a: publish/attachment/viewer coreApi layer', () => {
+    const validDescriptor: PrivateAttachmentDescriptor = {
+      ciphertext: {
+        algorithm: 'SHA-256',
+        hash: 'a'.repeat(64),
+        size: 1024,
+        transactionSignature: 'tx-sig-1',
+      },
+      codec: 'qenc-v2-direct',
+      conversation: { kind: 'direct', otherAddress: 'QpeerAddress' },
+      encrypted: true,
+      network: 'qortium',
+      resource: { identifier: 'ident-1', name: 'publisher', service: 'IMAGE' },
+      version: 1,
+    };
+
+    describe('selectQdnPublishSource', () => {
+      it('throws a clear error when SELECT_QDN_PUBLISH_SOURCE is not advertised', async () => {
+        await expect(selectQdnPublishSource('qortium', [])).rejects.toThrow(
+          'Selecting a file to publish requires a newer Qortium Home bridge.',
+        );
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('returns the typed selection and dispatches on the requested network', async () => {
+        qortalRequestMock.mockResolvedValueOnce({
+          canceled: false,
+          fileName: 'photo.png',
+          kind: 'file',
+          mimeType: null,
+          size: 512,
+          sourceToken: 'token-123',
+        });
+
+        await expect(selectQdnPublishSource('qortal', ['SELECT_QDN_PUBLISH_SOURCE'])).resolves.toEqual({
+          canceled: false,
+          fileName: 'photo.png',
+          kind: 'file',
+          mimeType: null,
+          size: 512,
+          sourceToken: 'token-123',
+        });
+        expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'SELECT_QDN_PUBLISH_SOURCE' });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('returns the cancellation shape unchanged', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ canceled: true });
+
+        await expect(selectQdnPublishSource('qortium', ['SELECT_QDN_PUBLISH_SOURCE'])).resolves.toEqual({
+          canceled: true,
+        });
+      });
+
+      it('throws when a non-canceled response is missing required fields', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ canceled: false, fileName: '', size: 1, sourceToken: '' });
+
+        await expect(selectQdnPublishSource('qortium', ['SELECT_QDN_PUBLISH_SOURCE'])).rejects.toThrow(
+          'Publish source selection is missing required fields.',
+        );
+      });
+    });
+
+    describe('publishQdnAttachment (deprecated shim)', () => {
+      it('always throws, explaining the token flow, and never calls the bridge', async () => {
+        await expect(
+          publishQdnAttachment({
+            dataBase64: 'ZGF0YQ==',
+            filename: 'a.png',
+            identifier: 'ident',
+            name: 'publisher',
+            service: 'IMAGE',
+          }),
+        ).rejects.toThrow('Select a file with selectQdnPublishSource, then publish its sourceToken');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('publishQdnResource', () => {
+      it('throws a clear error when PUBLISH_QDN_RESOURCE is not advertised', async () => {
+        await expect(
+          publishQdnResource('qortium', { name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' }, []),
+        ).rejects.toThrow('Publishing a QDN resource requires a newer Qortium Home bridge.');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('rejects a missing/empty sourceToken with the exact Home validation message, before any bridge call', async () => {
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { name: 'publisher', service: 'IMAGE', sourceToken: '' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('A valid Home-issued publish source token is required.');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('sends the exact request shape, never a fee field, and returns the typed accepted result', async () => {
+        const accepted = {
+          accepted: true,
+          immutable: { algorithm: 'SHA-256', contentHash: 'c'.repeat(64), transactionSignature: 'tx-sig' },
+          network: 'qortium',
+          resource: { identifier: 'ident-1', name: 'publisher', service: 'IMAGE' },
+          source: { fileName: 'a.png', size: 100 },
+          transactionSignature: 'tx-sig',
+        };
+
+        qdnRequestMock.mockResolvedValueOnce(accepted);
+
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { identifier: 'ident-1', name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).resolves.toEqual(accepted);
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'PUBLISH_QDN_RESOURCE',
+          identifier: 'ident-1',
+          name: 'publisher',
+          service: 'IMAGE',
+          sourceToken: 'token-1',
+        });
+
+        const sentRequest = qdnRequestMock.mock.calls[0][0];
+        expect(sentRequest.fee).toBeUndefined();
+      });
+
+      it('passes through title/description/category/tags on Qortium', async () => {
+        qdnRequestMock.mockResolvedValueOnce({
+          accepted: true,
+          immutable: { algorithm: 'SHA-256', contentHash: 'd'.repeat(64), transactionSignature: 'tx-sig-2' },
+          network: 'qortium',
+          resource: { identifier: null, name: 'publisher', service: 'IMAGE' },
+          source: { fileName: 'a.png', size: 100 },
+          transactionSignature: 'tx-sig-2',
+        });
+
+        await publishQdnResource(
+          'qortium',
+          {
+            category: 'general',
+            description: 'a photo',
+            name: 'publisher',
+            service: 'IMAGE',
+            sourceToken: 'token-1',
+            tags: ['a', 'b'],
+            title: 'My photo',
+          },
+          ['PUBLISH_QDN_RESOURCE'],
+        );
+        // Not asserting the network here; the point of this test is metadata
+        // pass-through. Dispatch-routing is asserted by the qortal-metadata
+        // rejection test below, which proves qortal never even reaches
+        // bridgeRequest with metadata present.
+        expect(qdnRequestMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            category: 'general',
+            description: 'a photo',
+            tags: ['a', 'b'],
+            title: 'My photo',
+          }),
+        );
+      });
+
+      it('rejects nonempty title/description/category/tags on Qortal before any bridge call', async () => {
+        await expect(
+          publishQdnResource(
+            'qortal',
+            { name: 'publisher', service: 'IMAGE', sourceToken: 'token-1', title: 'x' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Qortal does not accept a title, description, category, or tags on a published resource.');
+
+        await expect(
+          publishQdnResource(
+            'qortal',
+            { description: 'x', name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Qortal does not accept a title, description, category, or tags on a published resource.');
+
+        await expect(
+          publishQdnResource(
+            'qortal',
+            { category: 'x', name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Qortal does not accept a title, description, category, or tags on a published resource.');
+
+        await expect(
+          publishQdnResource(
+            'qortal',
+            { name: 'publisher', service: 'IMAGE', sourceToken: 'token-1', tags: ['x'] },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Qortal does not accept a title, description, category, or tags on a published resource.');
+
+        expect(qortalRequestMock).not.toHaveBeenCalled();
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('publishes cleanly on Qortal without metadata', async () => {
+        qortalRequestMock.mockResolvedValueOnce({
+          accepted: true,
+          immutable: { algorithm: 'SHA-256', contentHash: 'e'.repeat(64), transactionSignature: 'tx-sig-3' },
+          network: 'qortal',
+          resource: { identifier: null, name: 'publisher', service: 'IMAGE' },
+          source: { fileName: 'a.png', size: 100 },
+          transactionSignature: 'tx-sig-3',
+        });
+
+        await publishQdnResource(
+          'qortal',
+          { name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+          ['PUBLISH_QDN_RESOURCE'],
+        );
+        expect(qortalRequestMock).toHaveBeenCalledWith({
+          action: 'PUBLISH_QDN_RESOURCE',
+          name: 'publisher',
+          service: 'IMAGE',
+          sourceToken: 'token-1',
+        });
+      });
+
+      it('enforces the 40-byte Qortium / 400-byte Qortal name limits, and the 64-byte identifier limit, client-side', async () => {
+        const qortiumName = 'x'.repeat(41);
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { name: qortiumName, service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Resource name must be at most 40 UTF-8 bytes.');
+
+        const qortiumNameOk = 'x'.repeat(40);
+        qdnRequestMock.mockResolvedValueOnce({
+          accepted: true,
+          immutable: { algorithm: 'SHA-256', contentHash: 'f'.repeat(64), transactionSignature: 'tx-ok' },
+          network: 'qortium',
+          resource: { identifier: null, name: qortiumNameOk, service: 'IMAGE' },
+          source: { fileName: 'a.png', size: 1 },
+          transactionSignature: 'tx-ok',
+        });
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { name: qortiumNameOk, service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).resolves.toMatchObject({ accepted: true });
+
+        const qortalName = 'x'.repeat(401);
+        await expect(
+          publishQdnResource(
+            'qortal',
+            { name: qortalName, service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Resource name must be at most 400 UTF-8 bytes.');
+
+        const identifierOverLimit = 'x'.repeat(65);
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { identifier: identifierOverLimit, name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Resource identifier must be at most 64 UTF-8 bytes.');
+      });
+
+      it('rejects a "." or ".." resource name/identifier', async () => {
+        await expect(
+          publishQdnResource('qortium', { name: '.', service: 'IMAGE', sourceToken: 'token-1' }, [
+            'PUBLISH_QDN_RESOURCE',
+          ]),
+        ).rejects.toThrow('Resource name cannot be "." or "..".');
+
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { identifier: '..', name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('Resource identifier cannot be "." or "..".');
+      });
+
+      it('passes through the BROADCAST_UNKNOWN outcome as a typed variant instead of throwing', async () => {
+        const unknownOutcome = {
+          accepted: false,
+          contentHash: 'a'.repeat(64),
+          error: 'timed out waiting for broadcast confirmation',
+          errorType: 'BROADCAST_UNKNOWN',
+          outcome: 'unknown',
+          retryable: false,
+          timestamp: 1700000000000,
+          transactionSignature: 'tx-sig-unknown',
+        };
+
+        qdnRequestMock.mockResolvedValueOnce(unknownOutcome);
+
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).resolves.toEqual(unknownOutcome);
+      });
+
+      it('throws when the bridge returns an unrecognized shape', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ somethingElse: true });
+
+        await expect(
+          publishQdnResource(
+            'qortium',
+            { name: 'publisher', service: 'IMAGE', sourceToken: 'token-1' },
+            ['PUBLISH_QDN_RESOURCE'],
+          ),
+        ).rejects.toThrow('QDN resource publish returned an unrecognized result.');
+      });
+    });
+
+    describe('publishChatAttachment', () => {
+      it('throws a clear error when PUBLISH_CHAT_ATTACHMENT is not advertised', async () => {
+        await expect(
+          publishChatAttachment('qortium', 'token-1', { kind: 'direct', otherAddress: 'Qpeer' }, []),
+        ).rejects.toThrow('Private chat attachments require a newer Qortium Home bridge.');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('rejects a missing sourceToken before any bridge call', async () => {
+        await expect(
+          publishChatAttachment('qortium', '', { kind: 'direct', otherAddress: 'Qpeer' }, [
+            'PUBLISH_CHAT_ATTACHMENT',
+          ]),
+        ).rejects.toThrow('A valid Home-issued publish source token is required.');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('rejects a direct selector missing otherAddress, and a group selector with an out-of-range groupId', async () => {
+        await expect(
+          publishChatAttachment('qortium', 'token-1', { kind: 'direct', otherAddress: '' }, [
+            'PUBLISH_CHAT_ATTACHMENT',
+          ]),
+        ).rejects.toThrow('A direct attachment requires the recipient address.');
+
+        await expect(
+          publishChatAttachment('qortium', 'token-1', { groupId: 0, kind: 'group' }, ['PUBLISH_CHAT_ATTACHMENT']),
+        ).rejects.toThrow('A group attachment requires a valid group id.');
+
+        await expect(
+          publishChatAttachment('qortium', 'token-1', { groupId: 2147483648, kind: 'group' }, [
+            'PUBLISH_CHAT_ATTACHMENT',
+          ]),
+        ).rejects.toThrow('A group attachment requires a valid group id.');
+
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('sends the exact request shape for a direct conversation and returns the typed accepted result', async () => {
+        const accepted = { accepted: true, descriptor: validDescriptor, transactionSignature: 'tx-sig' };
+        qdnRequestMock.mockResolvedValueOnce(accepted);
+
+        await expect(
+          publishChatAttachment('qortium', 'token-1', { kind: 'direct', otherAddress: 'Qpeer' }, [
+            'PUBLISH_CHAT_ATTACHMENT',
+          ]),
+        ).resolves.toEqual(accepted);
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'PUBLISH_CHAT_ATTACHMENT',
+          conversation: { kind: 'direct', otherAddress: 'Qpeer' },
+          sourceToken: 'token-1',
+        });
+      });
+
+      it('sends the exact request shape for a group conversation on qortal', async () => {
+        const accepted = {
+          accepted: true,
+          descriptor: { ...validDescriptor, codec: 'qortal-qatt-group-v1' as const, network: 'qortal' as const },
+          transactionSignature: 'tx-sig-2',
+        };
+        qortalRequestMock.mockResolvedValueOnce(accepted);
+
+        await expect(
+          publishChatAttachment('qortal', 'token-2', { groupId: 42, kind: 'group' }, [
+            'PUBLISH_CHAT_ATTACHMENT',
+          ]),
+        ).resolves.toEqual(accepted);
+        expect(qortalRequestMock).toHaveBeenCalledWith({
+          action: 'PUBLISH_CHAT_ATTACHMENT',
+          conversation: { groupId: 42, kind: 'group' },
+          sourceToken: 'token-2',
+        });
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('passes through the BROADCAST_UNKNOWN outcome carrying the descriptor, instead of throwing', async () => {
+        const unknownOutcome = {
+          accepted: false,
+          descriptor: validDescriptor,
+          error: 'timed out waiting for broadcast confirmation',
+          errorType: 'BROADCAST_UNKNOWN',
+          outcome: 'unknown',
+          retryable: false,
+          timestamp: 1700000000000,
+          transactionSignature: 'tx-sig-unknown',
+        };
+        qdnRequestMock.mockResolvedValueOnce(unknownOutcome);
+
+        await expect(
+          publishChatAttachment('qortium', 'token-1', { kind: 'direct', otherAddress: 'Qpeer' }, [
+            'PUBLISH_CHAT_ATTACHMENT',
+          ]),
+        ).resolves.toEqual(unknownOutcome);
+      });
+
+      it('throws when the bridge returns an unrecognized shape', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ somethingElse: true });
+
+        await expect(
+          publishChatAttachment('qortium', 'token-1', { kind: 'direct', otherAddress: 'Qpeer' }, [
+            'PUBLISH_CHAT_ATTACHMENT',
+          ]),
+        ).rejects.toThrow('Chat attachment publish returned an unrecognized result.');
+      });
+    });
+
+    describe('isPrivateAttachmentDescriptor', () => {
+      it('accepts a fully valid descriptor', () => {
+        expect(isPrivateAttachmentDescriptor(validDescriptor)).toBe(true);
+      });
+
+      it('tolerates extra unknown fields at every level without failing', () => {
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            conversation: { ...validDescriptor.conversation, extra: 'x' },
+            extraTopLevel: 'x',
+            resource: { ...validDescriptor.resource, extraResource: 'x' },
+          }),
+        ).toBe(true);
+      });
+
+      it('never throws and rejects non-object/null/undefined input', () => {
+        expect(isPrivateAttachmentDescriptor(null)).toBe(false);
+        expect(isPrivateAttachmentDescriptor(undefined)).toBe(false);
+        expect(isPrivateAttachmentDescriptor('not an object')).toBe(false);
+        expect(isPrivateAttachmentDescriptor(42)).toBe(false);
+        expect(isPrivateAttachmentDescriptor([])).toBe(false);
+      });
+
+      it('rejects an unrecognized codec', () => {
+        expect(isPrivateAttachmentDescriptor({ ...validDescriptor, codec: 'not-a-real-codec' })).toBe(false);
+      });
+
+      it('rejects an unrecognized resource service', () => {
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            resource: { ...validDescriptor.resource, service: 'ATTACHMENT' },
+          }),
+        ).toBe(false);
+      });
+
+      it('rejects a malformed hash (wrong length, uppercase, non-hex)', () => {
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            ciphertext: { ...validDescriptor.ciphertext, hash: 'a'.repeat(63) },
+          }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            ciphertext: { ...validDescriptor.ciphertext, hash: 'A'.repeat(64) },
+          }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            ciphertext: { ...validDescriptor.ciphertext, hash: 'g'.repeat(64) },
+          }),
+        ).toBe(false);
+      });
+
+      it('rejects oversize ciphertext (over 1 MiB) and zero/negative size', () => {
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            ciphertext: { ...validDescriptor.ciphertext, size: 1024 * 1024 + 1 },
+          }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            ciphertext: { ...validDescriptor.ciphertext, size: 0 },
+          }),
+        ).toBe(false);
+      });
+
+      it('rejects a missing/invalid conversation selector', () => {
+        expect(isPrivateAttachmentDescriptor({ ...validDescriptor, conversation: undefined })).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({ ...validDescriptor, conversation: { kind: 'direct', otherAddress: '' } }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({ ...validDescriptor, conversation: { kind: 'group', groupId: 0 } }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({ ...validDescriptor, conversation: { kind: 'carrier-pigeon' } }),
+        ).toBe(false);
+      });
+
+      it('rejects an unrecognized network, wrong version, or encrypted !== true', () => {
+        expect(isPrivateAttachmentDescriptor({ ...validDescriptor, network: 'bitcoin' })).toBe(false);
+        expect(isPrivateAttachmentDescriptor({ ...validDescriptor, version: 2 })).toBe(false);
+        expect(isPrivateAttachmentDescriptor({ ...validDescriptor, encrypted: false })).toBe(false);
+      });
+
+      it('rejects a missing resource name/identifier or a wrong ciphertext algorithm/signature', () => {
+        expect(
+          isPrivateAttachmentDescriptor({ ...validDescriptor, resource: { ...validDescriptor.resource, name: '' } }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            resource: { ...validDescriptor.resource, identifier: '' },
+          }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            ciphertext: { ...validDescriptor.ciphertext, algorithm: 'MD5' },
+          }),
+        ).toBe(false);
+        expect(
+          isPrivateAttachmentDescriptor({
+            ...validDescriptor,
+            ciphertext: { ...validDescriptor.ciphertext, transactionSignature: '' },
+          }),
+        ).toBe(false);
+      });
+    });
+
+    describe('access trio (getChatAttachmentStreamUrl / openChatAttachmentViewer / saveChatAttachment)', () => {
+      it('gates each action on its own advertisement', async () => {
+        await expect(getChatAttachmentStreamUrl('qortium', validDescriptor, [])).rejects.toThrow(
+          'Streaming a chat attachment requires a newer Qortium Home bridge.',
+        );
+        await expect(openChatAttachmentViewer('qortium', validDescriptor, [])).rejects.toThrow(
+          'Opening the chat attachment viewer requires a newer Qortium Home bridge.',
+        );
+        await expect(saveChatAttachment('qortium', validDescriptor, [])).rejects.toThrow(
+          'Saving a chat attachment requires a newer Qortium Home bridge.',
+        );
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('sends { action, descriptor } for each action, dispatched on the requested network', async () => {
+        qdnRequestMock.mockResolvedValueOnce('qortium-home-resource://stream/abc-123');
+        await expect(
+          getChatAttachmentStreamUrl('qortium', validDescriptor, ['GET_CHAT_ATTACHMENT_STREAM_URL']),
+        ).resolves.toBe('qortium-home-resource://stream/abc-123');
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'GET_CHAT_ATTACHMENT_STREAM_URL',
+          descriptor: validDescriptor,
+        });
+
+        qortalRequestMock.mockResolvedValueOnce(true);
+        await expect(
+          openChatAttachmentViewer('qortal', validDescriptor, ['OPEN_CHAT_ATTACHMENT_VIEWER']),
+        ).resolves.toBe(true);
+        expect(qortalRequestMock).toHaveBeenCalledWith({
+          action: 'OPEN_CHAT_ATTACHMENT_VIEWER',
+          descriptor: validDescriptor,
+        });
+
+        qdnRequestMock.mockResolvedValueOnce({ canceled: false });
+        await expect(
+          saveChatAttachment('qortium', validDescriptor, ['SAVE_CHAT_ATTACHMENT']),
+        ).resolves.toEqual({ canceled: false });
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'SAVE_CHAT_ATTACHMENT',
+          descriptor: validDescriptor,
+        });
+
+        qdnRequestMock.mockResolvedValueOnce({ canceled: true });
+        await expect(
+          saveChatAttachment('qortium', validDescriptor, ['SAVE_CHAT_ATTACHMENT']),
+        ).resolves.toEqual({ canceled: true });
+      });
+    });
+
+    describe('public quartet (openQdnResourceViewer / getQdnResourceStreamUrl / saveQdnResource / getQdnResourceUrl)', () => {
+      const coordinate = { identifier: 'ident-1', name: 'publisher', service: 'IMAGE' };
+
+      it('gates each action on its own advertisement', async () => {
+        await expect(openQdnResourceViewer('qortium', coordinate, [])).rejects.toThrow(
+          'Opening the QDN resource viewer requires a newer Qortium Home bridge.',
+        );
+        await expect(getQdnResourceStreamUrl('qortium', coordinate, [])).rejects.toThrow(
+          'Streaming a QDN resource requires a newer Qortium Home bridge.',
+        );
+        await expect(saveQdnResource('qortium', coordinate, [])).rejects.toThrow(
+          'Saving a QDN resource requires a newer Qortium Home bridge.',
+        );
+        await expect(getQdnResourceUrl('qortium', coordinate, [])).rejects.toThrow(
+          'Resolving a QDN resource URL requires a newer Qortium Home bridge.',
+        );
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('sends only the populated coordinate fields alongside the action, network-routed', async () => {
+        qortalRequestMock.mockResolvedValueOnce(true);
+        await openQdnResourceViewer('qortal', { name: 'publisher', service: 'IMAGE' }, [
+          'OPEN_QDN_RESOURCE_VIEWER',
+        ]);
+        expect(qortalRequestMock).toHaveBeenCalledWith({
+          action: 'OPEN_QDN_RESOURCE_VIEWER',
+          name: 'publisher',
+          service: 'IMAGE',
+        });
+
+        qdnRequestMock.mockResolvedValueOnce('qortium-home-resource://stream/def-456');
+        await getQdnResourceStreamUrl('qortium', coordinate, ['GET_QDN_RESOURCE_STREAM_URL']);
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'GET_QDN_RESOURCE_STREAM_URL',
+          identifier: 'ident-1',
+          name: 'publisher',
+          service: 'IMAGE',
+        });
+
+        qdnRequestMock.mockResolvedValueOnce({ canceled: false });
+        await expect(saveQdnResource('qortium', coordinate, ['SAVE_QDN_RESOURCE'])).resolves.toEqual({
+          canceled: false,
+        });
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'SAVE_QDN_RESOURCE',
+          identifier: 'ident-1',
+          name: 'publisher',
+          service: 'IMAGE',
+        });
+
+        qdnRequestMock.mockResolvedValueOnce('http://127.0.0.1:24891/arbitrary/IMAGE/publisher/ident-1');
+        await expect(getQdnResourceUrl('qortium', coordinate, ['GET_QDN_RESOURCE_URL'])).resolves.toBe(
+          'http://127.0.0.1:24891/arbitrary/IMAGE/publisher/ident-1',
+        );
+      });
+
+      it('rejects an unsupported stream service (APP/WEBSITE/GAME), naming navigation as the alternative', async () => {
+        await expect(
+          getQdnResourceStreamUrl('qortium', { name: 'publisher', service: 'APP' }, [
+            'GET_QDN_RESOURCE_STREAM_URL',
+          ]),
+        ).rejects.toThrow('APP resources cannot be streamed inline; open them with a navigation action instead');
+        await expect(
+          getQdnResourceStreamUrl('qortium', { name: 'publisher', service: 'WEBSITE' }, [
+            'GET_QDN_RESOURCE_STREAM_URL',
+          ]),
+        ).rejects.toThrow('WEBSITE resources cannot be streamed inline');
+        await expect(
+          getQdnResourceStreamUrl('qortium', { name: 'publisher', service: 'GAME' }, [
+            'GET_QDN_RESOURCE_STREAM_URL',
+          ]),
+        ).rejects.toThrow('GAME resources cannot be streamed inline');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('allows every documented streaming service through the allowlist', async () => {
+        const streamable = [
+          'IMAGE',
+          'THUMBNAIL',
+          'QCHAT_IMAGE',
+          'AUDIO',
+          'VOICE',
+          'PODCAST',
+          'VIDEO',
+          'DOCUMENT',
+          'FILE',
+          'FILES',
+          'ATTACHMENT',
+        ];
+
+        for (const service of streamable) {
+          qdnRequestMock.mockResolvedValueOnce('qortium-home-resource://stream/x');
+          await expect(
+            getQdnResourceStreamUrl('qortium', { name: 'publisher', service }, ['GET_QDN_RESOURCE_STREAM_URL']),
+          ).resolves.toBe('qortium-home-resource://stream/x');
+        }
+      });
+    });
+
+    describe('isPublishSourceTokenError', () => {
+      it('matches all three documented source-token validation messages', () => {
+        expect(isPublishSourceTokenError(new Error('A valid Home-issued publish source token is required.'))).toBe(
+          true,
+        );
+        expect(
+          isPublishSourceTokenError(new Error('Selected publish source expired. Select the file again.')),
+        ).toBe(true);
+        expect(
+          isPublishSourceTokenError(
+            new Error('Selected publish source is not available to this app, account, network, or route.'),
+          ),
+        ).toBe(true);
+      });
+
+      it('does not match an unrelated error, and never throws on a non-Error value', () => {
+        expect(isPublishSourceTokenError(new Error('Something unrelated failed.'))).toBe(false);
+        expect(isPublishSourceTokenError('A valid Home-issued publish source token is required.')).toBe(true);
+        expect(isPublishSourceTokenError(null)).toBe(false);
+        expect(isPublishSourceTokenError(undefined)).toBe(false);
+        expect(isPublishSourceTokenError({ message: 'A valid Home-issued publish source token is required.' })).toBe(
+          false,
+        );
+      });
+
+      it('matches the exact message publishQdnResource/publishChatAttachment throw client-side for an empty token', async () => {
+        try {
+          await publishQdnResource('qortium', { name: 'publisher', service: 'IMAGE', sourceToken: '' }, [
+            'PUBLISH_QDN_RESOURCE',
+          ]);
+          throw new Error('expected publishQdnResource to throw');
+        } catch (error) {
+          expect(isPublishSourceTokenError(error)).toBe(true);
+        }
       });
     });
   });
