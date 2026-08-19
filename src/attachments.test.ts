@@ -3,12 +3,14 @@ import { getDocumentQdnResources, getImageQdnResources } from './messageLinks';
 import {
   ATTACHMENT_FILE_MAX_BYTES,
   ATTACHMENT_IMAGE_MAX_BYTES,
+  SOURCE_TOKEN_EXPIRY_MS,
   buildAttachmentIdentifier,
   buildAttachmentLink,
   formatAttachmentSize,
   getAttachmentMaxBytes,
+  getAttachmentServiceFromMime,
   getFirstTransferFile,
-  getAttachmentService,
+  isSourceAttachmentExpired,
 } from './attachments';
 
 describe('attachment helpers', () => {
@@ -39,15 +41,18 @@ describe('attachment helpers', () => {
     ).toBeNull();
   });
 
-  it('routes raster images to IMAGE and everything else to ATTACHMENT', () => {
-    expect(getAttachmentService({ type: 'image/png' })).toBe('IMAGE');
-    expect(getAttachmentService({ type: 'image/webp' })).toBe('IMAGE');
-    expect(getAttachmentService({ type: 'image/gif' })).toBe('IMAGE');
+  it('routes a raster image mimeType to IMAGE and everything else to ATTACHMENT', () => {
+    expect(getAttachmentServiceFromMime('image/png')).toBe('IMAGE');
+    expect(getAttachmentServiceFromMime('image/webp')).toBe('IMAGE');
+    expect(getAttachmentServiceFromMime('image/gif')).toBe('IMAGE');
     // SVG is deliberately a plain file: the inline preview pipeline is
     // raster-only (script-bearing SVG), so IMAGE would render broken.
-    expect(getAttachmentService({ type: 'image/svg+xml' })).toBe('ATTACHMENT');
-    expect(getAttachmentService({ type: 'application/pdf' })).toBe('ATTACHMENT');
-    expect(getAttachmentService({ type: '' })).toBe('ATTACHMENT');
+    expect(getAttachmentServiceFromMime('image/svg+xml')).toBe('ATTACHMENT');
+    expect(getAttachmentServiceFromMime('application/pdf')).toBe('ATTACHMENT');
+    expect(getAttachmentServiceFromMime('')).toBe('ATTACHMENT');
+    // Desktop's picker never reports a mimeType at all — default to
+    // ATTACHMENT rather than guessing.
+    expect(getAttachmentServiceFromMime(null)).toBe('ATTACHMENT');
   });
 
   it('maps each service to its size cap', () => {
@@ -95,5 +100,14 @@ describe('attachment helpers', () => {
     expect(formatAttachmentSize(512)).toBe('512 B');
     expect(formatAttachmentSize(2048)).toBe('2 KB');
     expect(formatAttachmentSize(3 * 1024 * 1024 + 200 * 1024)).toBe('3.2 MB');
+  });
+
+  it('treats a staged source token as expired 30 minutes after selection', () => {
+    const selectedAt = 1_000_000;
+
+    expect(isSourceAttachmentExpired({ selectedAt }, selectedAt)).toBe(false);
+    expect(isSourceAttachmentExpired({ selectedAt }, selectedAt + SOURCE_TOKEN_EXPIRY_MS - 1)).toBe(false);
+    expect(isSourceAttachmentExpired({ selectedAt }, selectedAt + SOURCE_TOKEN_EXPIRY_MS)).toBe(true);
+    expect(isSourceAttachmentExpired({ selectedAt }, selectedAt + SOURCE_TOKEN_EXPIRY_MS + 1)).toBe(true);
   });
 });

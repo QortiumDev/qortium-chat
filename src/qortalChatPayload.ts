@@ -1,6 +1,10 @@
 import { buildParagraphHtmlFromPlainText } from './chatText';
 
 type QortalOutgoingMessage = {
+  /** Raw private-attachment candidates carried by Chat's own envelope, if
+   * any — see docs/CHAT_ATTACHMENTS.md. Passed through unvalidated; the
+   * builders below only need to re-embed them, not interpret them. */
+  attachments?: unknown[];
   repliedTo: string | null;
   text: string;
 };
@@ -44,13 +48,13 @@ export function normalizeQortalOutgoingMessage(message: string): QortalOutgoingM
   try {
     const parsed = JSON.parse(message) as unknown;
 
-    if (
-      isRecord(parsed) &&
-      typeof parsed.message === 'string' &&
-      typeof parsed.repliedTo === 'string' &&
-      parsed.repliedTo
-    ) {
-      return { repliedTo: parsed.repliedTo, text: parsed.message };
+    if (isRecord(parsed) && typeof parsed.message === 'string') {
+      const repliedTo = typeof parsed.repliedTo === 'string' && parsed.repliedTo ? parsed.repliedTo : null;
+      const attachments = Array.isArray(parsed.attachments) ? parsed.attachments : undefined;
+
+      if (repliedTo || attachments) {
+        return { ...(attachments ? { attachments } : {}), repliedTo, text: parsed.message };
+      }
     }
   } catch {
     // Plain text is the normal path.
@@ -59,12 +63,19 @@ export function normalizeQortalOutgoingMessage(message: string): QortalOutgoingM
   return { repliedTo: null, text: message };
 }
 
+// `images` defaults to an empty array (Hub's own convention for "no pinned
+// images"); P4b passes a single entry here for a private-group IMAGE
+// attachment (docs/CHAT_ATTACHMENTS.md) — the entry carries both the plain
+// Hub image fields (service/name/identifier) Hub clients already understand
+// and the full PrivateAttachmentDescriptor's extra keys Chat's own decode
+// needs to reconstruct the descriptor for its access-trio actions.
 export function buildQortalHubGroupChatPayload(
   outgoing: QortalOutgoingMessage,
   specialId: string = globalThis.crypto.randomUUID(),
+  images: readonly unknown[] = [],
 ) {
   return JSON.stringify({
-    images: [],
+    images,
     isEdited: false,
     messageText: buildTiptapDocFromPlainText(outgoing.text),
     repliedTo: outgoing.repliedTo ?? '',
@@ -148,6 +159,11 @@ export function buildQortalDirectChatPayload(
     specialId,
     repliedTo: outgoing.repliedTo ?? '',
     type: '',
+    // A private direct attachment descriptor (docs/CHAT_ATTACHMENTS.md).
+    // Home's direct-payload validator has no allow-list on the initial-send
+    // branch (only the canonical delete envelope restricts keys), so this
+    // extra field is tolerated.
+    ...(outgoing.attachments && outgoing.attachments.length > 0 ? { attachments: outgoing.attachments } : {}),
   });
 }
 

@@ -14,10 +14,10 @@ import {
 } from './qortalChatPayload';
 import type {
   ActiveChats,
+  ChatAttachmentOutcome,
+  ChatMessage,
   ChatNetwork,
   ChatSendResult,
-  QdnPublishResult,
-  ChatMessage,
   GroupApprovalResult,
   GroupApprovalVote,
   GroupData,
@@ -34,6 +34,8 @@ import type {
   NodeStatus,
   PendingApprovalTransaction,
   PendingBridgeTransactionsResult,
+  PrivateAttachmentConversation,
+  PrivateAttachmentDescriptor,
   PrivateGroupActiveChatEntry,
   PrivateGroupChatKeyRequest,
   PrivateGroupChatKeyRequestRecoveryResult,
@@ -42,6 +44,10 @@ import type {
   PrivateGroupKeyRequestOutcome,
   PrivateGroupKeyResolutionOutcome,
   QdnAction,
+  QdnPublishOutcome,
+  QdnPublishRequest,
+  QdnPublishSourceSelection,
+  QdnResourceCoordinate,
   QortalPrivateGroupChatState,
   QortiumPrivateGroupChatState,
   RewardShare,
@@ -920,31 +926,561 @@ export async function getDirectMessages(
   throw new Error('Direct private chat reads require Qortium Home direct chat support.');
 }
 
-export async function publishQdnAttachment({
-  dataBase64,
-  filename,
-  identifier,
-  name,
-  service,
-}: {
+// @deprecated Home 2 rejects the legacy inline-base64 publish shape this
+// function built — `base64`/`filename`/every other inline/path/mime source
+// field is on PUBLISH_QDN_RESOURCE's reject list (review/schemas-publish-
+// attachments.md item 2: "The legacy inline-base64 form is rejected."). The
+// only accepted source is now a Home-issued sourceToken: call
+// selectQdnPublishSource to open Home's native picker, then publishQdnResource
+// with the returned token. This shim's signature is kept only because
+// App.tsx's attachment call site (src/App.tsx:5780) has not been migrated
+// yet — that migration is chunk P4b, which App.tsx is explicitly out of
+// scope for here. Calling this always throws.
+export async function publishQdnAttachment(_request: {
   dataBase64: string;
   filename: string;
   identifier: string;
   name: string;
   service: 'ATTACHMENT' | 'IMAGE';
-}) {
-  // Privileged write: Qortium Home shows its publish-approval prompt (target
-  // resource, size, fee), builds the ARBITRARY transaction from the inline
-  // base64, and signs — the app never touches key material. `base64` +
-  // `filename` is Home's inline-source contract.
-  return qdnRequest<QdnPublishResult>({
-    action: 'PUBLISH_QDN_RESOURCE',
-    base64: dataBase64,
-    filename,
-    identifier,
-    name,
-    service,
+}): Promise<never> {
+  throw new Error(
+    'publishQdnAttachment no longer works: Home 2 rejects inline base64 uploads. Select a file with ' +
+      'selectQdnPublishSource, then publish its sourceToken with publishQdnResource.',
+  );
+}
+
+// -------- P4a: publish source token flow --------
+//
+// review/schemas-publish-attachments.md §§ 1-2.
+
+// Opens Home's native file picker and returns an opaque, Home-issued token
+// bound to this app/account/network/route/tab. The app never receives the
+// native path or file bytes — only fileName/mimeType/size for display, plus
+// the sourceToken PUBLISH_QDN_RESOURCE / PUBLISH_CHAT_ATTACHMENT redeem. The
+// token expires after 30 minutes; callers should re-select on
+// isPublishSourceTokenError rather than retry the same token.
+export async function selectQdnPublishSource(
+  network: ChatNetwork,
+  actions?: QdnAction[],
+): Promise<QdnPublishSourceSelection> {
+  if (!hasBridgeAction(actions, 'SELECT_QDN_PUBLISH_SOURCE')) {
+    throw new Error('Selecting a file to publish requires a newer Qortium Home bridge.');
+  }
+
+  const raw = await bridgeRequest<Record<string, unknown>>(network, {
+    action: 'SELECT_QDN_PUBLISH_SOURCE',
   });
+
+  if (raw?.canceled === true) {
+    return { canceled: true };
+  }
+
+  const fileName = typeof raw?.fileName === 'string' ? raw.fileName : '';
+  const size = typeof raw?.size === 'number' ? raw.size : NaN;
+  const sourceToken = typeof raw?.sourceToken === 'string' ? raw.sourceToken : '';
+  const mimeType = typeof raw?.mimeType === 'string' ? raw.mimeType : null;
+
+  if (!fileName || !sourceToken || !Number.isFinite(size)) {
+    throw new Error('Publish source selection is missing required fields.');
+  }
+
+  return { canceled: false, fileName, kind: 'file', mimeType, size, sourceToken };
+}
+
+function utf8ByteLength(value: string) {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function assertQdnPublishTextField(label: string, value: string, maxBytes: number) {
+  if (utf8ByteLength(value) > maxBytes) {
+    throw new Error(`${label} must be at most ${maxBytes} UTF-8 bytes.`);
+  }
+}
+
+function assertNotDotSegment(label: string, value: string) {
+  if (value === '.' || value === '..') {
+    throw new Error(`${label} cannot be "." or "..".`);
+  }
+}
+
+// review/schemas-publish-attachments.md § 2 "Constraints".
+const QDN_PUBLISH_NAME_MAX_BYTES: Record<ChatNetwork, number> = { qortal: 400, qortium: 40 };
+const QDN_PUBLISH_IDENTIFIER_MAX_BYTES = 64;
+const QDN_PUBLISH_TITLE_MAX_BYTES = 80;
+const QDN_PUBLISH_DESCRIPTION_MAX_BYTES = 500;
+const QDN_PUBLISH_CATEGORY_MAX_BYTES = 40;
+const QDN_PUBLISH_TAG_MAX_BYTES = 20;
+const QDN_PUBLISH_TAGS_MAX_COUNT = 5;
+
+function normalizeQdnPublishOutcome(raw: unknown): QdnPublishOutcome {
+  const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  if (record.accepted === true) {
+    return record as unknown as QdnPublishOutcome;
+  }
+
+  if (record.outcome === 'unknown') {
+    return record as unknown as QdnPublishOutcome;
+  }
+
+  throw new Error('QDN resource publish returned an unrecognized result.');
+}
+
+// Publishes a resource from a Home-issued sourceToken (see
+// selectQdnPublishSource above) — the only source PUBLISH_QDN_RESOURCE
+// accepts. `fee` is never sent: Home derives it from the selected source and
+// rejects a nonzero value (review/schemas-publish-attachments.md § 2
+// "Constraints"). Validation here mirrors Home's own constraints so a bad
+// request fails fast instead of round-tripping; Home still re-validates
+// everything server-side.
+export async function publishQdnResource(
+  network: ChatNetwork,
+  request: QdnPublishRequest,
+  actions?: QdnAction[],
+): Promise<QdnPublishOutcome> {
+  if (!hasBridgeAction(actions, 'PUBLISH_QDN_RESOURCE')) {
+    throw new Error('Publishing a QDN resource requires a newer Qortium Home bridge.');
+  }
+
+  if (!request.sourceToken) {
+    throw new Error('A valid Home-issued publish source token is required.');
+  }
+
+  if (!request.name) {
+    throw new Error('A resource name is required.');
+  }
+
+  assertNotDotSegment('Resource name', request.name);
+  assertQdnPublishTextField('Resource name', request.name, QDN_PUBLISH_NAME_MAX_BYTES[network]);
+
+  if (request.identifier) {
+    assertNotDotSegment('Resource identifier', request.identifier);
+    assertQdnPublishTextField('Resource identifier', request.identifier, QDN_PUBLISH_IDENTIFIER_MAX_BYTES);
+  }
+
+  const hasMetadata =
+    !!request.title || !!request.description || !!request.category || (request.tags?.length ?? 0) > 0;
+
+  // Qortal rejects any nonempty title/description/category/tags outright —
+  // fail fast here rather than let a doomed request reach Home.
+  if (network === 'qortal' && hasMetadata) {
+    throw new Error('Qortal does not accept a title, description, category, or tags on a published resource.');
+  }
+
+  if (request.title) {
+    assertQdnPublishTextField('Title', request.title, QDN_PUBLISH_TITLE_MAX_BYTES);
+  }
+
+  if (request.description) {
+    assertQdnPublishTextField('Description', request.description, QDN_PUBLISH_DESCRIPTION_MAX_BYTES);
+  }
+
+  if (request.category) {
+    assertQdnPublishTextField('Category', request.category, QDN_PUBLISH_CATEGORY_MAX_BYTES);
+  }
+
+  if (request.tags && request.tags.length > 0) {
+    if (request.tags.length > QDN_PUBLISH_TAGS_MAX_COUNT) {
+      throw new Error(`At most ${QDN_PUBLISH_TAGS_MAX_COUNT} tags are allowed.`);
+    }
+
+    for (const tag of request.tags) {
+      assertQdnPublishTextField('Tag', tag, QDN_PUBLISH_TAG_MAX_BYTES);
+    }
+  }
+
+  const wireRequest: { action: string; [key: string]: unknown } = {
+    action: 'PUBLISH_QDN_RESOURCE',
+    name: request.name,
+    service: request.service,
+    sourceToken: request.sourceToken,
+  };
+
+  if (request.identifier) wireRequest.identifier = request.identifier;
+  if (request.title) wireRequest.title = request.title;
+  if (request.description) wireRequest.description = request.description;
+  if (request.category) wireRequest.category = request.category;
+  if (request.tags) wireRequest.tags = request.tags;
+
+  return normalizeQdnPublishOutcome(await bridgeRequest<Record<string, unknown>>(network, wireRequest));
+}
+
+// -------- P4a: private chat attachments --------
+//
+// review/schemas-publish-attachments.md §§ 3-4.
+
+function assertPrivateAttachmentConversation(conversation: PrivateAttachmentConversation) {
+  if (conversation.kind === 'direct') {
+    if (!conversation.otherAddress) {
+      throw new Error('A direct attachment requires the recipient address.');
+    }
+
+    return;
+  }
+
+  if (conversation.kind === 'group') {
+    if (
+      !Number.isInteger(conversation.groupId) ||
+      conversation.groupId < 1 ||
+      conversation.groupId > 2147483647
+    ) {
+      throw new Error('A group attachment requires a valid group id.');
+    }
+
+    return;
+  }
+
+  throw new Error('An attachment conversation selector is required.');
+}
+
+function normalizeChatAttachmentOutcome(raw: unknown): ChatAttachmentOutcome {
+  const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  if (record.accepted === true || record.outcome === 'unknown') {
+    return record as unknown as ChatAttachmentOutcome;
+  }
+
+  throw new Error('Chat attachment publish returned an unrecognized result.');
+}
+
+// Publishes an encrypted attachment into a private conversation (closed
+// group or direct) from a Home-issued sourceToken, same source contract as
+// publishQdnResource above. Home encrypts client-side with the conversation
+// key and returns an immutable descriptor — this app never sees plaintext
+// bytes or key material.
+export async function publishChatAttachment(
+  network: ChatNetwork,
+  sourceToken: string,
+  conversation: PrivateAttachmentConversation,
+  actions?: QdnAction[],
+): Promise<ChatAttachmentOutcome> {
+  if (!hasBridgeAction(actions, 'PUBLISH_CHAT_ATTACHMENT')) {
+    throw new Error('Private chat attachments require a newer Qortium Home bridge.');
+  }
+
+  if (!sourceToken) {
+    throw new Error('A valid Home-issued publish source token is required.');
+  }
+
+  assertPrivateAttachmentConversation(conversation);
+
+  return normalizeChatAttachmentOutcome(
+    await bridgeRequest<Record<string, unknown>>(network, {
+      action: 'PUBLISH_CHAT_ATTACHMENT',
+      conversation,
+      sourceToken,
+    }),
+  );
+}
+
+const PRIVATE_ATTACHMENT_CODECS = [
+  'qenc-v2-direct',
+  'qenc-v2-group',
+  'qortal-hub-group-image-v1',
+  'qortal-qatt-direct-v1',
+  'qortal-qatt-group-v1',
+] as const;
+
+const PRIVATE_ATTACHMENT_SERVICES = ['IMAGE', 'QCHAT_ATTACHMENT_PRIVATE'] as const;
+
+const PRIVATE_ATTACHMENT_HASH_RE = /^[0-9a-f]{64}$/;
+const PRIVATE_ATTACHMENT_MAX_CIPHERTEXT_BYTES = 1024 * 1024;
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Full structural validation of a PrivateAttachmentDescriptor — used to
+// safely parse a descriptor out of an incoming message payload (untrusted
+// input), so this must be strict about every field and must never throw.
+// Extra keys beyond the schema are tolerated (forward compatibility); a
+// missing/malformed required field or an unrecognized codec/service/network
+// fails closed.
+export function isPrivateAttachmentDescriptor(value: unknown): value is PrivateAttachmentDescriptor {
+  if (!isRecordValue(value)) {
+    return false;
+  }
+
+  if (value.version !== 1 || value.encrypted !== true) {
+    return false;
+  }
+
+  if (value.network !== 'qortal' && value.network !== 'qortium') {
+    return false;
+  }
+
+  if (
+    typeof value.codec !== 'string' ||
+    !(PRIVATE_ATTACHMENT_CODECS as readonly string[]).includes(value.codec)
+  ) {
+    return false;
+  }
+
+  const conversation = value.conversation;
+
+  if (!isRecordValue(conversation)) {
+    return false;
+  }
+
+  if (conversation.kind === 'direct') {
+    if (typeof conversation.otherAddress !== 'string' || !conversation.otherAddress) {
+      return false;
+    }
+  } else if (conversation.kind === 'group') {
+    if (
+      typeof conversation.groupId !== 'number' ||
+      !Number.isInteger(conversation.groupId) ||
+      conversation.groupId < 1 ||
+      conversation.groupId > 2147483647
+    ) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  const resource = value.resource;
+
+  if (!isRecordValue(resource)) {
+    return false;
+  }
+
+  if (
+    typeof resource.service !== 'string' ||
+    !(PRIVATE_ATTACHMENT_SERVICES as readonly string[]).includes(resource.service)
+  ) {
+    return false;
+  }
+
+  if (typeof resource.name !== 'string' || !resource.name) {
+    return false;
+  }
+
+  if (typeof resource.identifier !== 'string' || !resource.identifier) {
+    return false;
+  }
+
+  const ciphertext = value.ciphertext;
+
+  if (!isRecordValue(ciphertext)) {
+    return false;
+  }
+
+  if (ciphertext.algorithm !== 'SHA-256') {
+    return false;
+  }
+
+  if (typeof ciphertext.hash !== 'string' || !PRIVATE_ATTACHMENT_HASH_RE.test(ciphertext.hash)) {
+    return false;
+  }
+
+  if (
+    typeof ciphertext.size !== 'number' ||
+    !Number.isInteger(ciphertext.size) ||
+    ciphertext.size < 1 ||
+    ciphertext.size > PRIVATE_ATTACHMENT_MAX_CIPHERTEXT_BYTES
+  ) {
+    return false;
+  }
+
+  if (typeof ciphertext.transactionSignature !== 'string' || !ciphertext.transactionSignature) {
+    return false;
+  }
+
+  return true;
+}
+
+// Access trio (review/schemas-publish-attachments.md § 4). All three send
+// `{ descriptor }`; Home fully re-validates the descriptor server-side.
+
+// The returned URL is an opaque, one-shot capability that expires after 10
+// minutes and supports one forward byte range (desktop:
+// qortium-home-resource://stream/<uuid>; Android: an authorized HTTPS proxy
+// URL). Never cache this value — fetch a fresh one each time bytes are
+// actually needed.
+export async function getChatAttachmentStreamUrl(
+  network: ChatNetwork,
+  descriptor: PrivateAttachmentDescriptor,
+  actions?: QdnAction[],
+): Promise<string> {
+  if (!hasBridgeAction(actions, 'GET_CHAT_ATTACHMENT_STREAM_URL')) {
+    throw new Error('Streaming a chat attachment requires a newer Qortium Home bridge.');
+  }
+
+  return bridgeRequest<string>(network, {
+    action: 'GET_CHAT_ATTACHMENT_STREAM_URL',
+    descriptor,
+  });
+}
+
+export async function openChatAttachmentViewer(
+  network: ChatNetwork,
+  descriptor: PrivateAttachmentDescriptor,
+  actions?: QdnAction[],
+): Promise<true> {
+  if (!hasBridgeAction(actions, 'OPEN_CHAT_ATTACHMENT_VIEWER')) {
+    throw new Error('Opening the chat attachment viewer requires a newer Qortium Home bridge.');
+  }
+
+  return bridgeRequest<true>(network, {
+    action: 'OPEN_CHAT_ATTACHMENT_VIEWER',
+    descriptor,
+  });
+}
+
+export async function saveChatAttachment(
+  network: ChatNetwork,
+  descriptor: PrivateAttachmentDescriptor,
+  actions?: QdnAction[],
+): Promise<{ canceled: boolean }> {
+  if (!hasBridgeAction(actions, 'SAVE_CHAT_ATTACHMENT')) {
+    throw new Error('Saving a chat attachment requires a newer Qortium Home bridge.');
+  }
+
+  const raw = await bridgeRequest<{ canceled?: boolean }>(network, {
+    action: 'SAVE_CHAT_ATTACHMENT',
+    descriptor,
+  });
+
+  return { canceled: raw?.canceled === true };
+}
+
+// -------- P4a: public QDN resource viewer/stream/save/url quartet --------
+//
+// review/schemas-publish-attachments.md § 5. messageLinks.tsx already calls
+// some of these raw (e.g. SAVE_QDN_RESOURCE) against its own resource types;
+// these wrappers are additive here and are not yet wired into messageLinks —
+// that rewiring is chunk P4b's job.
+
+function buildQdnResourceCoordinateRequest(coordinate: QdnResourceCoordinate) {
+  const request: Record<string, unknown> = {
+    name: coordinate.name,
+    service: coordinate.service,
+  };
+
+  if (coordinate.identifier) request.identifier = coordinate.identifier;
+  if (coordinate.path) request.path = coordinate.path;
+  if (coordinate.filename) request.filename = coordinate.filename;
+  if (coordinate.mimeType) request.mimeType = coordinate.mimeType;
+
+  return request;
+}
+
+export async function openQdnResourceViewer(
+  network: ChatNetwork,
+  coordinate: QdnResourceCoordinate,
+  actions?: QdnAction[],
+): Promise<true> {
+  if (!hasBridgeAction(actions, 'OPEN_QDN_RESOURCE_VIEWER')) {
+    throw new Error('Opening the QDN resource viewer requires a newer Qortium Home bridge.');
+  }
+
+  return bridgeRequest<true>(network, {
+    action: 'OPEN_QDN_RESOURCE_VIEWER',
+    ...buildQdnResourceCoordinateRequest(coordinate),
+  });
+}
+
+// GET_QDN_RESOURCE_STREAM_URL accepts only media/document services
+// (review/schemas-publish-attachments.md § 5 "Supported streaming
+// services"); APP/WEBSITE/GAME resources must be opened with a navigation
+// action instead (openQdnResourceViewer's OPEN_NEW_TAB sibling, or
+// OPEN_QDN_RESOURCE_VIEWER's own rejection for those services).
+const QDN_STREAM_SERVICES = [
+  'IMAGE',
+  'THUMBNAIL',
+  'QCHAT_IMAGE',
+  'AUDIO',
+  'VOICE',
+  'PODCAST',
+  'VIDEO',
+  'DOCUMENT',
+  'FILE',
+  'FILES',
+  'ATTACHMENT',
+] as const;
+
+function assertStreamableQdnService(service: string) {
+  if (!(QDN_STREAM_SERVICES as readonly string[]).includes(service)) {
+    throw new Error(
+      `${service} resources cannot be streamed inline; open them with a navigation action instead (APP/WEBSITE/GAME are not streamable).`,
+    );
+  }
+}
+
+// The returned URL is the same opaque, 10-minute, one-forward-range
+// capability as getChatAttachmentStreamUrl above — never cache it here.
+export async function getQdnResourceStreamUrl(
+  network: ChatNetwork,
+  coordinate: QdnResourceCoordinate,
+  actions?: QdnAction[],
+): Promise<string> {
+  if (!hasBridgeAction(actions, 'GET_QDN_RESOURCE_STREAM_URL')) {
+    throw new Error('Streaming a QDN resource requires a newer Qortium Home bridge.');
+  }
+
+  assertStreamableQdnService(coordinate.service);
+
+  return bridgeRequest<string>(network, {
+    action: 'GET_QDN_RESOURCE_STREAM_URL',
+    ...buildQdnResourceCoordinateRequest(coordinate),
+  });
+}
+
+export async function saveQdnResource(
+  network: ChatNetwork,
+  coordinate: QdnResourceCoordinate,
+  actions?: QdnAction[],
+): Promise<{ canceled: boolean }> {
+  if (!hasBridgeAction(actions, 'SAVE_QDN_RESOURCE')) {
+    throw new Error('Saving a QDN resource requires a newer Qortium Home bridge.');
+  }
+
+  const raw = await bridgeRequest<{ canceled?: boolean }>(network, {
+    action: 'SAVE_QDN_RESOURCE',
+    ...buildQdnResourceCoordinateRequest(coordinate),
+  });
+
+  return { canceled: raw?.canceled === true };
+}
+
+// Distinct from getQdnResourceStreamUrl: this is the resolved node render
+// URL (including Home's display-setting query params where applicable), not
+// an expiring capability — safe to keep around, unlike the stream URL.
+export async function getQdnResourceUrl(
+  network: ChatNetwork,
+  coordinate: QdnResourceCoordinate,
+  actions?: QdnAction[],
+): Promise<string> {
+  if (!hasBridgeAction(actions, 'GET_QDN_RESOURCE_URL')) {
+    throw new Error('Resolving a QDN resource URL requires a newer Qortium Home bridge.');
+  }
+
+  return bridgeRequest<string>(network, {
+    action: 'GET_QDN_RESOURCE_URL',
+    ...buildQdnResourceCoordinateRequest(coordinate),
+  });
+}
+
+// -------- P4a: source-token error recognition --------
+//
+// review/schemas-publish-attachments.md § 6 "Source-token errors" — these are
+// ordinary validation errors matched by exact message, not a coded bridge
+// result. The same three messages are also what this file's own client-side
+// checks throw (see publishQdnResource/publishChatAttachment above), so this
+// helper recognizes both a preflight rejection and a round-tripped Home
+// rejection identically. Callers use this to offer "select the file again"
+// UX rather than a generic failure banner.
+const PUBLISH_SOURCE_TOKEN_ERROR_MESSAGES = [
+  'A valid Home-issued publish source token is required.',
+  'Selected publish source expired. Select the file again.',
+  'Selected publish source is not available to this app, account, network, or route.',
+] as const;
+
+export function isPublishSourceTokenError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+
+  return (PUBLISH_SOURCE_TOKEN_ERROR_MESSAGES as readonly string[]).includes(message);
 }
 
 // `network` picks Qortium vs Qortal (default 'qortium' keeps every

@@ -6,6 +6,14 @@ function localizeMessage(t: TranslateFunction | undefined, key: Parameters<Trans
 }
 
 export type DisplayChatMessage = {
+  /** Raw candidates from either Chat's own `attachments` envelope field or a
+   * Qortal Hub v3 `images[]` entry that carries the extra private-attachment
+   * keys (see docs/CHAT_ATTACHMENTS.md). Unvalidated — every candidate must
+   * be checked with coreApi's isPrivateAttachmentDescriptor before use; this
+   * module deliberately does not import coreApi (it would be circular, since
+   * coreApi.ts already imports from here) so it cannot do that validation
+   * itself. */
+  attachments?: unknown[];
   body: string;
   hubImages?: QortalHubImageRef[];
   kind: 'binary' | 'empty' | 'encrypted' | 'machine' | 'reaction' | 'text' | 'unsupported';
@@ -594,6 +602,19 @@ function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
   return images;
 }
 
+// Bounds an unknown envelope field down to a small array of plain-object
+// candidates, with no further validation — the real validation (full
+// PrivateAttachmentDescriptor shape) happens downstream via coreApi's
+// isPrivateAttachmentDescriptor (see the DisplayChatMessage.attachments doc
+// comment above for why that check cannot live in this module).
+function getAttachmentCandidates(value: unknown, max = 12): unknown[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.slice(0, max).filter((candidate) => isPlainObject(candidate));
+}
+
 // Machine-message convention shared with other QDN apps (e.g. Chess): a JSON
 // object carrying a string `app` marker, no string `message`, and at least one
 // other key holding an object payload is app-to-app data, not human chat, and
@@ -626,6 +647,7 @@ function getMachineEnvelopeApp(parsed: unknown): string | null {
 }
 
 type UnwrappedChatText = {
+  attachments: unknown[];
   body: string;
   hubImages: QortalHubImageRef[];
   machineApp: string | null;
@@ -634,6 +656,7 @@ type UnwrappedChatText = {
 };
 
 function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
+  let attachments: unknown[] = [];
   let body = value;
   let hubImages: QortalHubImageRef[] = [];
   let machineApp: string | null = null;
@@ -667,6 +690,7 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     }
 
     const envelope = parsed as {
+      attachments?: unknown;
       content?: unknown;
       contentState?: unknown;
       message?: unknown;
@@ -698,6 +722,12 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     if (envelope.version === 3) {
       body = normalizeExtractedHubText(extractSafeHubText(envelope.messageText));
       hubImages = getQortalHubImageRefs(envelope.images);
+      // A private-group IMAGE attachment rides the same images[] array as an
+      // ordinary Hub-pinned image, but with the full descriptor's extra keys
+      // layered on (docs/CHAT_ATTACHMENTS.md) — an entry from a real Hub
+      // client never has those, so isPrivateAttachmentDescriptor rejects it
+      // downstream and only Chat's own private attachments survive here.
+      attachments = getAttachmentCandidates(envelope.images);
 
       if (typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
         repliedTo = envelope.repliedTo;
@@ -740,13 +770,31 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
     if (repliedTo === null && typeof envelope.repliedTo === 'string' && envelope.repliedTo) {
       repliedTo = envelope.repliedTo;
     }
+
+    // Chat's own private-attachment convention (docs/CHAT_ATTACHMENTS.md):
+    // an `attachments` array alongside `message`/`repliedTo` in the same
+    // small envelope. Captured once — a nested reply-in-reply from old data
+    // never carries this field, so the outer envelope's value (if any) wins.
+    if (attachments.length === 0) {
+      attachments = getAttachmentCandidates(envelope.attachments);
+    }
   }
 
-  return { body, hubImages, machineApp, reaction, repliedTo };
+  return { attachments, body, hubImages, machineApp, reaction, repliedTo };
 }
 
-export function buildChatMessageText(text: string, repliedTo?: string | null) {
-  return repliedTo ? JSON.stringify({ message: text, repliedTo }) : text;
+export function buildChatMessageText(text: string, repliedTo?: string | null, attachments?: readonly unknown[] | null) {
+  const hasAttachments = !!attachments && attachments.length > 0;
+
+  if (!repliedTo && !hasAttachments) {
+    return text;
+  }
+
+  return JSON.stringify({
+    message: text,
+    ...(repliedTo ? { repliedTo } : {}),
+    ...(hasAttachments ? { attachments } : {}),
+  });
 }
 
 // A "delete" is an edit whose revision carries an empty body — nothing leaves
@@ -903,7 +951,9 @@ function computeDecodeChatMessage(
   }
 
   try {
-    const { body, hubImages, machineApp, reaction, repliedTo } = unwrapChatTextEnvelope(decodeBase64(message.data));
+    const { attachments, body, hubImages, machineApp, reaction, repliedTo } = unwrapChatTextEnvelope(
+      decodeBase64(message.data),
+    );
 
     if (reaction) {
       return {
@@ -925,6 +975,7 @@ function computeDecodeChatMessage(
 
     return {
       body,
+      ...(attachments.length > 0 ? { attachments } : {}),
       ...(hubImages.length > 0 ? { hubImages } : {}),
       kind: 'text',
       repliedTo,

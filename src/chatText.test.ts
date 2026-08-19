@@ -88,10 +88,114 @@ describe('chat text helpers', () => {
     });
   });
 
-  it('builds plain text unless a reply target is set', () => {
+  it('builds plain text unless a reply target or attachments are set', () => {
     expect(buildChatMessageText('hello')).toBe('hello');
     expect(buildChatMessageText('hello', null)).toBe('hello');
+    expect(buildChatMessageText('hello', null, [])).toBe('hello');
+    expect(buildChatMessageText('hello', null, null)).toBe('hello');
     expect(JSON.parse(buildChatMessageText('hello', 'sig'))).toEqual({ message: 'hello', repliedTo: 'sig' });
+  });
+
+  it('embeds attachments in the {message, repliedTo, attachments} envelope', () => {
+    const descriptor = { resource: { identifier: 'id-1', name: 'Alice', service: 'IMAGE' } };
+
+    expect(JSON.parse(buildChatMessageText('look', null, [descriptor]))).toEqual({
+      message: 'look',
+      attachments: [descriptor],
+    });
+    expect(JSON.parse(buildChatMessageText('look', 'sig', [descriptor]))).toEqual({
+      message: 'look',
+      repliedTo: 'sig',
+      attachments: [descriptor],
+    });
+  });
+
+  it('round-trips a private attachment through decodeChatMessage', () => {
+    const descriptor = {
+      version: 1,
+      encrypted: true,
+      network: 'qortium',
+      conversation: { kind: 'direct', otherAddress: 'QAddress' },
+      codec: 'qenc-v2-direct',
+      resource: { service: 'QCHAT_ATTACHMENT_PRIVATE', name: 'Alice', identifier: 'id-1' },
+      ciphertext: { algorithm: 'SHA-256', hash: 'a'.repeat(64), size: 42, transactionSignature: 'sig' },
+    };
+    const data = base64(buildChatMessageText('here is a file', null, [descriptor]));
+
+    const decoded = decodeChatMessage({ data, encoding: 'BASE64', isEncrypted: false, isText: true });
+
+    expect(decoded).toEqual({
+      body: 'here is a file',
+      attachments: [descriptor],
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('does not surface an attachments key when none is present', () => {
+    const data = base64(buildChatMessageText('plain'));
+
+    expect(decodeChatMessage({ data, encoding: 'BASE64', isEncrypted: false, isText: true })).toEqual({
+      body: 'plain',
+      kind: 'text',
+      repliedTo: null,
+    });
+  });
+
+  it('surfaces private-attachment candidates carried on a Hub v3 images[] entry', () => {
+    const descriptor = {
+      identifier: 'id-1',
+      name: 'Alice',
+      service: 'IMAGE',
+      version: 1,
+      encrypted: true,
+      network: 'qortal',
+      conversation: { kind: 'group', groupId: 5 },
+      codec: 'qortal-hub-group-image-v1',
+      resource: { service: 'IMAGE', name: 'Alice', identifier: 'id-1' },
+      ciphertext: { algorithm: 'SHA-256', hash: 'b'.repeat(64), size: 99, transactionSignature: 'sig' },
+    };
+    const data = base64(
+      JSON.stringify({
+        images: [descriptor],
+        isEdited: false,
+        messageText: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'a photo' }] }] },
+        repliedTo: '',
+        specialId: 'sid',
+        type: '',
+        version: 3,
+      }),
+    );
+
+    const decoded = decodeChatMessage({ data, encoding: 'BASE64', isEncrypted: false, isText: true });
+
+    expect(decoded.body).toBe('a photo');
+    expect(decoded.attachments).toEqual([descriptor]);
+    // Still parses as an ordinary Hub-pinned image too — a real Hub client
+    // reads the same entry through its own plain-image fields.
+    expect(decoded.hubImages).toEqual([{ identifier: 'id-1', name: 'Alice', service: 'IMAGE' }]);
+  });
+
+  it('does not treat an ordinary public Hub image as a private attachment candidate', () => {
+    const data = base64(
+      JSON.stringify({
+        images: [{ identifier: 'img-id', name: 'Alice', service: 'IMAGE' }],
+        isEdited: false,
+        messageText: { type: 'doc', content: [] },
+        repliedTo: '',
+        specialId: 'sid',
+        type: '',
+        version: 3,
+      }),
+    );
+
+    const decoded = decodeChatMessage({ data, encoding: 'BASE64', isEncrypted: false, isText: true });
+
+    // The candidate is still surfaced raw (chatText.ts cannot validate it —
+    // see the DisplayChatMessage.attachments doc comment) but it lacks the
+    // ciphertext/conversation/codec fields a real descriptor needs, so a
+    // downstream isPrivateAttachmentDescriptor check rejects it.
+    expect(decoded.attachments).toEqual([{ identifier: 'img-id', name: 'Alice', service: 'IMAGE' }]);
   });
 
   it('builds and decodes reaction envelopes', () => {
@@ -373,6 +477,15 @@ describe('machine messages', () => {
     });
 
     expect(decoded).toEqual({
+      // Every images[] entry is also surfaced as a raw, unvalidated private-
+      // attachment candidate (see the DisplayChatMessage.attachments doc
+      // comment) — including the second entry here, which hubImages itself
+      // rejects for its unsafe identifier. Full validation is a downstream
+      // isPrivateAttachmentDescriptor job, not this module's.
+      attachments: [
+        { identifier: 'img-id', name: 'QuickMythril', service: 'image', timestamp: 1783403484577 },
+        { identifier: '../unsafe', name: 'QuickMythril', service: 'IMAGE' },
+      ],
       body: '',
       hubImages: [
         { identifier: 'img-id', name: 'QuickMythril', service: 'IMAGE', timestamp: 1783403484577 },

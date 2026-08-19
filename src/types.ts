@@ -218,6 +218,10 @@ export type GroupInvite = {
   inviter?: string;
 };
 
+// @deprecated Legacy inline-base64 PUBLISH_QDN_RESOURCE result shape. Home 2
+// rejects the inline source fields this shape was built for (review/
+// schemas-publish-attachments.md item 2) — kept only because nothing outside
+// this file's history referenced it; new callers use QdnPublishOutcome.
 export type QdnPublishResult = {
   accepted: boolean;
   action: 'PUBLISH_QDN_RESOURCE';
@@ -228,6 +232,158 @@ export type QdnPublishResult = {
   };
   result?: unknown;
   transactionSignature?: string;
+};
+
+// -------- P4a: publish source token flow --------
+//
+// review/schemas-publish-attachments.md §§ 1-2. Home's native file picker
+// (SELECT_QDN_PUBLISH_SOURCE) hands the app a short-lived opaque token — the
+// app never sees file bytes or the native path — which PUBLISH_QDN_RESOURCE
+// then redeems. The legacy inline-base64 publish shape (`QdnPublishResult`
+// above) is rejected by Home 2 entirely.
+export type QdnPublishSourceSelection =
+  | { canceled: true }
+  | {
+      canceled: false;
+      fileName: string;
+      kind: 'file';
+      mimeType: string | null;
+      size: number;
+      sourceToken: string;
+    };
+
+export type QdnPublishRequest = {
+  category?: string;
+  description?: string;
+  identifier?: string;
+  name: string;
+  service: string;
+  sourceToken: string;
+  tags?: string[];
+  title?: string;
+};
+
+export type QdnPublishResourceDescriptor = {
+  identifier: string | null;
+  name: string;
+  service: string;
+};
+
+export type QdnPublishImmutable = {
+  algorithm: 'SHA-256';
+  contentHash: string;
+  transactionSignature: string;
+};
+
+export type QdnPublishSourceInfo = {
+  fileName: string;
+  size: number;
+};
+
+export type QdnPublishAcceptedResult = {
+  accepted: true;
+  immutable: QdnPublishImmutable;
+  network: ChatNetwork;
+  resource: QdnPublishResourceDescriptor;
+  source: QdnPublishSourceInfo;
+  transactionSignature: string;
+};
+
+// An uncertain signed/broadcast publish (review/schemas-publish-
+// attachments.md § 2 "BROADCAST_UNKNOWN"). The caller must reconcile by
+// `transactionSignature` rather than treat this as a failure.
+export type QdnPublishUnknownOutcomeResult = {
+  accepted: false;
+  contentHash: string;
+  error: string;
+  errorType?: 'BROADCAST_UNKNOWN';
+  outcome: 'unknown';
+  retryable?: false;
+  timestamp: number;
+  transactionSignature: string;
+  [key: string]: unknown;
+};
+
+export type QdnPublishOutcome = QdnPublishAcceptedResult | QdnPublishUnknownOutcomeResult;
+
+// -------- P4a: private chat attachments --------
+//
+// review/schemas-publish-attachments.md §§ 3-4. `PrivateAttachmentConversation`
+// is shared between the PUBLISH_CHAT_ATTACHMENT request and the resulting
+// descriptor's `conversation` field — the same selector Home already
+// validated when the descriptor was minted.
+export type PrivateAttachmentConversation =
+  | { kind: 'direct'; otherAddress: string }
+  | { groupId: number; kind: 'group' };
+
+export type PrivateAttachmentCodec =
+  | 'qenc-v2-direct'
+  | 'qenc-v2-group'
+  | 'qortal-hub-group-image-v1'
+  | 'qortal-qatt-direct-v1'
+  | 'qortal-qatt-group-v1';
+
+export type PrivateAttachmentService = 'IMAGE' | 'QCHAT_ATTACHMENT_PRIVATE';
+
+// Immutable descriptor Home returns from PUBLISH_CHAT_ATTACHMENT and expects
+// back unchanged for the access trio (GET_CHAT_ATTACHMENT_STREAM_URL /
+// OPEN_CHAT_ATTACHMENT_VIEWER / SAVE_CHAT_ATTACHMENT). Not a plaintext
+// filename/MIME/key container — validate with isPrivateAttachmentDescriptor
+// before trusting one parsed out of message text.
+export type PrivateAttachmentDescriptor = {
+  ciphertext: {
+    algorithm: 'SHA-256';
+    hash: string;
+    size: number;
+    transactionSignature: string;
+  };
+  codec: PrivateAttachmentCodec;
+  conversation: PrivateAttachmentConversation;
+  encrypted: true;
+  network: ChatNetwork;
+  resource: {
+    identifier: string;
+    name: string;
+    service: PrivateAttachmentService;
+  };
+  version: 1;
+};
+
+export type ChatAttachmentAcceptedResult = {
+  accepted: true;
+  descriptor: PrivateAttachmentDescriptor;
+  transactionSignature: string;
+};
+
+// An uncertain signed/broadcast attachment publish, mirroring
+// QdnPublishUnknownOutcomeResult but carrying the immutable descriptor
+// instead of the public resource/immutable/source trio.
+export type ChatAttachmentUnknownOutcomeResult = {
+  accepted: false;
+  descriptor: PrivateAttachmentDescriptor;
+  error: string;
+  errorType?: 'BROADCAST_UNKNOWN';
+  outcome: 'unknown';
+  retryable?: false;
+  timestamp: number;
+  transactionSignature: string;
+  [key: string]: unknown;
+};
+
+export type ChatAttachmentOutcome = ChatAttachmentAcceptedResult | ChatAttachmentUnknownOutcomeResult;
+
+// -------- P4a: public QDN resource viewer/stream/save/url quartet --------
+//
+// review/schemas-publish-attachments.md § 5. One coordinate shape covers all
+// four actions; each wrapper forwards only the fields Home's normalizer
+// accepts (service/name required, the rest optional hints).
+export type QdnResourceCoordinate = {
+  filename?: string;
+  identifier?: string;
+  mimeType?: string;
+  name: string;
+  path?: string;
+  service: string;
 };
 
 export type ChatActionResult = {

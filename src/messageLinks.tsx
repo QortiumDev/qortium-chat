@@ -1,10 +1,11 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { copyTextToClipboard } from './clipboard';
+import { saveQdnResource as saveQdnResourceCoreApi } from './coreApi';
 import { type TranslateFunction } from './i18n';
 import { qdnRequest } from './qdnRequest';
 import { qortalRequest } from './qortalRequest';
 import { type QortalHubImageRef } from './chatText';
-import { type ChatNetwork } from './types';
+import { type ChatNetwork, type QdnAction } from './types';
 
 const IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
 const IMAGE_PREVIEW_MAX_CONCURRENT = 3;
@@ -567,11 +568,18 @@ export async function openQdnDocumentViewer(resource: QdnDocumentResource) {
 
 // Home fetches the raw bytes and shows a save dialog (desktop) or download path
 // (mobile/web), returning { canceled } once the user decides.
-export async function saveQdnResource(resource: QdnImageResource | QdnMediaResource | QdnDocumentResource) {
-  return getResourceBridge<{ canceled?: boolean }>(resource.network, {
-    action: 'SAVE_QDN_RESOURCE',
-    ...getResourceRequest(resource),
-  });
+//
+// P4b: delegates to coreApi's P4a-wrapped SAVE_QDN_RESOURCE (review/schemas-
+// publish-attachments.md § 5) instead of dispatching the raw bridge request
+// directly — same action and coordinate fields, routed the same way by
+// network; callers already gate on `hasResourceAction(network,
+// 'SAVE_QDN_RESOURCE')` before this is ever invoked, so `actions` here is
+// only needed to satisfy the wrapper's own gate.
+export async function saveQdnResource(
+  resource: QdnImageResource | QdnMediaResource | QdnDocumentResource,
+  actions?: QdnAction[],
+) {
+  return saveQdnResourceCoreApi(resource.network, getResourceRequest(resource), actions);
 }
 
 function getResourceRequest(resource: QdnResourceBase<string>) {

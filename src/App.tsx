@@ -10,11 +10,11 @@ import {
 import {
   buildAttachmentIdentifier,
   buildAttachmentLink,
-  getFirstTransferFile,
   getAttachmentMaxBytes,
-  getAttachmentService,
-  prepareAttachment,
-  ATTACHMENT_FILE_MAX_BYTES,
+  getAttachmentServiceFromMime,
+  getFirstTransferFile,
+  isSourceAttachmentExpired,
+  QDN_PUBLISH_SOURCE_MAX_BYTES,
 } from './attachments';
 import {
   buildActiveChatsWebSocketUrl,
@@ -43,13 +43,17 @@ import {
   getPrivateGroupChatState,
   forgetPendingBridgeTransaction,
   isChatSendRejectedError,
+  isPrivateAttachmentDescriptor,
+  isPublishSourceTokenError,
   isQortalPrivateGroupChatState,
   leaveGroup,
   joinGroup,
-  publishQdnAttachment,
+  publishChatAttachment,
+  publishQdnResource,
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
   searchGroups,
+  selectQdnPublishSource,
   startMinting,
   submitGroupApproval,
 } from './coreApi';
@@ -242,6 +246,7 @@ import {
   type GroupAvatarProfile,
 } from './avatarProfiles';
 import { AvatarTaskQueue } from './avatarQueue';
+import { buildQortalHubGroupChatPayload } from './qortalChatPayload';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -261,6 +266,8 @@ import type {
   AsyncState,
   PendingApprovalTransaction,
   PendingBridgeTransactionEntry,
+  PrivateAttachmentConversation,
+  PrivateAttachmentDescriptor,
   PrivateGroupChatState,
   QdnAction,
   QdnSelectedAccount,
@@ -1557,15 +1564,16 @@ export default function App() {
   const accountRefreshPendingRef = useRef(false);
   const accountRefreshGenerationRef = useRef(0);
   const [isComposerEmojiOpen, setComposerEmojiOpen] = useState(false);
-  // One attachment per message (Qortal Hub's model): staged, encoded, and
-  // size-checked up front; published on Send and then linked in the text.
+  // One attachment per message: staged via Home's native picker
+  // (SELECT_QDN_PUBLISH_SOURCE) as an opaque source token, then redeemed on
+  // Send by publishQdnResource (open groups) or publishChatAttachment
+  // (private conversations) — see attachFile/handleSendMessage.
   const [stagedAttachment, setStagedAttachment] = useState<ComposerAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState('');
   const [isDraggingAttachment, setDraggingAttachment] = useState(false);
   // dragenter/dragleave fire per child element; a counter tells actual exits
   // from nested re-entries so the drop overlay does not flicker.
   const attachmentDragDepthRef = useRef(0);
-  const attachmentInputRef = useRef<HTMLInputElement>(null);
   // More than one message may have a reaction in flight. Scope each guard to
   // its chat as well as signature+emoji so same-signature values on Qortium
   // and Qortal cannot clear or disable one another.
@@ -2936,23 +2944,34 @@ export default function App() {
     hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_EDIT') &&
     hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_DELETE') &&
     hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_REACTION');
-  // Attachments are public QDN data (no encrypt-on-publish in Home yet), so
-  // they are offered in open groups only, and publishing requires the Home
-  // bridge plus a registered name to publish under. Edits keep the original
-  // message's media, so no attaching mid-edit. Still Qortium-only: Home 2
-  // advertises PUBLISH_QDN_RESOURCE on the Qortal bridge too, but the
-  // publisher-name source (normalizeRegisteredName(account?.name), the
-  // Qortium identity) and buildAttachmentIdentifier are not yet wired to the
-  // Qortal identity/group id — that plumbing is P4 (attachments/source
-  // tokens) scope, not this gate.
+  // P4b: attachments now publish via a Home-issued source token on BOTH
+  // networks (review/schemas-publish-attachments.md §§ 1-3) — open groups
+  // get a public PUBLISH_QDN_RESOURCE link exactly as before; closed groups
+  // and direct chats get an encrypted PUBLISH_CHAT_ATTACHMENT descriptor
+  // (docs/CHAT_ATTACHMENTS.md). Edits keep the original message's media, so
+  // no attaching mid-edit either way.
+  const selectedChatAttachNetwork: ChatNetwork = selectedChat?.network === 'qortal' ? 'qortal' : 'qortium';
+  const selectedChatAttachActions = selectedChatAttachNetwork === 'qortal' ? qortalBridge.value.actions : actions;
+  const selectedChatAttachAccountName =
+    selectedChatAttachNetwork === 'qortal'
+      ? normalizeRegisteredName(qortalAccount?.name)
+      : normalizeRegisteredName(account?.name);
+  const isSelectedChatOpenGroup = selectedChat?.kind === 'group' && selectedChat.group.isOpen !== false;
+  const isSelectedChatPrivate =
+    selectedChat?.kind === 'direct' || (selectedChat?.kind === 'group' && selectedChat.group.isOpen === false);
+  const canAttachPublicResource =
+    isSelectedChatOpenGroup &&
+    !!selectedChatAttachAccountName &&
+    hasAction(selectedChatAttachActions, 'PUBLISH_QDN_RESOURCE') &&
+    hasAction(selectedChatAttachActions, 'SELECT_QDN_PUBLISH_SOURCE');
+  const canAttachPrivateResource =
+    isSelectedChatPrivate &&
+    hasAction(selectedChatAttachActions, 'PUBLISH_CHAT_ATTACHMENT') &&
+    hasAction(selectedChatAttachActions, 'SELECT_QDN_PUBLISH_SOURCE');
   const canAttach =
-    selectedChat?.kind === 'group' &&
-    selectedChat.network !== 'qortal' &&
-    selectedChat.group.isOpen !== false &&
     canComposeMessage &&
     composeContext?.kind !== 'edit' &&
-    !!normalizeRegisteredName(account?.name) &&
-    hasAction(actions, 'PUBLISH_QDN_RESOURCE');
+    (canAttachPublicResource || canAttachPrivateResource);
   // P3 item 3: for a closed group, the notice must still show when the
   // private family is entirely unadvertised (canSendGroupChat, the generic
   // action, is irrelevant there) — only an OPEN group's notice still gates on
@@ -5729,15 +5748,13 @@ export default function App() {
     const submittedDraft = draft;
     const chat = selectedChat;
     const context = composeContext;
-    // Attachments publish via PUBLISH_QDN_RESOURCE, which is Qortium-only
-    // (deferred on qortalRequest — see canAttach's network gate below), so a
-    // Qortal chat never has a staged attachment to begin with; the network
-    // check here is defense in depth.
-    const staged =
-      chat.kind === 'group' && chat.network !== 'qortal' && stagedAttachment?.phase === 'ready'
-        ? stagedAttachment
-        : null;
+    // Edits keep the original message's media (canAttach already excludes
+    // edit context), so a staged file only ever applies to a new message.
+    const staged = context?.kind !== 'edit' && stagedAttachment?.phase === 'ready' ? stagedAttachment : null;
+    const attachNetwork: ChatNetwork = chat.network === 'qortal' ? 'qortal' : 'qortium';
+    const attachActions = attachNetwork === 'qortal' ? qortalBridge.value.actions : actions;
     let publishedLink = '';
+    let attachmentDescriptor: PrivateAttachmentDescriptor | null = null;
 
     setSendPending(true);
     setWriteError('');
@@ -5765,31 +5782,86 @@ export default function App() {
         return;
       }
 
-      if (staged && chat.kind === 'group') {
-        // Publish the attachment first (Home shows its approval prompt);
-        // only a successful publish gets linked into the message.
-        const publisherName = normalizeRegisteredName(selectedAccount.name);
+      // review/schemas-publish-attachments.md § 1: a source token expires 30
+      // minutes after selection. Check before spending a round trip on a
+      // token Home will reject anyway.
+      if (staged && isSourceAttachmentExpired(staged, Date.now())) {
+        setStagedAttachment(null);
+        setAttachmentError(t('status.attachment.reselect'));
+        return;
+      }
 
-        if (!publisherName) {
-          setWriteError(t('status.attachment.nameRequired'));
-          return;
+      if (staged) {
+        const isOpenGroup = chat.kind === 'group' && chat.group.isOpen !== false;
+        const isPrivateConversation =
+          chat.kind === 'direct' || (chat.kind === 'group' && chat.group.isOpen === false);
+
+        try {
+          if (isOpenGroup && chat.kind === 'group') {
+            // Publish the attachment first (Home shows its approval prompt);
+            // only a successful publish gets linked into the message.
+            const publisherName =
+              attachNetwork === 'qortal'
+                ? normalizeRegisteredName(qortalAccount?.name)
+                : normalizeRegisteredName(selectedAccount.name);
+
+            if (!publisherName) {
+              setWriteError(t('status.attachment.nameRequired'));
+              return;
+            }
+
+            const service = getAttachmentServiceFromMime(staged.mimeType);
+            const identifier = buildAttachmentIdentifier(chat.group.groupId, Date.now());
+
+            const outcome = await publishQdnResource(
+              attachNetwork,
+              { identifier, name: publisherName, service, sourceToken: staged.sourceToken },
+              attachActions,
+            );
+
+            if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
+              return;
+            }
+
+            if (outcome.accepted !== true) {
+              // BROADCAST_UNKNOWN: Home's own pending-transaction journal
+              // already records the signature: reconciliation is the
+              // existing P1 GET_PENDING_BRIDGE_TRANSACTIONS wiring's job, not
+              // this call's. Do not send the chat message referencing a link
+              // that may not exist.
+              setWriteError(t('status.attachment.publishAmbiguous'));
+              return;
+            }
+
+            publishedLink = buildAttachmentLink(service, publisherName, identifier);
+          } else if (isPrivateConversation) {
+            const conversation: PrivateAttachmentConversation =
+              chat.kind === 'direct'
+                ? { kind: 'direct', otherAddress: chat.direct.address }
+                : { groupId: chat.group.groupId, kind: 'group' };
+
+            const outcome = await publishChatAttachment(attachNetwork, staged.sourceToken, conversation, attachActions);
+
+            if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
+              return;
+            }
+
+            if (outcome.accepted !== true) {
+              setWriteError(t('status.attachment.publishAmbiguous'));
+              return;
+            }
+
+            attachmentDescriptor = outcome.descriptor;
+          }
+        } catch (error) {
+          if (isPublishSourceTokenError(error)) {
+            setStagedAttachment(null);
+            setAttachmentError(t('status.attachment.reselect'));
+            return;
+          }
+
+          throw error;
         }
-
-        const identifier = buildAttachmentIdentifier(chat.group.groupId, Date.now());
-
-        await publishQdnAttachment({
-          dataBase64: staged.dataBase64,
-          filename: staged.filename,
-          identifier,
-          name: publisherName,
-          service: staged.service,
-        });
-
-        if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
-          return;
-        }
-
-        publishedLink = buildAttachmentLink(staged.service, publisherName, identifier);
       }
 
       const bodyText = publishedLink ? (text ? `${text}\n${publishedLink}` : publishedLink) : text;
@@ -5801,6 +5873,23 @@ export default function App() {
         // keep the original's reply target so the reply preview survives edits.
         chatReference = context.thread.original.signature ?? undefined;
         message = buildChatMessageText(bodyText, decodeChatMessage(context.thread.original).repliedTo);
+      } else if (attachmentDescriptor) {
+        // docs/CHAT_ATTACHMENTS.md: a Qortal private-group IMAGE attachment
+        // rides Hub's images[] v3 envelope for interop; every other private
+        // attachment rides Chat's own `attachments` envelope field.
+        const replyTarget = context?.kind === 'reply' ? context.message.signature ?? null : null;
+
+        message =
+          attachNetwork === 'qortal' && chat.kind === 'group' && attachmentDescriptor.resource.service === 'IMAGE'
+            ? buildQortalHubGroupChatPayload({ repliedTo: replyTarget, text: bodyText }, undefined, [
+                {
+                  ...attachmentDescriptor,
+                  identifier: attachmentDescriptor.resource.identifier,
+                  name: attachmentDescriptor.resource.name,
+                  service: attachmentDescriptor.resource.service,
+                },
+              ])
+            : buildChatMessageText(bodyText, replyTarget, [attachmentDescriptor]);
       } else if (context?.kind === 'reply') {
         message = buildChatMessageText(bodyText, context.message.signature);
       }
@@ -5900,6 +5989,13 @@ export default function App() {
         );
         setStagedAttachment(null);
         setAttachmentError('');
+      } else if (attachmentDescriptor && selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+        // A private descriptor is not human-composable text, so there is no
+        // equivalent draft-refill — the encrypted resource still exists;
+        // only the notice can tell the user their message did not send.
+        setStagedAttachment(null);
+        setAttachmentError('');
+        setWriteError(t('status.attachment.publishAmbiguous'));
       }
     } finally {
       setSendPending(false);
@@ -6042,57 +6138,68 @@ export default function App() {
     }
   }
 
-  // Stage a file for the next send: route to IMAGE/ATTACHMENT, compress
-  // images, base64-encode, and size-check. Replaces any previously staged
-  // file (one attachment per message).
-  function stageAttachment(file: File) {
-    if (!canAttach || stagedAttachment?.phase === 'processing') {
+  // Opens Home's native file picker (SELECT_QDN_PUBLISH_SOURCE) and stages
+  // the returned source token for the next send. The app never sees file
+  // bytes — only fileName/size/mimeType for display — so there is nothing
+  // left to compress, encode, or read locally; Home enforces the 1 byte–100
+  // MiB source cap itself. Replaces any previously staged file (one
+  // attachment per message).
+  function attachFile() {
+    if (!canAttach || stagedAttachment?.phase === 'selecting') {
       return;
     }
 
     setAttachmentError('');
+    setStagedAttachment({ phase: 'selecting' });
 
-    // Fail a hopeless drop fast: non-image files publish as-is, so a raw
-    // size over the cap can never succeed (images may still shrink below
-    // their cap during compression, so they are checked after preparing).
-    if (getAttachmentService(file) === 'ATTACHMENT' && file.size > ATTACHMENT_FILE_MAX_BYTES) {
-      setAttachmentError(
-        t('status.attachment.tooLarge', { max: String(Math.round(ATTACHMENT_FILE_MAX_BYTES / 1024 / 1024)) }),
-      );
-      return;
-    }
-
-    const filename = file.name || 'attachment';
     const chatKey = selectedChatKeyRef.current;
+    const network = selectedChatAttachNetwork;
+    const attachActions = selectedChatAttachActions;
 
-    setStagedAttachment({ filename, phase: 'processing' });
-
-    void prepareAttachment(file)
-      .then((prepared) => {
-        // Attachments are per-conversation; drop a result that finished
-        // preparing after the user moved to another chat.
+    void selectQdnPublishSource(network, attachActions)
+      .then((selection) => {
+        // Attachments are per-conversation; drop a result that resolves
+        // after the user moved to another chat.
         if (selectedChatKeyRef.current !== chatKey) {
           return;
         }
 
-        const maxBytes = getAttachmentMaxBytes(prepared.service);
-
-        if (prepared.size > maxBytes) {
-          setAttachmentError(
-            t('status.attachment.tooLarge', { max: String(Math.round(maxBytes / 1024 / 1024)) }),
-          );
+        if (selection.canceled) {
           setStagedAttachment(null);
           return;
         }
 
-        setStagedAttachment({ phase: 'ready', ...prepared });
+        // Home already enforces its own 1 byte–100 MiB source cap during
+        // selection; this narrower per-service cap is a courtesy to QDN
+        // hosting the app has offered since before P4 (see attachments.ts's
+        // module doc). It only applies when the mimeType is known — Home's
+        // desktop picker never reports one, and guessing IMAGE for an
+        // unknown type risks rejecting a perfectly fine non-image file.
+        const maxBytes = selection.mimeType
+          ? getAttachmentMaxBytes(getAttachmentServiceFromMime(selection.mimeType))
+          : QDN_PUBLISH_SOURCE_MAX_BYTES;
+
+        if (selection.size > maxBytes) {
+          setAttachmentError(t('status.attachment.tooLarge', { max: String(Math.round(maxBytes / 1024 / 1024)) }));
+          setStagedAttachment(null);
+          return;
+        }
+
+        setStagedAttachment({
+          fileName: selection.fileName,
+          mimeType: selection.mimeType,
+          phase: 'ready',
+          selectedAt: Date.now(),
+          size: selection.size,
+          sourceToken: selection.sourceToken,
+        });
       })
-      .catch(() => {
+      .catch((error) => {
         if (selectedChatKeyRef.current !== chatKey) {
           return;
         }
 
-        setAttachmentError(t('status.attachment.error'));
+        setAttachmentError(getBridgeErrorMessage(error, t('status.attachment.error'), t));
         setStagedAttachment(null);
       });
   }
@@ -6137,6 +6244,11 @@ export default function App() {
     }
   }
 
+  // Home's picker is now the only source of publishable bytes (review/
+  // schemas-publish-attachments.md § 2 "Rejected source fields" — inline
+  // base64 is rejected outright), so a browser drag-drop can no longer stage
+  // anything; point the user at the attach button instead of silently
+  // ignoring the drop.
   function handleAttachmentDrop(event: DragEvent<HTMLElement>) {
     if (!isFileDrag(event)) {
       return;
@@ -6150,22 +6262,19 @@ export default function App() {
       return;
     }
 
-    // One attachment per message: only the first dropped file is taken.
-    const file = event.dataTransfer.files[0];
-
-    if (file) {
-      stageAttachment(file);
-    }
+    setAttachmentError(t('status.attachment.usePicker'));
   }
 
   function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const file = getFirstTransferFile(event.clipboardData);
 
     // Only intercept when the clipboard carries a file (e.g. a screenshot or
-    // file copied from the desktop); plain text pastes flow through untouched.
+    // file copied from the desktop); plain text pastes flow through
+    // untouched. Same rationale as handleAttachmentDrop above: there is no
+    // bytes-to-Home path any more, so this can only point at the picker.
     if (file && canAttach) {
       event.preventDefault();
-      stageAttachment(file);
+      setAttachmentError(t('status.attachment.usePicker'));
     }
   }
 
@@ -9698,7 +9807,6 @@ export default function App() {
               attachTitle={canAttach ? t('label.composer.attach') : t('action.attachUnavailable')}
               attachment={stagedAttachment}
               attachmentError={attachmentError}
-              attachmentInputRef={attachmentInputRef}
               canAttach={canAttach}
               canCompose={canComposeMessage}
               canSubmit={canSubmitMessage}
@@ -9728,7 +9836,7 @@ export default function App() {
               loadingLabel={t('label.loading')}
               messageLabel={t('label.common.message')}
               messagePlaceholder={t('placeholder.message')}
-              onAttachmentSelected={stageAttachment}
+              onAttachClick={attachFile}
               onCancelContext={cancelComposeContext}
               onClearAttachment={clearStagedAttachment}
               onDraftChange={setDraft}
@@ -9736,7 +9844,7 @@ export default function App() {
               onPaste={handleComposerPaste}
               onSubmit={(event) => void handleSendMessage(event)}
               onToggleEmoji={() => setComposerEmojiOpen((current) => !current)}
-              processingLabel={t('status.attachment.processing')}
+              selectingLabel={t('status.attachment.processing')}
               // P3 item 2a: a closed group's visible byte counter, reflecting
               // the per-chain plaintext cap; null for every other chat (open
               // group/direct), same as before this cap existed.
@@ -9768,7 +9876,7 @@ export default function App() {
                     ? t('button.sendMessage')
                     : groupSendUnavailableLabel
               }
-              showAttachment={selectedChat?.kind === 'group'}
+              showAttachment={!!selectedChat}
               textareaRef={composerRef}
             />
           )}
