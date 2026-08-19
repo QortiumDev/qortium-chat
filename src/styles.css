@@ -3854,6 +3854,9 @@ button.message__reply-preview:focus-visible,
     display: grid;
   }
 
+  /* Home v2 app-shell override (<=860px) — the single-view swap above already
+     collapses the grid to one column; this keeps the members-open variant
+     collapsed the same way instead of reopening its extra column. */
   .app-shell--home-v2 .layout,
   .app-shell--home-v2 .layout--members-open {
     grid-template-columns: minmax(0, 1fr);
@@ -3924,52 +3927,6 @@ button.message__reply-preview:focus-visible,
     margin-top: 12px;
   }
 
-  .app-shell--home-v2 .topbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-    padding-block: 6px;
-    padding-inline: calc(10px + env(safe-area-inset-left, 0px)) calc(10px + env(safe-area-inset-right, 0px));
-  }
-
-  .app-shell--home-v2 .topbar__account {
-    justify-content: flex-end;
-    margin-top: 0;
-  }
-
-  .app-shell--home-v2 .topbar__host-context,
-  .app-shell--home-v2 .account-summary__status {
-    display: none;
-  }
-
-  .app-shell--home-v2 .topbar__account .account-connect {
-    display: flex;
-    max-width: min(56vw, 240px);
-  }
-
-  .app-shell--home-v2 .topbar__account .account-connect .muted {
-    display: none;
-  }
-
-  .app-shell--home-v2 .topbar__account .account-connect .button {
-    min-width: 0;
-    min-height: 36px;
-    padding: 6px 10px;
-  }
-
-  .app-shell--home-v2 .panel {
-    padding: 10px 12px;
-  }
-
-  .app-shell--home-v2 .network-section__header {
-    padding: 12px 12px 4px;
-  }
-
-  .app-shell--home-v2 .chat-pane {
-    padding: 10px 12px;
-    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-  }
-
   .notification-settings__popover {
     inset-inline-start: 0;
     inset-inline-end: auto;
@@ -4030,19 +3987,6 @@ button.message__reply-preview:focus-visible,
     justify-content: flex-end;
   }
 
-  .app-shell--home-v2 .composer {
-    flex-wrap: nowrap;
-  }
-
-  .app-shell--home-v2 .composer textarea {
-    flex-basis: auto;
-    width: auto;
-  }
-
-  .app-shell--home-v2 .composer__toolbar {
-    flex: 0 0 auto;
-  }
-
   .account-dialog {
     place-items: end center;
     padding: 12px;
@@ -4057,6 +4001,68 @@ button.message__reply-preview:focus-visible,
 
   .account-dialog__actions .button {
     flex: 1 1 140px;
+  }
+
+  /* Home v2 app-shell overrides (<=600px) — co-located here (was previously
+     interleaved with the generic rules above) so the bridge-mode deltas for
+     this breakpoint are all in one place. Selectors/declarations unchanged. */
+  .app-shell--home-v2 .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-block: 6px;
+    padding-inline: calc(10px + env(safe-area-inset-left, 0px)) calc(10px + env(safe-area-inset-right, 0px));
+  }
+
+  .app-shell--home-v2 .topbar__account {
+    justify-content: flex-end;
+    margin-top: 0;
+  }
+
+  .app-shell--home-v2 .topbar__host-context,
+  .app-shell--home-v2 .account-summary__status {
+    display: none;
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect {
+    display: flex;
+    max-width: min(56vw, 240px);
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect .muted {
+    display: none;
+  }
+
+  .app-shell--home-v2 .topbar__account .account-connect .button {
+    min-width: 0;
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+
+  .app-shell--home-v2 .panel {
+    padding: 10px 12px;
+  }
+
+  .app-shell--home-v2 .network-section__header {
+    padding: 12px 12px 4px;
+  }
+
+  .app-shell--home-v2 .chat-pane {
+    padding: 10px 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-shell--home-v2 .composer {
+    flex-wrap: nowrap;
+  }
+
+  .app-shell--home-v2 .composer textarea {
+    flex-basis: auto;
+    width: auto;
+  }
+
+  .app-shell--home-v2 .composer__toolbar {
+    flex: 0 0 auto;
   }
 }
 

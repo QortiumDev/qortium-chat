@@ -142,10 +142,15 @@ import {
 } from './generalChat';
 import { AvatarLightbox, type AvatarLightboxImage } from './AvatarLightbox';
 import { AccountInfoDialog, ConfirmDeleteMessageDialog, GroupApprovalDialog } from './dialogs';
+import { AppShell } from './AppShell';
 import { DirectList, GroupList } from './chatLists';
 import { ChatComposer, type ComposerAttachment } from './ChatComposer';
 import { ChatPaneHeader } from './ChatPaneHeader';
 import { ConversationNetworkSection } from './ConversationRail';
+import { LoadingRows } from './LoadingRows';
+import { MembersDrawer } from './MembersDrawer';
+import { SidebarPane } from './SidebarPane';
+import { Topbar } from './Topbar';
 import {
   createGroupConversationSummary,
   getConversationKey,
@@ -154,7 +159,6 @@ import {
   type PublicGroupDiscovery,
 } from './conversationModel';
 import { getConversationInitials } from './conversationPresentation';
-import { GroupMemberList } from './GroupMemberList';
 import { MessageList } from './MessageList';
 import {
   getAvatarView,
@@ -162,15 +166,12 @@ import {
   getDirectTitle,
   getMessageSenderLabel,
   getShortAddress,
-  UserAvatar,
   type AccountInfoTarget,
   type AvatarProfilesByIdentity,
   type CachedAvatarProfile,
   selectAvatarProfilesForNetwork,
 } from './accountDisplay';
 import {
-  BellIcon,
-  BrandMark,
   CloseIcon,
   DownIcon,
   PlusIcon,
@@ -444,32 +445,8 @@ function getBridgeErrorMessage(error: unknown, fallback: string, t: TranslateFun
   return message;
 }
 
-function getAccountMessage(error: string, isHomeBridge: boolean, t: TranslateFunction) {
-  if (error.includes('No account is selected')) {
-    return t('label.account.required.select');
-  }
-
-  if (error.includes('Account access was not shared')) {
-    return t('action.account.notShared');
-  }
-
-  return isHomeBridge
-    ? t('action.account.notShared')
-    : t('action.noAccountUse');
-}
-
 function createState<T>(value: T): AsyncState<T> {
   return { phase: 'idle', value };
-}
-
-function LoadingRows({ count = 3, label }: { count?: number; label: string }) {
-  return (
-    <div className="skeleton-list" aria-label={label} role="status">
-      {Array.from({ length: count }, (_, index) => (
-        <span className="skeleton skeleton--row" key={index} />
-      ))}
-    </div>
-  );
 }
 
 function mergeMessages(
@@ -1207,75 +1184,6 @@ function useGroupAvatarProfiles(
 
   return profiles;
 }
-
-function AccountSummary({
-  account,
-  error,
-  isHomeBridge,
-  isGateway,
-  onConnect,
-  onOpenAvatar,
-  profile,
-  t,
-}: {
-  account: QdnSelectedAccount | null;
-  error: string;
-  isHomeBridge: boolean;
-  isGateway: boolean;
-  onConnect: () => void;
-  onOpenAvatar: (image: AvatarLightboxImage) => void;
-  profile?: AvatarProfile;
-  t: TranslateFunction;
-}) {
-  if (account) {
-    const { avatarSrc, name } = getAvatarView(profile, account.name);
-    const label = name || getShortAddress(account.address);
-
-    return (
-      <div className="account-summary">
-        <UserAvatar
-          className="account-summary__avatar"
-          name={name}
-          onOpen={onOpenAvatar}
-          openLabel={t('action.openAvatarImage')}
-          src={avatarSrc}
-        />
-        <div className="account-summary__text">
-          <div className="account-summary__primary">
-            <strong>{label}</strong>
-            <span
-              className={`account-summary__status account-summary__status--${account.isUnlocked ? 'unlocked' : 'locked'}`}
-            >
-              {account.isUnlocked ? t('status.account.unlocked') : t('status.account.locked')}
-            </span>
-          </div>
-          <span className="account-summary__address">{account.address}</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (isGateway) {
-    return (
-      <div className="account-connect account-connect--gateway">
-        <p className="muted">{t('status.gateway.readOnly')}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="account-connect">
-      <p className="muted">{getAccountMessage(error, isHomeBridge, t)}</p>
-      {isHomeBridge ? (
-        <button className="button button--secondary" onClick={onConnect} type="button">
-          {t('label.account.summary.useSelected')}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() =>
@@ -8987,101 +8895,97 @@ export default function App() {
         }
       : null;
 
-  return (
-    <main className={`app-shell${homeV2AppTab ? ' app-shell--home-v2' : ''}`}>
-      <header className="topbar">
-        <div className="topbar__title">
-          {homeV2AppTab ? null : <BrandMark />}
-          <h1>{homeV2AppTab ? 'Chat' : t('app.title')}</h1>
-          {homeV2AppTab ? (
-            <span className="topbar__host-context">Home</span>
-          ) : (
-            <span className="topbar__version">{APP_VERSION}</span>
-          )}
-        </div>
-        <div className="topbar__account">
-          {canManageNotifications ? (
-            <div className="notification-settings" ref={chatNotificationSettingsRef}>
-              <button
-                aria-controls="chat-notification-settings"
-                aria-expanded={isChatNotificationMenuOpen}
-                aria-haspopup="dialog"
-                aria-label={t('action.notifications.settings')}
-                aria-pressed={chatNotificationsEnabled}
-                className="icon-button topbar__notification-toggle"
-                onClick={() => setChatNotificationMenuOpen((open) => !open)}
-                ref={chatNotificationToggleRef}
-                title={chatNotificationsError || t('action.notifications.settings')}
-                type="button"
-              >
-                <BellIcon />
-              </button>
-              {isChatNotificationMenuOpen ? (
-                <div
-                  aria-label={t('action.notifications.settings')}
-                  className="notification-settings__popover"
-                  id="chat-notification-settings"
-                  role="dialog"
-                >
-                  <strong className="notification-settings__title">
-                    {t('action.notifications.settings')}
-                  </strong>
-                  <p className="notification-settings__scope">{t('notification.settings.scope')}</p>
-                  <fieldset className="notification-settings__choices" disabled={chatNotificationsBusy}>
-                    <legend className="sr-only">{t('action.notifications.settings')}</legend>
-                    <label className="notification-settings__choice">
-                      <input
-                        checked={chatNotificationPreferences.direct}
-                        onChange={(event) => void updateChatNotificationPreference('direct', event.target.checked)}
-                        type="checkbox"
-                      />
-                      <span>{t('notification.direct.title')}</span>
-                    </label>
-                    <label className="notification-settings__choice">
-                      <input
-                        checked={chatNotificationPreferences.mentions}
-                        disabled={!canShowNotifications}
-                        onChange={(event) => void updateChatNotificationPreference('mentions', event.target.checked)}
-                        type="checkbox"
-                      />
-                      <span>{t('notification.mention.title')}</span>
-                    </label>
-                    <label className="notification-settings__choice">
-                      <input
-                        checked={chatNotificationPreferences.replies}
-                        disabled={!canShowNotifications}
-                        onChange={(event) => void updateChatNotificationPreference('replies', event.target.checked)}
-                        type="checkbox"
-                      />
-                      <span>{t('notification.reply.title')}</span>
-                    </label>
-                  </fieldset>
-                  {chatNotificationsError ? (
-                    <p className="notification-settings__error" role="alert">{chatNotificationsError}</p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <AccountSummary
-            account={account}
-            error={accountError}
-            isHomeBridge={bridge.value.isHomeBridge}
-            isGateway={bridge.value.transport === 'gateway'}
-            onConnect={requestSelectedAccountRefresh}
-            onOpenAvatar={setAvatarLightboxImage}
-            profile={account ? qortiumAvatarProfiles.get(account.address) : undefined}
-            t={t}
-          />
-        </div>
-      </header>
+  const layoutClassName = `layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}${
+    mobileChatView ? ' layout--mobile-chat' : ''
+  }`;
 
-      <section
-        className={`layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}${
-          mobileChatView ? ' layout--mobile-chat' : ''
-        }`}
-      >
-        <aside className="sidebar" aria-label={t('aria.navigation')} inert={isMembersOverlay || undefined}>
+  const topbar = (
+    <Topbar
+      account={account}
+      accountError={accountError}
+      appVersion={APP_VERSION}
+      canManageNotifications={canManageNotifications}
+      canShowNotifications={canShowNotifications}
+      chatNotificationPreferences={chatNotificationPreferences}
+      chatNotificationSettingsRef={chatNotificationSettingsRef}
+      chatNotificationsBusy={chatNotificationsBusy}
+      chatNotificationsEnabled={chatNotificationsEnabled}
+      chatNotificationsError={chatNotificationsError}
+      chatNotificationToggleRef={chatNotificationToggleRef}
+      isChatNotificationMenuOpen={isChatNotificationMenuOpen}
+      isGateway={bridge.value.transport === 'gateway'}
+      isHomeBridge={bridge.value.isHomeBridge}
+      isHomeV2AppTab={homeV2AppTab}
+      onOpenAvatar={setAvatarLightboxImage}
+      onRequestAccountRefresh={requestSelectedAccountRefresh}
+      qortiumAvatarProfiles={qortiumAvatarProfiles}
+      setChatNotificationMenuOpen={setChatNotificationMenuOpen}
+      t={t}
+      updateChatNotificationPreference={updateChatNotificationPreference}
+    />
+  );
+
+  const dialogs = (
+    <>
+      {accountInfoTarget ? (
+        <AccountInfoDialog
+          canMention={canComposeMessage}
+          canOpenDirect={accountInfoTarget.network === 'qortal' ? canOpenQortalDirectChat : canOpenDirectChat}
+          directUnavailableLabel={
+            accountInfoTarget.network === 'qortal' ? qortalDirectAccessUnavailableLabel : directAccessUnavailableLabel
+          }
+          onClose={() => setAccountInfoTarget(null)}
+          onMention={() => mentionAccount(accountInfoTarget)}
+          onOpenAvatar={(image) => {
+            setAccountInfoTarget(null);
+            setAvatarLightboxImage(image);
+          }}
+          onOpenDirect={(address, name) => void openDirectFromAccount(address, name, accountInfoTarget.network)}
+          profile={(accountInfoTarget.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles).get(accountInfoTarget.sender)}
+          target={accountInfoTarget}
+          t={t}
+        />
+      ) : null}
+      {avatarLightboxImage ? (
+        <AvatarLightbox
+          image={avatarLightboxImage}
+          onClose={() => setAvatarLightboxImage(null)}
+          t={t}
+        />
+      ) : null}
+      {deleteTarget ? (
+        <ConfirmDeleteMessageDialog
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void handleDeleteMessage(deleteTarget)}
+          pending={deletePending}
+          t={t}
+        />
+      ) : null}
+      {approvalModalOpen ? (
+        <GroupApprovalDialog
+          actionSignature={approvalActionSignature}
+          avatarProfiles={qortiumAvatarProfiles}
+          canVote={canSubmitGroupApproval}
+          currentHeight={currentBlockHeight}
+          group={selectedGroup}
+          knownNames={qortiumKnownAvatarNames}
+          onApprove={(signature) => void handleGroupApproval(signature, true)}
+          onClose={() => setApprovalModalOpen(false)}
+          onOppose={(signature) => void handleGroupApproval(signature, false)}
+          pending={pendingApprovals}
+          progressBySignature={approvalProgressBySignature}
+          progressReady={approvalProgressReady}
+          t={t}
+          voteUnavailableLabel={groupApprovalUnavailableLabel}
+          votedSignatures={votedSignatures}
+        />
+      ) : null}
+    </>
+  );
+
+  return (
+    <AppShell dialogs={dialogs} isHomeV2AppTab={homeV2AppTab} layoutClassName={layoutClassName} topbar={topbar}>
+        <SidebarPane ariaLabel={t('aria.navigation')} inert={isMembersOverlay}>
           <ConversationNetworkSection network="qortium" showHeader={qortalAvailable}>
           {pendingGroupInvites.length > 0 || (!!account && groupInvites.phase === 'error') ? (
             <section className="panel">
@@ -9501,7 +9405,7 @@ export default function App() {
               </section>
             </ConversationNetworkSection>
           ) : null}
-        </aside>
+        </SidebarPane>
 
         <section
           aria-label={t('aria.selectedChat')}
@@ -9883,138 +9787,30 @@ export default function App() {
         </section>
 
         {showGroupMembers && membersOpen ? (
-          <>
-            <button
-              aria-hidden="true"
-              className="members-drawer__scrim"
-              onClick={() => setMembersOpen(false)}
-              tabIndex={-1}
-              type="button"
-            />
-          <aside
-            aria-label={t('aria.groupMembers')}
-            aria-modal={isMembersOverlay || undefined}
-            className="members-drawer"
-            id="members-drawer"
-            role={isMembersOverlay ? 'dialog' : undefined}
-          >
-            <div className="members-drawer__header">
-              <div>
-                <h2>{selectedGroupMembersLabel}</h2>
-                <p>{getGroupTitle(selectedGroup, t)}</p>
-              </div>
-              <span>{selectedGroupMembers.length}</span>
-              <button
-                aria-label={t('button.close')}
-                className="members-drawer__close"
-                onClick={() => setMembersOpen(false)}
-                ref={membersCloseRef}
-                title={t('button.close')}
-                type="button"
-              >
-                X
-              </button>
-            </div>
-            {selectedGroupMembersPhase === 'error' ? <p className="error">{selectedGroupMembersError}</p> : null}
-            {selectedGroupMembersPhase === 'loading' ? (
-              <LoadingRows count={5} label={t('label.loading')} />
-            ) : (
-              <GroupMemberList
-                avatarProfiles={selectedAvatarProfiles}
-                group={isSelectedGeneralChat ? null : selectedGroup}
-                members={selectedGroupMembers}
-                onOpenAccount={(target) => setAccountInfoTarget({ ...target, network: selectedChat?.network ?? 'qortium' })}
-                onOpenAvatar={setAvatarLightboxImage}
-                t={t}
-              />
-            )}
-            {selectedAdminJoinRequests.length > 0 ? (
-              <div className="join-requests" aria-label={t('title.joinRequests')}>
-                <div className="join-requests__header">
-                  <strong>{t('title.joinRequests')}</strong>
-                  <span>{selectedAdminJoinRequests.length}</span>
-                </div>
-                {selectedAdminJoinRequests.map((request) => (
-                  <div className="join-request" key={`${request.groupId}:${request.joiner}`}>
-                    <span>{getShortAddress(request.joiner)}</span>
-                    <button
-                      className="button button--secondary"
-                      disabled={!canUseSelectedAccount || !canApproveGroupJoinRequests || approvePendingJoiner === request.joiner}
-                      onClick={() => void handleApproveJoinRequest(request)}
-                      title={
-                        !account
-                          ? accountRequiredLabel
-                          : !canUseSelectedAccount
-                          ? accountLockedLabel
-                          : canApproveGroupJoinRequests
-                            ? t('action.approveJoinRequest')
-                            : t('action.approveUnavailable')
-                      }
-                      type="button"
-                    >
-                      {approvePendingJoiner === request.joiner ? t('button.approving') : t('button.approve')}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </aside>
-          </>
+          <MembersDrawer
+            accountLockedLabel={accountLockedLabel}
+            accountRequiredLabel={accountRequiredLabel}
+            approvePendingJoiner={approvePendingJoiner}
+            avatarProfiles={selectedAvatarProfiles}
+            canApproveGroupJoinRequests={canApproveGroupJoinRequests}
+            canUseSelectedAccount={canUseSelectedAccount}
+            group={isSelectedGeneralChat ? null : selectedGroup}
+            groupTitle={getGroupTitle(selectedGroup, t)}
+            hasAccount={!!account}
+            isOverlay={isMembersOverlay}
+            members={selectedGroupMembers}
+            membersCloseRef={membersCloseRef}
+            membersError={selectedGroupMembersError}
+            membersLabel={selectedGroupMembersLabel}
+            membersPhase={selectedGroupMembersPhase}
+            onApproveJoinRequest={(request) => void handleApproveJoinRequest(request)}
+            onClose={() => setMembersOpen(false)}
+            onOpenAccount={(target) => setAccountInfoTarget({ ...target, network: selectedChat?.network ?? 'qortium' })}
+            onOpenAvatar={setAvatarLightboxImage}
+            pendingJoinRequests={selectedAdminJoinRequests}
+            t={t}
+          />
         ) : null}
-      </section>
-      {accountInfoTarget ? (
-        <AccountInfoDialog
-          canMention={canComposeMessage}
-          canOpenDirect={accountInfoTarget.network === 'qortal' ? canOpenQortalDirectChat : canOpenDirectChat}
-          directUnavailableLabel={
-            accountInfoTarget.network === 'qortal' ? qortalDirectAccessUnavailableLabel : directAccessUnavailableLabel
-          }
-          onClose={() => setAccountInfoTarget(null)}
-          onMention={() => mentionAccount(accountInfoTarget)}
-          onOpenAvatar={(image) => {
-            setAccountInfoTarget(null);
-            setAvatarLightboxImage(image);
-          }}
-          onOpenDirect={(address, name) => void openDirectFromAccount(address, name, accountInfoTarget.network)}
-          profile={(accountInfoTarget.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles).get(accountInfoTarget.sender)}
-          target={accountInfoTarget}
-          t={t}
-        />
-      ) : null}
-      {avatarLightboxImage ? (
-        <AvatarLightbox
-          image={avatarLightboxImage}
-          onClose={() => setAvatarLightboxImage(null)}
-          t={t}
-        />
-      ) : null}
-      {deleteTarget ? (
-        <ConfirmDeleteMessageDialog
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={() => void handleDeleteMessage(deleteTarget)}
-          pending={deletePending}
-          t={t}
-        />
-      ) : null}
-      {approvalModalOpen ? (
-        <GroupApprovalDialog
-          actionSignature={approvalActionSignature}
-          avatarProfiles={qortiumAvatarProfiles}
-          canVote={canSubmitGroupApproval}
-          currentHeight={currentBlockHeight}
-          group={selectedGroup}
-          knownNames={qortiumKnownAvatarNames}
-          onApprove={(signature) => void handleGroupApproval(signature, true)}
-          onClose={() => setApprovalModalOpen(false)}
-          onOppose={(signature) => void handleGroupApproval(signature, false)}
-          pending={pendingApprovals}
-          progressBySignature={approvalProgressBySignature}
-          progressReady={approvalProgressReady}
-          t={t}
-          voteUnavailableLabel={groupApprovalUnavailableLabel}
-          votedSignatures={votedSignatures}
-        />
-      ) : null}
-    </main>
+    </AppShell>
   );
 }
