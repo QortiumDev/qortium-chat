@@ -214,6 +214,7 @@ import { LatestRequestGuard } from './latestRequest';
 import { canUseQortalAccountForHost, loadQortalAccountSnapshot } from './qortalAccountSession';
 import { getLegacyQortiumMigrationHint } from './qortalUiMigration';
 import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
+import { getDirectSectionDefaultCollapse } from './sidebarSections';
 import {
   mergePersistedDirect,
   initializeQortalUiStorage,
@@ -1455,7 +1456,12 @@ export default function App() {
   const [qortalDirectLookupPending, setQortalDirectLookupPending] = useState(false);
   const [qortalDirectLookupError, setQortalDirectLookupError] = useState('');
   const qortalDirectSearchInputRef = useRef<HTMLInputElement>(null);
-  const [isQortalDirectCollapsed, setQortalDirectCollapsed] = useState(false);
+  const [isQortalDirectCollapsed, setQortalDirectCollapsed] = useState(true);
+  // Default-collapse decisions apply once per resolved network/account scope.
+  // A manual header/search interaction wins for the rest of this app session,
+  // so an unavailable or empty section can still be deliberately inspected.
+  const directCollapseUserOverrideRef = useRef(new Set<ChatNetwork>());
+  const directDefaultCollapseScopeRef = useRef<Record<ChatNetwork, string>>({ qortal: '', qortium: '' });
   // Qortal counterpart of persistedDirects — kept in the sidebar after their
   // messages expire off the active-chats list, persisted per Qortal account.
   const [qortalPersistedDirects, setQortalPersistedDirects] = useState<PersistedDirect[]>([]);
@@ -2874,6 +2880,61 @@ export default function App() {
   const canSendQortalDirectChat = hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_MESSAGE');
   const canOpenQortalDirectChat =
     canUseQortalAccount && (canReadQortalPrivateDirectChat || canSendQortalDirectChat);
+
+  useEffect(() => {
+    const decision = getDirectSectionDefaultCollapse({
+      activeChatsPhase: activeChats.phase,
+      bridgeReady: bridge.phase === 'ready',
+      canOpenDirectChat,
+      directCount: mergedDirects.length,
+    });
+    const scope = `${account?.address ?? 'none'}\n${bridge.value.actions.join('\n')}`;
+
+    if (
+      decision === null ||
+      directCollapseUserOverrideRef.current.has('qortium') ||
+      directDefaultCollapseScopeRef.current.qortium === scope
+    ) {
+      return;
+    }
+
+    directDefaultCollapseScopeRef.current.qortium = scope;
+    if (decision) {
+      setDirectCollapsed(true);
+    }
+  }, [account?.address, activeChats.phase, bridge.phase, bridge.value.actions, canOpenDirectChat, mergedDirects.length]);
+
+  useEffect(() => {
+    const decision = getDirectSectionDefaultCollapse({
+      activeChatsPhase: qortalActiveChats.phase,
+      bridgeReady: qortalAvailable && qortalBridge.phase === 'ready',
+      canOpenDirectChat: canOpenQortalDirectChat,
+      directCount: qortalMergedDirects.length,
+    });
+    const scope = `${qortalAccount?.address ?? 'none'}\n${qortalBridge.value.actions.join('\n')}`;
+
+    if (
+      decision === null ||
+      directCollapseUserOverrideRef.current.has('qortal') ||
+      directDefaultCollapseScopeRef.current.qortal === scope
+    ) {
+      return;
+    }
+
+    directDefaultCollapseScopeRef.current.qortal = scope;
+    // Qortal previously defaulted open. Start closed to avoid flashing the
+    // unavailable/empty body, then restore that open default when a resolved
+    // host actually has direct conversations.
+    setQortalDirectCollapsed(decision);
+  }, [
+    canOpenQortalDirectChat,
+    qortalAccount?.address,
+    qortalActiveChats.phase,
+    qortalAvailable,
+    qortalBridge.phase,
+    qortalBridge.value.actions,
+    qortalMergedDirects.length,
+  ]);
   // Mirrors isJoinableGroup/canSubmitJoin/canSubmitLeave above against the
   // Qortal bridge/membership rather than merging into them — a Qortium
   // membership must never make a Qortal group read as joined (or vice
@@ -6848,6 +6909,7 @@ export default function App() {
       return;
     }
 
+    directCollapseUserOverrideRef.current.add('qortium');
     setDirectCollapsed(false);
     setDirectSearchOpen(true);
   }
@@ -6859,8 +6921,19 @@ export default function App() {
       return;
     }
 
+    directCollapseUserOverrideRef.current.add('qortal');
     setQortalDirectCollapsed(false);
     setQortalDirectSearchOpen(true);
+  }
+
+  function toggleDirectSection(network: ChatNetwork) {
+    directCollapseUserOverrideRef.current.add(network);
+
+    if (network === 'qortal') {
+      setQortalDirectCollapsed((collapsed) => !collapsed);
+    } else {
+      setDirectCollapsed((collapsed) => !collapsed);
+    }
   }
 
   function mentionAccount(target: AccountInfoTarget & { network: ChatNetwork }) {
@@ -9704,7 +9777,7 @@ export default function App() {
               <button
                 aria-expanded={!isDirectCollapsed}
                 className="panel__toggle"
-                onClick={() => setDirectCollapsed((collapsed) => !collapsed)}
+                onClick={() => toggleDirectSection('qortium')}
                 type="button"
               >
                 <DownIcon />
@@ -9898,7 +9971,7 @@ export default function App() {
                   <button
                     aria-expanded={!isQortalDirectCollapsed}
                     className="panel__toggle"
-                    onClick={() => setQortalDirectCollapsed((collapsed) => !collapsed)}
+                    onClick={() => toggleDirectSection('qortal')}
                     type="button"
                   >
                     <DownIcon />
