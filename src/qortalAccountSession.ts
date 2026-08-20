@@ -1,5 +1,5 @@
 import { getMemberGroups, getQortalUserAccount, type QortalUserIdentity } from './coreApi';
-import type { GroupData, QdnAction } from './types';
+import type { BridgeHost, GroupData, QdnAction } from './types';
 
 type QortalAccountSessionDependencies = {
   loadAccount: (actions?: QdnAction[]) => Promise<QortalUserIdentity>;
@@ -14,6 +14,15 @@ const defaultDependencies: QortalAccountSessionDependencies = {
   loadAccount: getQortalUserAccount,
   loadMemberGroups: (address, actions) => getMemberGroups('qortal', address, actions),
 };
+
+export function canUseQortalAccountForHost(
+  host: BridgeHost,
+  hasQortalAccount: boolean,
+  accountRefreshPending: boolean,
+  canUseQortiumAccount: boolean,
+) {
+  return hasQortalAccount && !accountRefreshPending && (host === 'hub' || canUseQortiumAccount);
+}
 
 /** Loads identity first, then memberships for that exact Qortal address. */
 export async function loadQortalAccountSnapshot(

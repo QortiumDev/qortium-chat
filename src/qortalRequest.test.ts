@@ -4,6 +4,7 @@ import {
   hasLegacyQortalBridgeCandidate,
   hasQortalChatBridgeActions,
   hasQortalHomeBridge,
+  isQortalChatBridgeAvailable,
   LOCAL_READ_ACTIONS,
   qortalRequest,
 } from './qortalRequest';
@@ -124,6 +125,43 @@ describe('qortalRequest bridge adapter', () => {
     expect(hasQortalChatBridgeActions(withoutGroups)).toBe(false);
     expect(hasQortalChatBridgeActions(withoutGroups, 'home2')).toBe(false);
     expect(hasQortalChatBridgeActions([...withoutGroups, 'GET_ACCOUNT_GROUPS'], 'home2')).toBe(true);
+  });
+
+  it('keeps a Hub bridge available when its public-chat catalogue omits GET_ACCOUNT_GROUPS', () => {
+    expect(
+      isQortalChatBridgeAvailable({
+        actions: ['GET_USER_ACCOUNT', 'SEARCH_CHAT_MESSAGES'],
+        host: 'hub',
+        isHomeBridge: true,
+        isUsingPublicNode: false,
+        transport: 'home',
+        ui: 'HUB_ELECTRON',
+      }),
+    ).toBe(true);
+  });
+
+  it('uses the rendered Core origin for Hub node reads instead of sending an unsupported action', async () => {
+    const qortalRequestMock = vi.fn().mockResolvedValueOnce('HUB_ELECTRON');
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([{ groupId: 7 }]), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      }),
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('window', {
+      location: { origin: 'http://127.0.0.1:12391' },
+      qdnRequest: vi.fn(),
+      qortalRequest: qortalRequestMock,
+    });
+
+    await expect(
+      qortalRequest({ action: 'FETCH_NODE_API', maxBytes: 4096, path: '/groups/member/Qaccount' }),
+    ).resolves.toMatchObject({ data: [{ groupId: 7 }], ok: true, status: 200 });
+    expect(qortalRequestMock).toHaveBeenCalledOnce();
+    expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'WHICH_UI' });
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:12391/groups/member/Qaccount', { method: 'GET' });
   });
 
   it('maps legacy account, message-read, and reply-send requests without exposing keys', async () => {

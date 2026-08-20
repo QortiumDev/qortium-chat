@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadQortalAccountSnapshot } from './qortalAccountSession';
+import { canUseQortalAccountForHost, loadQortalAccountSnapshot } from './qortalAccountSession';
 
 describe('loadQortalAccountSnapshot', () => {
   it('loads memberships for the newly resolved Qortal account with the same action catalogue', async () => {
@@ -26,5 +26,17 @@ describe('loadQortalAccountSnapshot', () => {
       loadAccount: vi.fn().mockResolvedValue(account),
       loadMemberGroups: vi.fn().mockRejectedValue(membershipError),
     })).resolves.toEqual({ account, error: membershipError, phase: 'membership-error' });
+  });
+});
+
+describe('canUseQortalAccountForHost', () => {
+  it('treats Hub account permission as the writable identity without a Qortium account', () => {
+    expect(canUseQortalAccountForHost('hub', true, false, false)).toBe(true);
+  });
+
+  it('retains Home shared-wallet unlock gating and blocks refresh transitions', () => {
+    expect(canUseQortalAccountForHost('home2', true, false, false)).toBe(false);
+    expect(canUseQortalAccountForHost('home2', true, false, true)).toBe(true);
+    expect(canUseQortalAccountForHost('hub', true, true, true)).toBe(false);
   });
 });

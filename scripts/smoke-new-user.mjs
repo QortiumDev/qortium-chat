@@ -236,7 +236,6 @@ try {
       client,
       `(() => {
         const row = document.querySelector('.group-row');
-        const intro = document.querySelector('.panel__intro');
         const empty = document.querySelector('.chat-pane .empty');
         const notice = document.querySelector('.composer--notice');
         const title = document.querySelector('.chat-pane__title');
@@ -249,12 +248,11 @@ try {
           String(call.path || '').startsWith('/groups?')
         ).length;
 
-        return row && intro && empty && notice && shell && qortalGroup && networks.length === 2 && title?.textContent.trim() === 'General Chat'
+        return row && empty && notice && shell && qortalGroup && networks.length === 2 && title?.textContent.trim() === 'General Chat'
           ? {
               catalogueCalls,
               empty: empty.textContent.trim(),
               generalMetadata: row.querySelector('.group-row__footer').textContent.trim(),
-              intro: intro.textContent.trim(),
               notice: notice.textContent.trim(),
               networks,
               shellTitle: document.querySelector('.topbar h1')?.textContent.trim()
@@ -372,7 +370,6 @@ try {
     desktop.shellTitle !== 'Chat' ||
     !desktop.empty.includes('Say hello') ||
     desktop.generalMetadata.includes('id:0') ||
-    !desktop.intro.includes('General Chat is public') ||
     !desktop.notice.includes('Share the selected account') ||
     discovery.catalogueCalls !== 1 ||
     JSON.stringify(discovery.messageProbeIds) !== JSON.stringify([7, 8]) ||
