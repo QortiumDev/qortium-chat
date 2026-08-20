@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': '請在 Qortium Home 中使用已解鎖帳戶開啟，以使用聊天操作。',
   'action.privateChatUnavailable': '請開啟 Qortium Home 才能使用直接聊天。',
   'action.privateGroupUnavailable': '請開啟 Qortium Home 才能使用直接聊天。',
+  'action.privateChatUnavailableQortalHub': '透過 Qortal Hub 使用 xchat 時無法使用私人聊天。請使用 Hub 的內建聊天，或在 Qortium Home 2 中開啟 xchat。',
   'action.directReadOnly': '此 Home 版本無法提供直接私人聊天歷史。',
   'action.directSendUnavailable': '請開啟 Qortium Home 才能傳送直接私人聊天。',
   'action.groupJoinUnavailable': '此 Home 版本中無法加入群組。',

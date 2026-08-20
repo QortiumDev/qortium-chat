@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { getDirectSectionDefaultCollapse } from './sidebarSections';
+import { getDirectSectionDefaultCollapse, getPrivateChatCapabilityStatus } from './sidebarSections';
+
+describe('getPrivateChatCapabilityStatus', () => {
+  it('waits for the bridge before declaring a feature unavailable', () => {
+    expect(getPrivateChatCapabilityStatus({ bridgeReady: false, canRead: false, canSend: false })).toBe('pending');
+  });
+
+  it('distinguishes full, partial, and missing private-chat capability families', () => {
+    expect(getPrivateChatCapabilityStatus({ bridgeReady: true, canRead: true, canSend: true })).toBe('available');
+    expect(getPrivateChatCapabilityStatus({ bridgeReady: true, canRead: true, canSend: false })).toBe('limited');
+    expect(getPrivateChatCapabilityStatus({ bridgeReady: true, canRead: false, canSend: true })).toBe('limited');
+    expect(getPrivateChatCapabilityStatus({ bridgeReady: true, canRead: false, canSend: false })).toBe('unavailable');
+  });
+});
 
 describe('getDirectSectionDefaultCollapse', () => {
   it('waits for bridge capabilities before applying a default', () => {

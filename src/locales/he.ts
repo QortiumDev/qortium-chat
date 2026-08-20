@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'פתח את Qortium Home עם חשבון לא נעול כדי להשתמש בפעולות צ׳אט.',
   'action.privateChatUnavailable': 'פתח את Qortium Home כדי להשתמש בצ׳אט ישיר.',
   'action.privateGroupUnavailable': 'פתח את Qortium Home כדי להשתמש בצ׳אט ישיר.',
+  'action.privateChatUnavailableQortalHub': 'צ׳אטים פרטיים אינם זמינים ב-xchat דרך Qortal Hub. השתמשו בצ׳אט המובנה של Hub, או פתחו את xchat ב-Qortium Home 2.',
   'action.directReadOnly': 'היסטוריית צ׳אט ישיר פרטי אינה זמינה בגרסת Home זו.',
   'action.directSendUnavailable': 'פתח את Qortium Home כדי לשלוח הודעות פרטיות ישירות.',
   'action.groupJoinUnavailable': 'הצטרפות לקבוצה אינה זמינה בגרסת Home זו.',

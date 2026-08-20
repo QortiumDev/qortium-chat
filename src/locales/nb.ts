@@ -173,6 +173,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Åpne i Qortium Home med en ulåst konto for å bruke chat-handlinger.',
   'action.privateChatUnavailable': 'Åpne i Qortium Home for å bruke direkte chat.',
   'action.privateGroupUnavailable': 'Åpne i Qortium Home for å bruke direkte chat.',
+  'action.privateChatUnavailableQortalHub': 'Private chatter er ikke tilgjengelige i xchat gjennom Qortal Hub. Bruk Hubs innebygde chat, eller åpne xchat i Qortium Home 2.',
   'action.directReadOnly': 'Direkte privat chat-historikk er ikke tilgjengelig i denne Home-versjonen.',
   'action.directSendUnavailable': 'Åpne i Qortium Home for å sende direkte private meldinger.',
   'action.groupJoinUnavailable': 'Gruppemedlemskap er ikke tilgjengelig i denne Home-versjonen.',

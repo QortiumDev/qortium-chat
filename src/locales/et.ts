@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Avage Qortium Home avatud kontoga, et kasutada vestlusfunktsioone.',
   'action.privateChatUnavailable': 'Avage Qortium Home, et kasutada otsevesta.',
   'action.privateGroupUnavailable': 'Avage Qortium Home, et kasutada otsevesta.',
+  'action.privateChatUnavailableQortalHub': 'Privaatvestlused pole Qortal Hubi kaudu xchatis saadaval. Kasutage Hubi sisseehitatud vestlust või avage xchat Qortium Home 2-s.',
   'action.directReadOnly': 'Otsevesta privaatne ajalugu pole selles Home versioonis saadaval.',
   'action.directSendUnavailable': 'Avage Qortium Home, et saata otseprivaatseid vestlusi.',
   'action.groupJoinUnavailable': 'Grupiga liitumine pole selles Home versioonis saadaval.',

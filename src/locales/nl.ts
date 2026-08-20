@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Open met een ontgrendeld account in Qortium Home om chatacties te gebruiken.',
   'action.privateChatUnavailable': 'Open in Qortium Home om direct chatten te gebruiken.',
   'action.privateGroupUnavailable': 'Open in Qortium Home om direct chatten te gebruiken.',
+  'action.privateChatUnavailableQortalHub': 'Privéchats zijn niet beschikbaar in xchat via Qortal Hub. Gebruik de ingebouwde chat van Hub of open xchat in Qortium Home 2.',
   'action.directReadOnly': 'Directe privéchatgeschiedenis is niet beschikbaar in deze Home-versie.',
   'action.directSendUnavailable': 'Open in Qortium Home om directe privéchats te verzenden.',
   'action.groupJoinUnavailable': 'Deelname aan groepen is niet beschikbaar in deze Home-versie.',

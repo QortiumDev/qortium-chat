@@ -173,6 +173,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'चैट क्रियाओं के लिए अनलॉक खाते के साथ Qortium Home में खोलें।',
   'action.privateChatUnavailable': 'प्रत्यक्ष चैट उपयोग करने के लिए Qortium Home में खोलें।',
   'action.privateGroupUnavailable': 'प्रत्यक्ष चैट उपयोग करने के लिए Qortium Home में खोलें।',
+  'action.privateChatUnavailableQortalHub': 'Qortal Hub के माध्यम से xchat में निजी चैट उपलब्ध नहीं हैं। Hub की अंतर्निहित चैट का उपयोग करें, या Qortium Home 2 में xchat खोलें।',
   'action.directReadOnly': 'इस Home निर्माण में प्रत्यक्ष निजी चैट इतिहास उपलब्ध नहीं।',
   'action.directSendUnavailable': 'प्रत्यक्ष निजी चैट भेजने के लिए Qortium Home में खोलें।',
   'action.groupJoinUnavailable': 'इस Home निर्माण में समूह में शामिल होना उपलब्ध नहीं है।',

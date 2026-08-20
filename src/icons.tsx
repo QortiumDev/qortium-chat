@@ -51,6 +51,15 @@ export function LockIcon() {
   );
 }
 
+export function UnavailableIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8" />
+      <path d="m6.35 6.35 11.3 11.3" />
+    </svg>
+  );
+}
+
 export function BackIcon() {
   return (
     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">

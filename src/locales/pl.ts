@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Otwórz w Qortium Home z odblokowanym kontem, aby używać akcji czatu.',
   'action.privateChatUnavailable': 'Otwórz Qortium Home, aby używać czatu bezpośredniego.',
   'action.privateGroupUnavailable': 'Otwórz Qortium Home, aby używać czatu bezpośredniego.',
+  'action.privateChatUnavailableQortalHub': 'Prywatne czaty nie są dostępne w xchat przez Qortal Hub. Użyj wbudowanego czatu Huba albo otwórz xchat w Qortium Home 2.',
   'action.directReadOnly': 'Historia prywatnych wiadomości bezpośrednich jest niedostępna w tej wersji Home.',
   'action.directSendUnavailable': 'Otwórz Qortium Home, aby wysłać wiadomości bezpośrednie.',
   'action.groupJoinUnavailable': 'Dołączanie do grupy nie jest dostępne w tej wersji Home.',

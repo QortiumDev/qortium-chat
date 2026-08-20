@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Откройте Qortium Home с разблокированным аккаунтом, чтобы использовать действия чата.',
   'action.privateChatUnavailable': 'Откройте Qortium Home для использования личного чата.',
   'action.privateGroupUnavailable': 'Откройте Qortium Home для использования личного чата.',
+  'action.privateChatUnavailableQortalHub': 'Приватные чаты недоступны в xchat через Qortal Hub. Используйте встроенный чат Hub или откройте xchat в Qortium Home 2.',
   'action.directReadOnly': 'Личная приватная история чата недоступна в этой сборке Home.',
   'action.directSendUnavailable': 'Откройте Qortium Home для отправки личных приватных чатов.',
   'action.groupJoinUnavailable': 'Присоединение к группе недоступно в этой сборке Home.',

@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Avaa Qortium Home avonaisella tilillä käyttääksesi chat-toimintoja.',
   'action.privateChatUnavailable': 'Avaa Qortium Home käyttääksesi suoraa chattiä.',
   'action.privateGroupUnavailable': 'Avaa Qortium Home käyttääksesi suoraa chattiä.',
+  'action.privateChatUnavailableQortalHub': 'Yksityiset keskustelut eivät ole käytettävissä xchatissa Qortal Hubin kautta. Käytä Hubin sisäänrakennettua chattia tai avaa xchat Qortium Home 2:ssa.',
   'action.directReadOnly': 'Suora yksityinen chat-historia ei ole käytettävissä tässä Home-versiossa.',
   'action.directSendUnavailable': 'Avaa Qortium Home lähetäksesi suoria yksityisviestejä.',
   'action.groupJoinUnavailable': 'Ryhmään liittyminen ei ole käytettävissä tässä Home-versiossa.',
