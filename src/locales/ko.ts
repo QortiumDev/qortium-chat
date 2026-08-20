@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': '채팅 작업을 사용하려면 잠금 해제된 계정으로 Qortium Home을 열어주세요.',
   'action.privateChatUnavailable': '직접 채팅을 사용하려면 Qortium Home을 여세요.',
   'action.privateGroupUnavailable': '직접 채팅을 사용하려면 Qortium Home을 여세요.',
+  'action.privateChatUnavailableQortalHub': 'Qortal Hub를 통한 xchat에서는 비공개 채팅을 사용할 수 없습니다. Hub의 기본 제공 채팅을 사용하거나 Qortium Home 2에서 xchat을 여세요.',
   'action.directReadOnly': '이 Home 빌드에서는 직접 비공개 채팅 기록을 사용할 수 없습니다.',
   'action.directSendUnavailable': '직접 비공개 채팅을 보내려면 Qortium Home을 열어주세요.',
   'action.groupJoinUnavailable': '이 Home 빌드에서는 그룹 가입이 사용할 수 없습니다.',

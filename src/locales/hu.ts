@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Nyissa meg a Qortium Home-ot feloldott fiókkal a csevegési műveletekhez.',
   'action.privateChatUnavailable': 'A Qortium Home megnyitása szükséges a közvetlen csevegéshez.',
   'action.privateGroupUnavailable': 'A Qortium Home megnyitása szükséges a közvetlen csevegéshez.',
+  'action.privateChatUnavailableQortalHub': 'A privát csevegések nem érhetők el az xchatben a Qortal Hubon keresztül. Használja a Hub beépített csevegését, vagy nyissa meg az xchatet a Qortium Home 2-ben.',
   'action.directReadOnly': 'A közvetlen privát csevegés előzménye nem érhető el ebben a Home-verzióban.',
   'action.directSendUnavailable': 'Nyissa meg a Qortium Home-ot közvetlen privát csevegések küldéséhez.',
   'action.groupJoinUnavailable': 'A csoportos csatlakozás nem elérhető ebben a Home-verzióban.',

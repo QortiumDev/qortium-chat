@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'افتح Qortium Home باستخدام حساب غير مقفل لاستخدام إجراءات الدردشة.',
   'action.privateChatUnavailable': 'افتح Qortium Home لاستخدام الدردشة الخاصة.',
   'action.privateGroupUnavailable': 'افتح Qortium Home لاستخدام الدردشة الخاصة.',
+  'action.privateChatUnavailableQortalHub': 'الدردشات الخاصة غير متاحة في xchat عبر Qortal Hub. استخدم الدردشة المدمجة في Hub، أو افتح xchat في Qortium Home 2.',
   'action.directReadOnly': 'سجل الدردشة الخاصة الخاصة غير متاح في نسخة Home هذه.',
   'action.directSendUnavailable': 'افتح Qortium Home لإرسال رسائل مباشرة خاصة.',
   'action.groupJoinUnavailable': 'انضمام المجموعات غير متاح في نسخة Home هذه.',

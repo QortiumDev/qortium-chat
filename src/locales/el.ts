@@ -173,6 +173,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Ανοίξτε στο Qortium Home με έναν ξεκλείδωτο λογαριασμό για να χρησιμοποιήσετε ενέργειες chat.',
   'action.privateChatUnavailable': 'Ανοίξτε στο Qortium Home για να χρησιμοποιήσετε άμεση συνομιλία.',
   'action.privateGroupUnavailable': 'Ανοίξτε στο Qortium Home για να χρησιμοποιήσετε άμεση συνομιλία.',
+  'action.privateChatUnavailableQortalHub': 'Οι ιδιωτικές συνομιλίες δεν είναι διαθέσιμες στο xchat μέσω του Qortal Hub. Χρησιμοποιήστε την ενσωματωμένη συνομιλία του Hub ή ανοίξτε το xchat στο Qortium Home 2.',
   'action.directReadOnly': 'Το ιδιωτικό ιστορικό άμεσης συνομιλίας δεν είναι διαθέσιμο σε αυτήν την έκδοση του Home.',
   'action.directSendUnavailable': 'Ανοίξτε στο Qortium Home για να στέλνετε άμεσες ιδιωτικές συνομιλίες.',
   'action.groupJoinUnavailable': 'Η συμμετοχή σε ομάδα δεν είναι διαθέσιμη σε αυτήν την έκδοση του Home.',

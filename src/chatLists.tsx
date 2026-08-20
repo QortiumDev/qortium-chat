@@ -5,8 +5,9 @@ import { formatTimeAgo, formatTimestamp } from './chatText';
 import { type GroupConversationSummary } from './conversationModel';
 import { getConversationInitials } from './conversationPresentation';
 import { isGeneralChatGroup } from './generalChat';
-import { CloseIcon, LockIcon } from './icons';
+import { CloseIcon, LockIcon, UnavailableIcon } from './icons';
 import { type TranslateFunction } from './i18n';
+import { type PrivateChatCapabilityStatus } from './sidebarSections';
 import { type ActiveDirectChat } from './types';
 
 export const GroupList = memo(function GroupList({
@@ -14,6 +15,8 @@ export const GroupList = memo(function GroupList({
   conversations,
   groupAvatarProfiles,
   onSelect,
+  privateGroupCapabilityStatus = 'pending',
+  privateGroupUnavailableLabel,
   selectedConversationKey,
   t,
   now,
@@ -22,6 +25,8 @@ export const GroupList = memo(function GroupList({
   conversations: GroupConversationSummary[];
   groupAvatarProfiles: ReadonlyMap<string, GroupAvatarProfile>;
   onSelect: (conversation: GroupConversationSummary) => void;
+  privateGroupCapabilityStatus?: PrivateChatCapabilityStatus;
+  privateGroupUnavailableLabel?: string;
   selectedConversationKey: string | null;
   t: TranslateFunction;
   now: number;
@@ -44,6 +49,7 @@ export const GroupList = memo(function GroupList({
         // decoded "preview"; their rows stay as before.
         const visiblePreview = group.isOpen === false ? null : preview;
         const groupAvatar = groupAvatarProfiles.get(getGroupAvatarProfileKey(conversation.network, group.groupId));
+        const unavailableLabel = privateGroupUnavailableLabel ?? t('label.approval.unavailable');
 
         return (
           <li key={conversation.key}>
@@ -91,6 +97,18 @@ export const GroupList = memo(function GroupList({
                       title={t('label.group.closed')}
                     >
                       <LockIcon />
+                    </span>
+                  ) : null}
+                  {!isGeneralChatGroup(group) &&
+                  group.isOpen === false &&
+                  privateGroupCapabilityStatus === 'unavailable' ? (
+                    <span
+                      aria-label={unavailableLabel}
+                      className="group-row__unavailable"
+                      role="img"
+                      title={unavailableLabel}
+                    >
+                      <UnavailableIcon />
                     </span>
                   ) : null}
                   {typeof memberCount === 'number' ? (

@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Apri Qortium Home con un account sbloccato per usare le azioni della chat.',
   'action.privateChatUnavailable': 'Apri Qortium Home per usare la chat diretta.',
   'action.privateGroupUnavailable': 'Apri Qortium Home per usare la chat diretta.',
+  'action.privateChatUnavailableQortalHub': 'Le chat private non sono disponibili in xchat tramite Qortal Hub. Usa la chat integrata di Hub oppure apri xchat in Qortium Home 2.',
   'action.directReadOnly': 'La cronologia della chat privata diretta non è disponibile in questa build Home.',
   'action.directSendUnavailable': 'Apri Qortium Home per inviare chat private dirette.',
   'action.groupJoinUnavailable': 'L\'unione al gruppo non è disponibile in questa build Home.',

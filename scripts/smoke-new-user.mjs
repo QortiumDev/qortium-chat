@@ -242,15 +242,30 @@ try {
         const shell = document.querySelector('.app-shell--home-v2');
         const networks = Array.from(document.querySelectorAll('.network-section__title'))
           .map((heading) => heading.textContent.trim());
+        const directSections = Array.from(document.querySelectorAll('.network-section')).map((section) => {
+          const panel = Array.from(section.querySelectorAll('.panel')).find(
+            (candidate) => candidate.querySelector('h2')?.textContent.trim() === 'Direct'
+          );
+
+          return {
+            expanded: panel?.querySelector('.panel__toggle')?.getAttribute('aria-expanded'),
+            text: panel?.textContent || ''
+          };
+        });
         const qortalGroup = Array.from(document.querySelectorAll('.group-row__name'))
           .some((heading) => heading.textContent.trim() === 'Qortal Community');
         const catalogueCalls = window.__newUserSmoke.calls.filter((call) =>
           String(call.path || '').startsWith('/groups?')
         ).length;
 
-        return row && empty && notice && shell && qortalGroup && networks.length === 2 && title?.textContent.trim() === 'General Chat'
+        return row && empty && notice && shell && qortalGroup && networks.length === 2 &&
+          directSections.length === 2 &&
+          directSections.every((section) => section.expanded === 'false') &&
+          directSections.every((section) => !section.text.includes('not available in this Home build')) &&
+          title?.textContent.trim() === 'General Chat'
           ? {
               catalogueCalls,
+              directExpanded: directSections.map((section) => section.expanded),
               empty: empty.textContent.trim(),
               generalMetadata: row.querySelector('.group-row__footer').textContent.trim(),
               notice: notice.textContent.trim(),

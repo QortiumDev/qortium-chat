@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'Deschide Qortium Home cu un cont deblocat pentru a folosi acțiunile de chat.',
   'action.privateChatUnavailable': 'Deschide Qortium Home pentru a folosi chatul direct.',
   'action.privateGroupUnavailable': 'Deschide Qortium Home pentru a folosi chatul direct.',
+  'action.privateChatUnavailableQortalHub': 'Chaturile private nu sunt disponibile în xchat prin Qortal Hub. Folosiți chatul integrat al Hub sau deschideți xchat în Qortium Home 2.',
   'action.directReadOnly': 'Istoricul privat de chat direct nu este disponibil în această versiune Home.',
   'action.directSendUnavailable': 'Deschide Qortium Home pentru a trimite mesaje directe private.',
   'action.groupJoinUnavailable': 'Alăturarea la grup nu este disponibilă în această versiune Home.',

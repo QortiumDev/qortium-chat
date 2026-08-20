@@ -164,6 +164,7 @@ export const STRINGS = {
   'action.account.locked.browser': 'チャット操作を行うには、Qortium Homeを開いてロック解除済みアカウントを使用してください。',
   'action.privateChatUnavailable': 'ダイレクトチャットを使用するにはQortium Homeで開いてください。',
   'action.privateGroupUnavailable': 'ダイレクトチャットを使用するにはQortium Homeで開いてください。',
+  'action.privateChatUnavailableQortalHub': 'Qortal Hub 経由の xchat ではプライベートチャットを利用できません。Hub の組み込みチャットを使用するか、Qortium Home 2 で xchat を開いてください。',
   'action.directReadOnly': 'このHomeビルドではダイレクトプライベートチャット履歴は利用できません。',
   'action.directSendUnavailable': 'Qortium Homeで開いてダイレクトプライベートチャットを送信してください。',
   'action.groupJoinUnavailable': 'このHomeのビルドではグループ参加は利用できません。',

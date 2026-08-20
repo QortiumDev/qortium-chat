@@ -31,4 +31,21 @@ describe('ChatPaneHeader', () => {
     expect(fallback).not.toContain('aria-label="Open avatar image"');
     expect(fallback).toContain('>QC<');
   });
+
+  it('keeps the private lock distinct from host-level unavailability', () => {
+    const markup = renderToStaticMarkup(
+      <ChatPaneHeader
+        backLabel="Back"
+        closedLabel="Private group"
+        isClosed
+        onBack={() => {}}
+        title="Closed group"
+        unavailableLabel="Private chat unavailable in this host"
+      />,
+    );
+
+    expect(markup).toContain('class="chat-pane__title-lock"');
+    expect(markup).toContain('class="chat-pane__title-unavailable"');
+    expect(markup).toContain('aria-label="Private chat unavailable in this host"');
+  });
 });

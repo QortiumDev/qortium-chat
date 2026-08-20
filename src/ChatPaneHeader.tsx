@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { UserAvatar } from './accountDisplay';
-import { BackIcon, LockIcon } from './icons';
+import { BackIcon, LockIcon, UnavailableIcon } from './icons';
 import type { ChatNetwork } from './types';
 
 export function ChatPaneHeader({
@@ -18,6 +18,7 @@ export function ChatPaneHeader({
   onOpenAvatar,
   openAvatarLabel,
   title,
+  unavailableLabel,
 }: {
   actionHint?: string | null;
   actions?: ReactNode;
@@ -32,6 +33,7 @@ export function ChatPaneHeader({
   onOpenAvatar?: (image: { name: string | null; src: string }) => void;
   openAvatarLabel?: string;
   title: string;
+  unavailableLabel?: string | null;
 }) {
   return (
     <div className="chat-pane__header">
@@ -65,6 +67,16 @@ export function ChatPaneHeader({
                 title={closedLabel}
               >
                 <LockIcon />
+              </span>
+            ) : null}
+            {unavailableLabel ? (
+              <span
+                aria-label={unavailableLabel}
+                className="chat-pane__title-unavailable"
+                role="img"
+                title={unavailableLabel}
+              >
+                <UnavailableIcon />
               </span>
             ) : null}
             <span className="chat-pane__title-text">{title}</span>

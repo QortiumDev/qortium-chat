@@ -189,6 +189,7 @@ import {
   DownIcon,
   PlusIcon,
   SearchIcon,
+  UnavailableIcon,
 } from './icons';
 import {
   canManageChatNotifications,
@@ -214,6 +215,7 @@ import { LatestRequestGuard } from './latestRequest';
 import { canUseQortalAccountForHost, loadQortalAccountSnapshot } from './qortalAccountSession';
 import { getLegacyQortiumMigrationHint } from './qortalUiMigration';
 import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
+import { getDirectSectionDefaultCollapse, getPrivateChatCapabilityStatus } from './sidebarSections';
 import {
   mergePersistedDirect,
   initializeQortalUiStorage,
@@ -1455,7 +1457,12 @@ export default function App() {
   const [qortalDirectLookupPending, setQortalDirectLookupPending] = useState(false);
   const [qortalDirectLookupError, setQortalDirectLookupError] = useState('');
   const qortalDirectSearchInputRef = useRef<HTMLInputElement>(null);
-  const [isQortalDirectCollapsed, setQortalDirectCollapsed] = useState(false);
+  const [isQortalDirectCollapsed, setQortalDirectCollapsed] = useState(true);
+  // Default-collapse decisions apply once per resolved network/account scope.
+  // A manual header/search interaction wins for the rest of this app session,
+  // so an unavailable or empty section can still be deliberately inspected.
+  const directCollapseUserOverrideRef = useRef(new Set<ChatNetwork>());
+  const directDefaultCollapseScopeRef = useRef<Record<ChatNetwork, string>>({ qortal: '', qortium: '' });
   // Qortal counterpart of persistedDirects — kept in the sidebar after their
   // messages expire off the active-chats list, persisted per Qortal account.
   const [qortalPersistedDirects, setQortalPersistedDirects] = useState<PersistedDirect[]>([]);
@@ -2874,6 +2881,82 @@ export default function App() {
   const canSendQortalDirectChat = hasAction(qortalBridge.value.actions, 'SEND_DIRECT_CHAT_MESSAGE');
   const canOpenQortalDirectChat =
     canUseQortalAccount && (canReadQortalPrivateDirectChat || canSendQortalDirectChat);
+  const qortiumPrivateGroupCapabilityStatus = getPrivateChatCapabilityStatus({
+    bridgeReady: bridge.phase === 'ready',
+    canRead: canReadPrivateGroupChat,
+    canSend: canSendPrivateGroupChat,
+  });
+  const qortiumDirectCapabilityStatus = getPrivateChatCapabilityStatus({
+    bridgeReady: bridge.phase === 'ready',
+    canRead: canReadPrivateDirectChat,
+    canSend: canSendDirectChat,
+  });
+  const qortalPrivateGroupCapabilityStatus = getPrivateChatCapabilityStatus({
+    bridgeReady: qortalBridge.phase === 'ready',
+    canRead: canReadQortalPrivateGroupChat,
+    canSend: canSendQortalPrivateGroupChat,
+  });
+  const qortalDirectCapabilityStatus = getPrivateChatCapabilityStatus({
+    bridgeReady: qortalBridge.phase === 'ready',
+    canRead: canReadQortalPrivateDirectChat,
+    canSend: canSendQortalDirectChat,
+  });
+  const qortalHubPrivateChatUnavailableLabel = t('action.privateChatUnavailableQortalHub');
+
+  useEffect(() => {
+    const decision = getDirectSectionDefaultCollapse({
+      activeChatsPhase: activeChats.phase,
+      bridgeReady: bridge.phase === 'ready',
+      canOpenDirectChat,
+      directCount: mergedDirects.length,
+    });
+    const scope = `${account?.address ?? 'none'}\n${bridge.value.actions.join('\n')}`;
+
+    if (
+      decision === null ||
+      directCollapseUserOverrideRef.current.has('qortium') ||
+      directDefaultCollapseScopeRef.current.qortium === scope
+    ) {
+      return;
+    }
+
+    directDefaultCollapseScopeRef.current.qortium = scope;
+    if (decision) {
+      setDirectCollapsed(true);
+    }
+  }, [account?.address, activeChats.phase, bridge.phase, bridge.value.actions, canOpenDirectChat, mergedDirects.length]);
+
+  useEffect(() => {
+    const decision = getDirectSectionDefaultCollapse({
+      activeChatsPhase: qortalActiveChats.phase,
+      bridgeReady: qortalAvailable && qortalBridge.phase === 'ready',
+      canOpenDirectChat: canOpenQortalDirectChat,
+      directCount: qortalMergedDirects.length,
+    });
+    const scope = `${qortalAccount?.address ?? 'none'}\n${qortalBridge.value.actions.join('\n')}`;
+
+    if (
+      decision === null ||
+      directCollapseUserOverrideRef.current.has('qortal') ||
+      directDefaultCollapseScopeRef.current.qortal === scope
+    ) {
+      return;
+    }
+
+    directDefaultCollapseScopeRef.current.qortal = scope;
+    // Qortal previously defaulted open. Start closed to avoid flashing the
+    // unavailable/empty body, then restore that open default when a resolved
+    // host actually has direct conversations.
+    setQortalDirectCollapsed(decision);
+  }, [
+    canOpenQortalDirectChat,
+    qortalAccount?.address,
+    qortalActiveChats.phase,
+    qortalAvailable,
+    qortalBridge.phase,
+    qortalBridge.value.actions,
+    qortalMergedDirects.length,
+  ]);
   // Mirrors isJoinableGroup/canSubmitJoin/canSubmitLeave above against the
   // Qortal bridge/membership rather than merging into them — a Qortium
   // membership must never make a Qortal group read as joined (or vice
@@ -2985,6 +3068,19 @@ export default function App() {
   const isSelectedChatOpenGroup = selectedChat?.kind === 'group' && selectedChat.group.isOpen !== false;
   const isSelectedChatPrivate =
     selectedChat?.kind === 'direct' || (selectedChat?.kind === 'group' && selectedChat.group.isOpen === false);
+  const selectedPrivateGroupCapabilityStatus =
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false
+      ? selectedChat.network === 'qortal'
+        ? qortalPrivateGroupCapabilityStatus
+        : qortiumPrivateGroupCapabilityStatus
+      : null;
+  const selectedDirectCapabilityStatus =
+    selectedChat?.kind === 'direct'
+      ? selectedChat.network === 'qortal'
+        ? qortalDirectCapabilityStatus
+        : qortiumDirectCapabilityStatus
+      : null;
+  const selectedPrivateGroupFeatureUnavailable = selectedPrivateGroupCapabilityStatus === 'unavailable';
   const canAttachPublicResource =
     isSelectedChatOpenGroup &&
     !!selectedChatAttachAccountName &&
@@ -3029,7 +3125,9 @@ export default function App() {
   const qortalGroupComposerNotice =
     isSelectedQortalGroup && selectedChat.group.isOpen !== true
       ? !canSendQortalPrivateGroupChat
-        ? t('action.closedGroupSendUnsupported')
+        ? qortalPrivateGroupCapabilityStatus === 'unavailable' && isQortalHub
+          ? qortalHubPrivateChatUnavailableLabel
+          : t('action.closedGroupSendUnsupported')
         : qortalMemberGroups.phase === 'error'
           ? t('hint.groupMembershipUnavailable')
           : qortalMemberGroups.phase !== 'ready'
@@ -3061,53 +3159,76 @@ export default function App() {
   const qortalAccountRequiredLabel = qortalBridge.value.isHomeBridge
     ? t('action.account.notShared')
     : t('action.noAccountUse');
-  const directAccessUnavailableLabel = !account
-    ? accountRequiredLabel
-    : !isAccountUnlocked
-      ? accountLockedLabel
-    : bridge.value.isHomeBridge
+  const directAccessUnavailableLabel = qortiumDirectCapabilityStatus === 'unavailable'
+    ? bridge.value.isHomeBridge
       ? t('action.directReadOnly')
-      : t('action.privateChatUnavailable');
-  const directReadUnavailableLabel = !account
-    ? accountRequiredLabel
-    : !isAccountUnlocked
-      ? accountLockedLabel
-    : bridge.value.isHomeBridge
+      : t('action.privateChatUnavailable')
+    : !account
+      ? accountRequiredLabel
+      : !isAccountUnlocked
+        ? accountLockedLabel
+        : bridge.value.isHomeBridge
+          ? t('action.directReadOnly')
+          : t('action.privateChatUnavailable');
+  const directReadUnavailableLabel = qortiumDirectCapabilityStatus === 'unavailable'
+    ? bridge.value.isHomeBridge
       ? t('action.directReadOnly')
-      : t('action.directReadUnavailableBrowser');
+      : t('action.directReadUnavailableBrowser')
+    : !account
+      ? accountRequiredLabel
+      : !isAccountUnlocked
+        ? accountLockedLabel
+        : bridge.value.isHomeBridge
+          ? t('action.directReadOnly')
+          : t('action.directReadUnavailableBrowser');
   const directListUnavailableLabel =
     t('action.directListUnavailable');
-  const directSendUnavailableLabel = !account
-    ? accountRequiredLabel
-    : !isAccountUnlocked
-      ? accountLockedLabel
-    : bridge.value.isHomeBridge
+  const directSendUnavailableLabel = qortiumDirectCapabilityStatus === 'unavailable'
+    ? bridge.value.isHomeBridge
       ? t('action.directSendUnavailable')
-      : t('action.directSendUnavailableBrowser');
+      : t('action.directSendUnavailableBrowser')
+    : !account
+      ? accountRequiredLabel
+      : !isAccountUnlocked
+        ? accountLockedLabel
+        : bridge.value.isHomeBridge
+          ? t('action.directSendUnavailable')
+          : t('action.directSendUnavailableBrowser');
   // Qortal counterparts of the direct-chat notice labels above, reusing the
   // same network-neutral wording ("Open in Qortium Home to...") — text stays
   // shared, only the gating (qortalAccount, qortalBridge) is chain-specific.
-  const qortalDirectAccessUnavailableLabel = !qortalAccount
-    ? qortalAccountError || qortalAccountRequiredLabel
-    : !isQortalAccountUnlocked
-      ? accountLockedLabel
-    : qortalBridge.value.isHomeBridge
-      ? t('action.directReadOnly')
-      : t('action.privateChatUnavailable');
-  const qortalDirectReadUnavailableLabel = !qortalAccount
-    ? qortalAccountError || qortalAccountRequiredLabel
-    : !isQortalAccountUnlocked
-      ? accountLockedLabel
-    : qortalBridge.value.isHomeBridge
-      ? t('action.directReadOnly')
-      : t('action.directReadUnavailableBrowser');
-  const qortalDirectSendUnavailableLabel = !qortalAccount
-    ? qortalAccountError || qortalAccountRequiredLabel
-    : !isQortalAccountUnlocked
-      ? accountLockedLabel
-    : qortalBridge.value.isHomeBridge
-      ? t('action.directSendUnavailable')
-      : t('action.directSendUnavailableBrowser');
+  const qortalDirectAccessUnavailableLabel = qortalDirectCapabilityStatus === 'unavailable' && isQortalHub
+    ? qortalHubPrivateChatUnavailableLabel
+    : !qortalAccount
+      ? qortalAccountError || qortalAccountRequiredLabel
+      : !isQortalAccountUnlocked
+        ? accountLockedLabel
+        : qortalBridge.value.isHomeBridge
+          ? t('action.directReadOnly')
+          : t('action.privateChatUnavailable');
+  const qortalDirectReadUnavailableLabel = qortalDirectCapabilityStatus === 'unavailable' && isQortalHub
+    ? qortalHubPrivateChatUnavailableLabel
+    : !qortalAccount
+      ? qortalAccountError || qortalAccountRequiredLabel
+      : !isQortalAccountUnlocked
+        ? accountLockedLabel
+        : qortalBridge.value.isHomeBridge
+          ? t('action.directReadOnly')
+          : t('action.directReadUnavailableBrowser');
+  const qortalDirectSendUnavailableLabel = qortalDirectCapabilityStatus === 'unavailable' && isQortalHub
+    ? qortalHubPrivateChatUnavailableLabel
+    : !qortalAccount
+      ? qortalAccountError || qortalAccountRequiredLabel
+      : !isQortalAccountUnlocked
+        ? accountLockedLabel
+        : qortalBridge.value.isHomeBridge
+          ? t('action.directSendUnavailable')
+          : t('action.directSendUnavailableBrowser');
+  const qortiumPrivateGroupUnavailableLabel = t('action.closedGroupHistoryUnsupported');
+  const qortalPrivateGroupUnavailableLabel =
+    qortalPrivateGroupCapabilityStatus === 'unavailable' && isQortalHub
+      ? qortalHubPrivateChatUnavailableLabel
+      : t('action.closedGroupHistoryUnsupported');
   const groupJoinUnavailableLabel = !account
     ? accountRequiredLabel
     : !isAccountUnlocked
@@ -3184,7 +3305,7 @@ export default function App() {
       : !isQortalAccountUnlocked
         ? accountLockedLabel
         : !canReadQortalPrivateGroupChat
-          ? t('action.closedGroupHistoryUnsupported')
+          ? qortalPrivateGroupUnavailableLabel
           : qortalMemberGroups.phase === 'error'
             ? t('hint.groupMembershipUnavailable')
             : qortalMemberGroups.phase !== 'ready'
@@ -3203,6 +3324,28 @@ export default function App() {
           : !isSelectedGroupMembershipConfirmed
             ? t('hint.groupMembershipChecking')
             : t('hint.groupJoinToRead');
+  const selectedHistoryUnavailable = selectedDirectHistoryUnavailable || selectedClosedGroupHistoryUnavailable;
+  const selectedHistoryUnavailableLabel = selectedDirectHistoryUnavailable
+    ? selectedChat?.network === 'qortal'
+      ? qortalDirectReadUnavailableLabel
+      : directReadUnavailableLabel
+    : closedGroupHistoryUnavailableLabel;
+  const selectedHistoryEmptyLabel =
+    selectedDirectCapabilityStatus === 'unavailable'
+      ? t('action.directReadOnly')
+      : selectedPrivateGroupFeatureUnavailable
+        ? t('group.meta.closedHistoryUnavailable')
+        : selectedHistoryUnavailableLabel;
+  const selectedChatUnavailableLabel =
+    selectedDirectCapabilityStatus === 'unavailable'
+      ? selectedChat?.network === 'qortal'
+        ? qortalDirectAccessUnavailableLabel
+        : directAccessUnavailableLabel
+      : selectedPrivateGroupFeatureUnavailable
+        ? selectedChat?.network === 'qortal'
+          ? qortalPrivateGroupUnavailableLabel
+          : qortiumPrivateGroupUnavailableLabel
+        : null;
   // P3 item 2c: Qortal rotationRequired notice, reusing the same
   // conversation-notice slot pattern as selectedClosedGroupHistoryUnavailable
   // above (a <p className="muted"> line in the notices stack).
@@ -4189,6 +4332,15 @@ export default function App() {
           isJoinedGroup: joinedIds.has(chat.group.groupId),
         });
 
+      if (chat.kind === 'group' && chat.group.isOpen === false && !shouldDecryptPrivateGroup) {
+        setMessagesChatKey(chatKey);
+        setMessages({ phase: 'ready', value: emptyMessages });
+        if (!options.quiet) {
+          setOlderMessagesState({ error: '', loading: false, reachedStart: true });
+        }
+        return;
+      }
+
       const nextMessages =
         chat.kind === 'group'
           ? await getGroupMessages('qortium', chat.group, actionList, { decryptPrivate: shouldDecryptPrivateGroup })
@@ -4308,10 +4460,16 @@ export default function App() {
 
     try {
       if (chat.group.isOpen === false && !shouldDecryptPrivateGroup) {
-        // Same gate getGroupMessages applies server-side — fail the same way
-        // here so the notice matches a closed group whose host/network does
-        // not (yet, or at all) advertise private-group read support.
-        throw new Error('Closed group chat reads require Qortium Home private group chat support.');
+        // Capability/account/membership notices already explain why this
+        // transcript cannot be opened. Resolve to a settled empty view rather
+        // than leaving an endless loading skeleton or surfacing a retryable
+        // transport error for a request we deliberately did not make.
+        setMessagesChatKey(chatKey);
+        setMessages({ phase: 'ready', value: emptyMessages });
+        if (!options.quiet) {
+          setOlderMessagesState({ error: '', loading: false, reachedStart: true });
+        }
+        return;
       }
 
       const nextMessages = await getGroupMessages('qortal', chat.group, qortalActionList, {
@@ -6848,6 +7006,7 @@ export default function App() {
       return;
     }
 
+    directCollapseUserOverrideRef.current.add('qortium');
     setDirectCollapsed(false);
     setDirectSearchOpen(true);
   }
@@ -6859,8 +7018,19 @@ export default function App() {
       return;
     }
 
+    directCollapseUserOverrideRef.current.add('qortal');
     setQortalDirectCollapsed(false);
     setQortalDirectSearchOpen(true);
+  }
+
+  function toggleDirectSection(network: ChatNetwork) {
+    directCollapseUserOverrideRef.current.add(network);
+
+    if (network === 'qortal') {
+      setQortalDirectCollapsed((collapsed) => !collapsed);
+    } else {
+      setDirectCollapsed((collapsed) => !collapsed);
+    }
   }
 
   function mentionAccount(target: AccountInfoTarget & { network: ChatNetwork }) {
@@ -9704,7 +9874,7 @@ export default function App() {
               <button
                 aria-expanded={!isDirectCollapsed}
                 className="panel__toggle"
-                onClick={() => setDirectCollapsed((collapsed) => !collapsed)}
+                onClick={() => toggleDirectSection('qortium')}
                 type="button"
               >
                 <DownIcon />
@@ -9719,13 +9889,30 @@ export default function App() {
                     title={t('aria.unreadDirect')}
                   />
                 ) : null}
-                <span className="panel__count">{mergedDirects.length}</span>
+                {qortiumDirectCapabilityStatus === 'unavailable' ? (
+                  <span
+                    aria-label={directAccessUnavailableLabel}
+                    className="panel__unavailable"
+                    role="img"
+                    title={directAccessUnavailableLabel}
+                  >
+                    <UnavailableIcon />
+                  </span>
+                ) : null}
+                <span className="panel__count">
+                  {qortiumDirectCapabilityStatus === 'unavailable' ? '—' : mergedDirects.length}
+                </span>
                 <button
                   aria-expanded={isDirectFormVisible}
                   aria-label={t('label.newDirectChat')}
                   className="icon-button"
+                  disabled={qortiumDirectCapabilityStatus === 'unavailable'}
                   onClick={toggleDirectSearch}
-                  title={t('label.newDirectChat')}
+                  title={
+                    qortiumDirectCapabilityStatus === 'unavailable'
+                      ? directAccessUnavailableLabel
+                      : t('label.newDirectChat')
+                  }
                   type="button"
                 >
                   <PlusIcon />
@@ -9851,6 +10038,8 @@ export default function App() {
                     conversations={groupDiscoveryConversations}
                     groupAvatarProfiles={groupAvatarProfiles}
                     onSelect={handleSelectGroup}
+                    privateGroupCapabilityStatus={qortiumPrivateGroupCapabilityStatus}
+                    privateGroupUnavailableLabel={qortiumPrivateGroupUnavailableLabel}
                     selectedConversationKey={selectedGroupConversationKey}
                     t={t}
                     now={now}
@@ -9881,6 +10070,8 @@ export default function App() {
                 conversations={groupConversations}
                 groupAvatarProfiles={groupAvatarProfiles}
                 onSelect={handleSelectGroup}
+                privateGroupCapabilityStatus={qortiumPrivateGroupCapabilityStatus}
+                privateGroupUnavailableLabel={qortiumPrivateGroupUnavailableLabel}
                 selectedConversationKey={selectedGroupConversationKey}
                 t={t}
                 now={now}
@@ -9898,7 +10089,7 @@ export default function App() {
                   <button
                     aria-expanded={!isQortalDirectCollapsed}
                     className="panel__toggle"
-                    onClick={() => setQortalDirectCollapsed((collapsed) => !collapsed)}
+                    onClick={() => toggleDirectSection('qortal')}
                     type="button"
                   >
                     <DownIcon />
@@ -9913,13 +10104,30 @@ export default function App() {
                         title={t('aria.unreadDirect')}
                       />
                     ) : null}
-                    <span className="panel__count">{qortalMergedDirects.length}</span>
+                    {qortalDirectCapabilityStatus === 'unavailable' ? (
+                      <span
+                        aria-label={qortalDirectAccessUnavailableLabel}
+                        className="panel__unavailable"
+                        role="img"
+                        title={qortalDirectAccessUnavailableLabel}
+                      >
+                        <UnavailableIcon />
+                      </span>
+                    ) : null}
+                    <span className="panel__count">
+                      {qortalDirectCapabilityStatus === 'unavailable' ? '—' : qortalMergedDirects.length}
+                    </span>
                     <button
                       aria-expanded={isQortalDirectFormVisible}
                       aria-label={t('label.newDirectChat')}
                       className="icon-button"
+                      disabled={qortalDirectCapabilityStatus === 'unavailable'}
                       onClick={toggleQortalDirectSearch}
-                      title={t('label.newDirectChat')}
+                      title={
+                        qortalDirectCapabilityStatus === 'unavailable'
+                          ? qortalDirectAccessUnavailableLabel
+                          : t('label.newDirectChat')
+                      }
                       type="button"
                     >
                       <PlusIcon />
@@ -10055,6 +10263,8 @@ export default function App() {
                         conversations={qortalGroupDiscoveryConversations}
                         groupAvatarProfiles={groupAvatarProfiles}
                         onSelect={handleSelectQortalGroup}
+                        privateGroupCapabilityStatus={qortalPrivateGroupCapabilityStatus}
+                        privateGroupUnavailableLabel={qortalPrivateGroupUnavailableLabel}
                         selectedConversationKey={selectedGroupConversationKey}
                         t={t}
                         now={now}
@@ -10076,6 +10286,8 @@ export default function App() {
                     conversations={qortalGroupConversations}
                     groupAvatarProfiles={groupAvatarProfiles}
                     onSelect={handleSelectQortalGroup}
+                    privateGroupCapabilityStatus={qortalPrivateGroupCapabilityStatus}
+                    privateGroupUnavailableLabel={qortalPrivateGroupUnavailableLabel}
                     selectedConversationKey={selectedGroupConversationKey}
                     t={t}
                     now={now}
@@ -10217,6 +10429,7 @@ export default function App() {
             onOpenAvatar={setAvatarLightboxImage}
             openAvatarLabel={t('action.openAvatarImage')}
             title={selectedChatTitle}
+            unavailableLabel={selectedChatUnavailableLabel}
           />
 
           {/* Owns the `1fr` row of the `.chat-pane` grid so the message feed
@@ -10269,12 +10482,12 @@ export default function App() {
               {showApprovalControls && pendingApprovals.phase === 'error' ? (
                 <p className="error">{pendingApprovals.error}</p>
               ) : null}
-              {selectedDirectHistoryUnavailable ? (
+              {selectedDirectHistoryUnavailable && displayMessages.length > 0 ? (
                 <p className="muted">
                   {selectedChat?.network === 'qortal' ? qortalDirectReadUnavailableLabel : directReadUnavailableLabel}
                 </p>
               ) : null}
-              {selectedClosedGroupHistoryUnavailable ? (
+              {selectedClosedGroupHistoryUnavailable && displayMessages.length > 0 ? (
                 <p className="muted">{closedGroupHistoryUnavailableLabel}</p>
               ) : null}
               {hasSelectedChatJournalNotice ? <p className="muted">{t('status.bridge.pendingJournalNotice')}</p> : null}
@@ -10301,7 +10514,8 @@ export default function App() {
                   </button>
                 ) : null}
               </div>
-            ) : messages.phase === 'loading' || (messages.phase === 'ready' && !hasSelectedMessages) ? (
+            ) : !selectedHistoryUnavailable &&
+              (messages.phase === 'loading' || (messages.phase === 'ready' && !hasSelectedMessages)) ? (
               // The second arm covers the transient frame right after a chat
               // switch, before the load effect runs: `messages` still holds the
               // previous chat then, and must not flash under the new header.
@@ -10318,7 +10532,13 @@ export default function App() {
                       : canReviseDirectChat
                     : true)
                 }
-                emptyHint={isSelectedGeneralChat ? t('hint.noMessages.general') : undefined}
+                emptyHint={
+                  selectedHistoryUnavailable
+                    ? selectedHistoryEmptyLabel
+                    : isSelectedGeneralChat
+                      ? t('hint.noMessages.general')
+                      : undefined
+                }
                 initialScrollPosition={scrollPositionsRef.current.get(selectedChatKey)}
                 messages={displayMessages}
                 network={selectedChat?.network ?? 'qortium'}
@@ -10367,7 +10587,7 @@ export default function App() {
             <div aria-live="polite" className="composer composer--notice">
               <div>
                 <p>{groupComposerNotice}</p>
-                <p>{t('hint.groupApprovalDelay')}</p>
+                {!selectedPrivateGroupFeatureUnavailable ? <p>{t('hint.groupApprovalDelay')}</p> : null}
               </div>
               {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}
             </div>
@@ -10375,7 +10595,7 @@ export default function App() {
             <div aria-live="polite" className="composer composer--notice">
               <div>
                 <p>{qortalGroupComposerNotice}</p>
-                <p>{t('hint.groupApprovalDelay')}</p>
+                {!selectedPrivateGroupFeatureUnavailable ? <p>{t('hint.groupApprovalDelay')}</p> : null}
               </div>
               {qortalMemberGroups.phase === 'ready' ? renderJoinGroupButton() : null}
             </div>
