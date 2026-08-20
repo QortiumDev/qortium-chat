@@ -1,6 +1,6 @@
 {
   "name": "qortium-chat",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "license": "0BSD",
   "description": "A small QDN chat app for Qortium Home.",
