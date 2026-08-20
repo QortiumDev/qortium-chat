@@ -22,6 +22,7 @@ export class StartupAccountRefreshCoordinator {
   private manualRefreshRequested = false;
   private suppressNotifications = false;
   private initialRefreshStarted = false;
+  private pauseCount = 0;
   private disposed = false;
 
   constructor(
@@ -39,6 +40,10 @@ export class StartupAccountRefreshCoordinator {
 
     this.refresh = refresh;
 
+    if (this.pauseCount > 0 || this.initialRefreshStarted) {
+      return;
+    }
+
     if (this.manualRefreshRequested) {
       this.manualRefreshRequested = false;
       this.pendingNotificationCount = 0;
@@ -52,10 +57,7 @@ export class StartupAccountRefreshCoordinator {
       return;
     }
 
-    this.fallbackTimer = this.scheduleRefresh(() => {
-      this.fallbackTimer = null;
-      this.startInitialRefresh();
-    }, fallbackDelayMs);
+    this.scheduleFallback(fallbackDelayMs);
   }
 
   notify() {
@@ -64,6 +66,11 @@ export class StartupAccountRefreshCoordinator {
     }
 
     if (!this.refresh) {
+      this.pendingNotificationCount += 1;
+      return;
+    }
+
+    if (this.pauseCount > 0) {
       this.pendingNotificationCount += 1;
       return;
     }
@@ -95,6 +102,11 @@ export class StartupAccountRefreshCoordinator {
       return;
     }
 
+    if (this.pauseCount > 0) {
+      this.manualRefreshRequested = true;
+      return;
+    }
+
     if (!this.initialRefreshStarted) {
       this.cancelFallback();
       this.startInitialRefresh();
@@ -102,6 +114,63 @@ export class StartupAccountRefreshCoordinator {
     }
 
     this.refresh();
+  }
+
+  /**
+   * Pauses the not-yet-started fallback refresh while Chat is waiting for a
+   * host-owned account transition such as UNLOCK_SELECTED_ACCOUNT. The caller
+   * must release the returned lease in a finally block. If the transition did
+   * not supply a current account snapshot, releasing resumes the normal
+   * notification/fallback path.
+   */
+  pause() {
+    if (this.disposed) {
+      return () => undefined;
+    }
+
+    this.pauseCount += 1;
+    this.cancelFallback();
+    let released = false;
+
+    return () => {
+      if (released || this.disposed) {
+        return;
+      }
+
+      released = true;
+      this.pauseCount = Math.max(0, this.pauseCount - 1);
+
+      if (this.pauseCount > 0 || this.initialRefreshStarted || !this.refresh) {
+        return;
+      }
+
+      if (this.manualRefreshRequested || this.pendingNotificationCount > 0) {
+        this.manualRefreshRequested = false;
+        this.pendingNotificationCount = 0;
+        this.startInitialRefresh();
+        return;
+      }
+
+      this.scheduleFallback();
+    };
+  }
+
+  /**
+   * Marks the initial account refresh as satisfied by a host transition that
+   * returned the selected account itself. This absorbs the matching account
+   * notification and prevents a redundant refresh from clearing the action
+   * that initiated the transition.
+   */
+  satisfyInitialRefresh() {
+    if (this.disposed || this.initialRefreshStarted) {
+      return;
+    }
+
+    this.initialRefreshStarted = true;
+    this.manualRefreshRequested = false;
+    this.pendingNotificationCount = 0;
+    this.cancelFallback();
+    this.armStartupGrace();
   }
 
   dispose() {
@@ -114,6 +183,7 @@ export class StartupAccountRefreshCoordinator {
     this.clearStartupGrace();
     this.pendingNotificationCount = 0;
     this.manualRefreshRequested = false;
+    this.pauseCount = 0;
     this.refresh = null;
   }
 
@@ -134,6 +204,18 @@ export class StartupAccountRefreshCoordinator {
 
     this.cancelRefresh(this.fallbackTimer);
     this.fallbackTimer = null;
+  }
+
+  private scheduleFallback(fallbackDelayMs = DEFAULT_FALLBACK_DELAY_MS) {
+    if (this.disposed || this.initialRefreshStarted || this.pauseCount > 0 || !this.refresh) {
+      return;
+    }
+
+    this.cancelFallback();
+    this.fallbackTimer = this.scheduleRefresh(() => {
+      this.fallbackTimer = null;
+      this.startInitialRefresh();
+    }, fallbackDelayMs);
   }
 
   private armStartupGrace(delayMs = DEFAULT_STARTUP_GRACE_MS) {

@@ -63,6 +63,7 @@ import {
 } from './coreApi';
 import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch';
 import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
+import { PrivateActiveChatsRequestCoordinator } from './privateActiveChatsRequest';
 import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
 import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
 import {
@@ -1429,6 +1430,7 @@ export default function App() {
   const groupMembersRequestGuardRef = useRef(new LatestRequestGuard());
   const qortiumAccountRefreshGuardRef = useRef(new LatestRequestGuard());
   const qortiumActiveChatsRequestGuardRef = useRef(new LatestRequestGuard());
+  const privateActiveChatsRequestCoordinatorRef = useRef(new PrivateActiveChatsRequestCoordinator());
   const qortalAccountRefreshGuardRef = useRef(new LatestRequestGuard());
   const qortalAccountRefreshPendingRef = useRef(false);
   const refreshingQortalAccountAddressRef = useRef<string | null>(null);
@@ -3638,18 +3640,21 @@ export default function App() {
       // Mirrors loadActiveChats' GET_PRIVATE_DIRECT_ACTIVE_CHATS override above:
       // prefer the decrypted private-direct list when Home advertises it, else
       // fall back to whatever GET_ACTIVE_CHATS already returned for `direct`.
-      const direct = isQortalAccountUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')
-        ? await getPrivateDirectActiveChats(actionList, 'qortal')
-        : nextActiveChats.direct;
+      const privateActiveChats = await privateActiveChatsRequestCoordinatorRef.current.request({
+        accountAddress: address,
+        canReadDirect: isQortalAccountUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS'),
+        canReadGroups: isQortalAccountUnlocked && hasAction(actionList, 'GET_PRIVATE_GROUP_ACTIVE_CHATS'),
+        loadDirect: () => getPrivateDirectActiveChats(actionList, 'qortal'),
+        loadGroups: () => getPrivateGroupActiveChats('qortal', actionList),
+        network: 'qortal',
+      });
+      const direct = privateActiveChats.direct ?? nextActiveChats.direct;
       // P3 item 6: fold decrypted closed-group activity into the same
       // `groups` array GET_ACTIVE_CHATS returns — groupActivityById and
       // qortalGroupPreviewByGroupId both already read straight off this
       // array, so this is the only wiring a closed group's unread/preview
       // needs (see privateGroupActiveChats.ts's module doc).
-      const privateGroupEntries = isQortalAccountUnlocked && hasAction(actionList, 'GET_PRIVATE_GROUP_ACTIVE_CHATS')
-        ? await getPrivateGroupActiveChats('qortal', actionList)
-        : [];
-      const groups = mergePrivateGroupActiveChats(nextActiveChats.groups ?? [], privateGroupEntries);
+      const groups = mergePrivateGroupActiveChats(nextActiveChats.groups ?? [], privateActiveChats.groups);
 
       if (qortalActiveChatsRequestGuardRef.current.isLatest(requestId)) {
         setQortalActiveChats({ phase: 'ready', value: { ...nextActiveChats, direct, groups } });
@@ -3888,6 +3893,7 @@ export default function App() {
     qortalAccountRefreshPendingRef.current = true;
     refreshingQortalAccountAddressRef.current = previousAccountAddress;
     qortalActiveChatsRequestGuardRef.current.begin();
+    privateActiveChatsRequestCoordinatorRef.current.invalidate('qortal');
     currentQortalAccountAddressRef.current = null;
 
     // A selected-account event means the old chain identity is no longer safe
@@ -4258,14 +4264,17 @@ export default function App() {
 
     try {
       const nextActiveChats = await getActiveChats('qortium', selectedAccount.address, actionList);
-      const direct = selectedAccount.isUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS')
-        ? await getPrivateDirectActiveChats(actionList)
-        : nextActiveChats.direct;
+      const privateActiveChats = await privateActiveChatsRequestCoordinatorRef.current.request({
+        accountAddress: selectedAccount.address,
+        canReadDirect: selectedAccount.isUnlocked && hasAction(actionList, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS'),
+        canReadGroups: selectedAccount.isUnlocked && hasAction(actionList, 'GET_PRIVATE_GROUP_ACTIVE_CHATS'),
+        loadDirect: () => getPrivateDirectActiveChats(actionList),
+        loadGroups: () => getPrivateGroupActiveChats('qortium', actionList),
+        network: 'qortium',
+      });
+      const direct = privateActiveChats.direct ?? nextActiveChats.direct;
       // P3 item 6: same fold as loadQortalActiveChats above.
-      const privateGroupEntries = selectedAccount.isUnlocked && hasAction(actionList, 'GET_PRIVATE_GROUP_ACTIVE_CHATS')
-        ? await getPrivateGroupActiveChats('qortium', actionList)
-        : [];
-      const groups = mergePrivateGroupActiveChats(nextActiveChats.groups ?? [], privateGroupEntries);
+      const groups = mergePrivateGroupActiveChats(nextActiveChats.groups ?? [], privateActiveChats.groups);
 
       if (!qortiumActiveChatsRequestGuardRef.current.isLatest(requestId)) {
         return;
@@ -5057,6 +5066,8 @@ export default function App() {
     const requestedAccountAddress = account.address;
     const refreshGeneration = accountRefreshGenerationRef.current;
     const unlockTransition = new AccountUnlockTransition();
+    const startupAccountRefreshCoordinator = startupAccountRefreshCoordinatorRef.current;
+    const resumeStartupAccountRefresh = startupAccountRefreshCoordinator?.pause();
 
     accountUnlockTransitionsRef.current.add(unlockTransition);
 
@@ -5074,6 +5085,9 @@ export default function App() {
         return null;
       }
 
+      if (selectedAccount.isUnlocked) {
+        startupAccountRefreshCoordinator?.satisfyInitialRefresh();
+      }
       setAccount(selectedAccount);
       setAccountError('');
 
@@ -5091,6 +5105,7 @@ export default function App() {
         ) {
           const selectedAccount = { ...requestedAccount, isUnlocked: true };
 
+          startupAccountRefreshCoordinator?.satisfyInitialRefresh();
           setAccount(selectedAccount);
           setAccountError('');
           setWriteError('');
@@ -5111,6 +5126,7 @@ export default function App() {
     } finally {
       accountUnlockTransitionsRef.current.delete(unlockTransition);
       unlockTransition.dispose();
+      resumeStartupAccountRefresh?.();
     }
   }
 
@@ -7270,6 +7286,7 @@ export default function App() {
     accountRefreshPendingRef.current = true;
     setAccountRefreshPending(true);
     qortiumActiveChatsRequestGuardRef.current.begin();
+    privateActiveChatsRequestCoordinatorRef.current.invalidate('qortium');
     groupDiscoveryRequestRef.current += 1;
     setGroupDiscoveries(createState([]));
     setMemberGroups({ phase: 'loading', value: emptyGroups });
