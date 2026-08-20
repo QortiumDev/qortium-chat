@@ -78,6 +78,8 @@ import {
 } from './bridgeJournal';
 import {
   hasLegacyQortalBridgeCandidate,
+  hasQortalHomeBridge,
+  isQortalPublicRuntime,
   isQortalChatBridgeAvailable,
 } from './qortalRequest';
 import { computeApprovalProgress, NULL_ACCOUNT_ADDRESS } from './approvalProgress';
@@ -132,7 +134,7 @@ import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupP
 import {
   getReactionPendingKey,
 } from './messageReactions';
-import { getBridgeState, hasAction, qdnRequest } from './qdnRequest';
+import { getBridgeState, hasAction, hasHomeBridge, qdnRequest } from './qdnRequest';
 import { isHomeV2AppTab } from './hostContext';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
@@ -1239,6 +1241,12 @@ function useStableCallback<Args extends unknown[], Result>(callback: (...args: A
 
 export default function App() {
   const homeV2AppTab = isHomeV2AppTab(window.location.search);
+  // Qortal Hub and public Qortal renders inject only qortalRequest. Qortium
+  // Home injects qdnRequest too, even when its optional Qortal bridge exists.
+  // Resolve this synchronously so a Qortal host never flashes or initializes
+  // the unavailable Qortium rail while async capability discovery runs.
+  const qortalOnlyRuntime = hasQortalHomeBridge() && !hasHomeBridge();
+  const qortalPublicRuntime = isQortalPublicRuntime();
   const [bridge, setBridge] = useState<AsyncState<BridgeState>>(createState({
     actions: [],
     host: 'browser-dev',
@@ -2166,7 +2174,7 @@ export default function App() {
     () =>
       sortGroups(qortalGroups.value, t, qortalGroupActivityByIdDisplay).map((group) =>
         createGroupConversationSummary({
-          access: 'interactive',
+          access: qortalPublicRuntime ? 'read-only' : 'interactive',
           activityAt: qortalGroupActivityByIdDisplay.get(group.groupId) ?? null,
           group,
           membership: isGeneralChatGroup(group) ? 'public' : 'joined',
@@ -2176,7 +2184,14 @@ export default function App() {
           unread: unreadQortalGroupIds.has(group.groupId),
         }),
       ),
-    [qortalGroupActivityByIdDisplay, qortalGroupPreviewByGroupId, qortalGroups.value, t, unreadQortalGroupIds],
+    [
+      qortalGroupActivityByIdDisplay,
+      qortalGroupPreviewByGroupId,
+      qortalGroups.value,
+      qortalPublicRuntime,
+      t,
+      unreadQortalGroupIds,
+    ],
   );
   const qortalGroupDiscoveryConversations = useMemo(
     () =>
@@ -2664,12 +2679,13 @@ export default function App() {
   const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
   const canSendDirectChat = hasAction(actions, 'SEND_DIRECT_CHAT_MESSAGE');
   const isQortalHub = qortalBridge.value.host === 'hub';
+  const isQortalOnlyHost = qortalOnlyRuntime || isQortalHub;
   const isAccountUnlocked = account?.isUnlocked === true;
   const isQortalAccountUnlocked = isQortalHub ? !!qortalAccount : isAccountUnlocked;
   const canUseSelectedAccount =
     !!account && !accountRefreshPending && (isAccountUnlocked || canRequestUnlock);
-  const groupOnboardingNetwork: ChatNetwork = isQortalHub ? 'qortal' : 'qortium';
-  const groupOnboardingAccountAddress = isQortalHub ? qortalAccount?.address : account?.address;
+  const groupOnboardingNetwork: ChatNetwork = isQortalOnlyHost ? 'qortal' : 'qortium';
+  const groupOnboardingAccountAddress = isQortalOnlyHost ? qortalAccount?.address : account?.address;
 
   useEffect(() => {
     setShowGroupOnboarding(
@@ -7137,10 +7153,10 @@ export default function App() {
   selectedAccountRefreshCallbackRef.current = () => {
     const refreshActions = selectedAccountRefreshActionsRef.current;
 
-    if (qortalBridge.value.host !== 'hub') {
+    if (!qortalOnlyRuntime) {
       void connectSelectedAccount(refreshActions.qortium);
     }
-    if (qortalAvailableRef.current) {
+    if (qortalAvailableRef.current && !qortalPublicRuntime) {
       void refreshQortalSelectedAccount(refreshActions.qortal);
     }
   };
@@ -7157,14 +7173,11 @@ export default function App() {
   }
 
   async function initializeSession(accountRefreshCoordinator: StartupAccountRefreshCoordinator) {
-    setBridge({ phase: 'loading', value: bridge.value });
     let nextActions = bridge.value.actions;
 
-    try {
-      const nextBridge = await getBridgeState();
-      nextActions = nextBridge.actions;
-      setChatStorageMode(nextBridge.transport === 'gateway' ? 'memory' : 'persistent');
-      const storedNotificationPreferences = nextBridge.transport === 'gateway'
+    if (qortalOnlyRuntime) {
+      setChatStorageMode(qortalPublicRuntime ? 'memory' : 'persistent');
+      const storedNotificationPreferences = qortalPublicRuntime
         ? { ...DISABLED_CHAT_NOTIFICATION_PREFERENCES }
         : readChatNotificationPreferences();
       const storedSidebar = readSidebarCollapse();
@@ -7178,32 +7191,57 @@ export default function App() {
       }
 
       setChatStorageReady(true);
-      setBridge({ phase: 'ready', value: nextBridge });
-      selectedAccountRefreshActionsRef.current.qortium = nextActions;
-    } catch (error) {
-      setChatStorageMode('persistent');
-      setChatStorageReady(true);
-      setBridge({
-        error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
-        phase: 'error',
-        value: bridge.value,
-      });
-    }
+      setBridge((current) => ({ phase: 'ready', value: current.value }));
+      setGroups({ phase: 'ready', value: emptyGroups });
+      selectedAccountRefreshActionsRef.current.qortium = [];
+    } else {
+      setBridge({ phase: 'loading', value: bridge.value });
 
-    const initialGroups = withGeneralChatGroup(emptyGroups, '', t);
+      try {
+        const nextBridge = await getBridgeState();
+        nextActions = nextBridge.actions;
+        setChatStorageMode(nextBridge.transport === 'gateway' ? 'memory' : 'persistent');
+        const storedNotificationPreferences = nextBridge.transport === 'gateway'
+          ? { ...DISABLED_CHAT_NOTIFICATION_PREFERENCES }
+          : readChatNotificationPreferences();
+        const storedSidebar = readSidebarCollapse();
 
-    setGroups({ phase: 'ready', value: initialGroups });
-    if (
-      !hasSelectedChatRef.current &&
-      !pendingDeepLinkRef.current?.target &&
-      initialGroups.length > 0
-    ) {
-      selectGroup(initialGroups[0], {
-        historyMode: 'replace',
-        remember: false,
-        showConversation: false,
-        userInitiated: false,
-      });
+        chatNotificationsDesiredRef.current = storedNotificationPreferences;
+        setChatNotificationPreferences(storedNotificationPreferences);
+
+        if (storedSidebar) {
+          setDirectCollapsed(storedSidebar.direct);
+          setGroupsCollapsed(storedSidebar.groups);
+        }
+
+        setChatStorageReady(true);
+        setBridge({ phase: 'ready', value: nextBridge });
+        selectedAccountRefreshActionsRef.current.qortium = nextActions;
+      } catch (error) {
+        setChatStorageMode('persistent');
+        setChatStorageReady(true);
+        setBridge({
+          error: getBridgeErrorMessage(error, t('status.loadingError.bridge'), t),
+          phase: 'error',
+          value: bridge.value,
+        });
+      }
+
+      const initialGroups = withGeneralChatGroup(emptyGroups, '', t);
+
+      setGroups({ phase: 'ready', value: initialGroups });
+      if (
+        !hasSelectedChatRef.current &&
+        !pendingDeepLinkRef.current?.target &&
+        initialGroups.length > 0
+      ) {
+        selectGroup(initialGroups[0], {
+          historyMode: 'replace',
+          remember: false,
+          showConversation: false,
+          userInitiated: false,
+        });
+      }
     }
 
     // Home 2 injects window.qortalRequest. Home 1.7 instead advertises its
@@ -7217,6 +7255,31 @@ export default function App() {
       qortalAvailableRef.current = isAvailable;
       setQortalAvailable(isAvailable);
       selectedAccountRefreshActionsRef.current.qortal = isAvailable && nextQortalBridge ? nextQortalBridge.actions : [];
+
+      if (isAvailable && nextQortalBridge?.host === 'gateway') {
+        const initialQortalGroups = withGeneralChatGroup(emptyGroups, '', t);
+
+        setQortalAccount(null);
+        setQortalAccountError('');
+        setQortalMemberGroups({ phase: 'ready', value: emptyGroups });
+        setQortalGroups({ phase: 'ready', value: initialQortalGroups });
+        setQortalActiveChats({ phase: 'ready', value: emptyActiveChats });
+        setQortalAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
+        setQortalAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
+
+        if (
+          !hasSelectedChatRef.current &&
+          !pendingDeepLinkRef.current?.target &&
+          initialQortalGroups.length > 0
+        ) {
+          selectQortalGroup(initialQortalGroups[0], {
+            historyMode: 'replace',
+            remember: false,
+            showConversation: false,
+            userInitiated: false,
+          });
+        }
+      }
     } else {
       setQortalBridge((current) => ({ phase: 'ready', value: current.value }));
     }
@@ -8165,14 +8228,14 @@ export default function App() {
   // Qortal identity when that chain was last used; never derive its saved group
   // from whichever Qortium identity happened to load first.
   useEffect(() => {
-    if (isQortalHub ? !qortalAccount : !account) {
+    if (isQortalOnlyHost ? !qortalAccount : !account) {
       return;
     }
-    if (isQortalHub && (qortalGroups.phase === 'idle' || qortalGroups.phase === 'loading')) {
+    if (isQortalOnlyHost && (qortalGroups.phase === 'idle' || qortalGroups.phase === 'loading')) {
       return;
     }
 
-    const restoreKey = isQortalHub
+    const restoreKey = isQortalOnlyHost
       ? `hub\0${qortalAccount!.address}`
       : `${account!.address}\0${qortalAccount?.address ?? ''}`;
 
@@ -8185,7 +8248,7 @@ export default function App() {
       return;
     }
 
-    const preferredNetwork = isQortalHub ? 'qortal' : (readLastChatNetwork(account!.address) ?? 'qortium');
+    const preferredNetwork = isQortalOnlyHost ? 'qortal' : (readLastChatNetwork(account!.address) ?? 'qortium');
 
     if (preferredNetwork === 'qortal') {
       if (qortalBridge.phase === 'idle' || qortalBridge.phase === 'loading' || !qortalAccount) {
@@ -8223,12 +8286,12 @@ export default function App() {
 
     // Nothing saved: fall back to General Chat when it is loaded, otherwise leave
     // the mount-time group auto-select to pick it once groups arrive.
-    const fallbackGroups = isQortalHub ? qortalGroups.value : groups.value;
+    const fallbackGroups = isQortalOnlyHost ? qortalGroups.value : groups.value;
     const generalChat = fallbackGroups.find((group) => isGeneralChatGroup(group)) ?? null;
-    const fallbackGroup = generalChat ?? (isQortalHub ? fallbackGroups[0] ?? null : null);
+    const fallbackGroup = generalChat ?? (isQortalOnlyHost ? fallbackGroups[0] ?? null : null);
 
     if (fallbackGroup) {
-      const selectFallbackGroup = isQortalHub ? selectQortalGroup : selectGroup;
+      const selectFallbackGroup = isQortalOnlyHost ? selectQortalGroup : selectGroup;
 
       selectFallbackGroup(fallbackGroup, {
         historyMode: 'replace',
@@ -8239,7 +8302,7 @@ export default function App() {
     }
   }, [
     account?.address,
-    isQortalHub,
+    isQortalOnlyHost,
     qortalAccount?.address,
     qortalAvailable,
     qortalBridge.phase,
@@ -9501,7 +9564,7 @@ export default function App() {
   const layoutClassName = `layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}${
     mobileChatView ? ' layout--mobile-chat' : ''
   }`;
-  const topbarAccount: QdnSelectedAccount | null = isQortalHub && qortalAccount
+  const topbarAccount: QdnSelectedAccount | null = isQortalOnlyHost && qortalAccount
     ? {
         address: qortalAccount.address,
         avatarUrl: null,
@@ -9513,7 +9576,7 @@ export default function App() {
   const topbar = (
     <Topbar
       account={topbarAccount}
-      accountError={isQortalHub ? qortalAccountError : accountError}
+      accountError={isQortalOnlyHost ? qortalAccountError : accountError}
       appVersion={APP_VERSION}
       canControlChatNotifications={canControlChatNotifications}
       canManageNotifications={canManageNotifications}
@@ -9525,12 +9588,12 @@ export default function App() {
       chatNotificationsError={chatNotificationsError}
       chatNotificationToggleRef={chatNotificationToggleRef}
       isChatNotificationMenuOpen={isChatNotificationMenuOpen}
-      isGateway={(isQortalHub ? qortalBridge.value.transport : bridge.value.transport) === 'gateway'}
-      isHomeBridge={isQortalHub ? qortalBridge.value.isHomeBridge : bridge.value.isHomeBridge}
+      isGateway={(isQortalOnlyHost ? qortalBridge.value.transport : bridge.value.transport) === 'gateway'}
+      isHomeBridge={isQortalOnlyHost ? qortalBridge.value.isHomeBridge : bridge.value.isHomeBridge}
       isHomeV2AppTab={homeV2AppTab}
       onOpenAvatar={setAvatarLightboxImage}
       onRequestAccountRefresh={requestSelectedAccountRefresh}
-      qortiumAvatarProfiles={isQortalHub ? qortalAvatarProfiles : qortiumAvatarProfiles}
+      qortiumAvatarProfiles={isQortalOnlyHost ? qortalAvatarProfiles : qortiumAvatarProfiles}
       setChatNotificationMenuOpen={setChatNotificationMenuOpen}
       t={t}
       updateChatNotificationPreference={updateChatNotificationPreference}
@@ -9598,6 +9661,7 @@ export default function App() {
   return (
     <AppShell dialogs={dialogs} isHomeV2AppTab={homeV2AppTab} layoutClassName={layoutClassName} topbar={topbar}>
         <SidebarPane ariaLabel={t('aria.navigation')} inert={isMembersOverlay}>
+          {!qortalOnlyRuntime ? (
           <ConversationNetworkSection network="qortium" showHeader={qortalAvailable}>
           {pendingGroupInvites.length > 0 || (!!account && groupInvites.phase === 'error') ? (
             <section className="panel">
@@ -9824,9 +9888,11 @@ export default function App() {
             )}
           </section>
           </ConversationNetworkSection>
+          ) : null}
 
           {qortalAvailable ? (
             <ConversationNetworkSection network="qortal">
+              {!qortalPublicRuntime ? (
               <section className={`panel${isQortalDirectCollapsed ? ' panel--collapsed' : ''}`}>
                 <div className="panel__header">
                   <button
@@ -9915,6 +9981,7 @@ export default function App() {
                   />
                 )}
               </section>
+              ) : null}
               <section className={`panel${isQortalGroupsCollapsed ? ' panel--collapsed' : ''}`}>
                 <div className="panel__header">
                   <button
@@ -9924,7 +9991,7 @@ export default function App() {
                     type="button"
                   >
                     <DownIcon />
-                    <h2>{t('label.group.joinedGroups')}</h2>
+                    <h2>{t(qortalPublicRuntime ? 'label.common.groups' : 'label.group.joinedGroups')}</h2>
                   </button>
                   <div className="panel__header-actions">
                     {hasUnreadQortalGroups ? (

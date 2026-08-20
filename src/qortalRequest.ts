@@ -18,6 +18,18 @@ export const LOCAL_READ_ACTIONS = [
   'WHICH_UI',
 ] as const;
 
+export const QORTAL_PUBLIC_READ_ACTIONS = [
+  'FETCH_NODE_API',
+  'GET_NODE_STATUS',
+  'IS_USING_PUBLIC_NODE',
+  'LIST_GROUPS',
+  'SEARCH_CHAT_MESSAGES',
+  'SHOW_ACTIONS',
+  'WHICH_UI',
+] as const;
+
+export type QortalPublicRuntimeContext = 'domainMap' | 'gateway';
+
 type QortalRequestPayload = {
   action: string;
   maxBytes?: number;
@@ -83,11 +95,33 @@ function getLegacyQortalActions(value: unknown): QdnAction[] {
 export function hasQortalChatBridgeActions(actions: readonly string[], host?: BridgeHost) {
   const available = new Set(actions.map((action) => action.toUpperCase()));
 
+  if (host === 'gateway') {
+    return (
+      available.has('FETCH_NODE_API') &&
+      available.has('LIST_GROUPS') &&
+      available.has('SEARCH_CHAT_MESSAGES')
+    );
+  }
+
   return (
     available.has('GET_USER_ACCOUNT') &&
     available.has('SEARCH_CHAT_MESSAGES') &&
     (host === 'hub' || available.has('GET_ACCOUNT_GROUPS'))
   );
+}
+
+export function getQortalPublicRuntimeContext(): QortalPublicRuntimeContext | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const context = window._qdnContext;
+
+  return context === 'gateway' || context === 'domainMap' ? context : null;
+}
+
+export function isQortalPublicRuntime() {
+  return getQortalPublicRuntimeContext() !== null;
 }
 
 export function isQortalChatBridgeAvailable(bridge: BridgeState | null | undefined) {
@@ -235,7 +269,34 @@ async function requestDedicatedQortal<T>(
   bridgeRequest: <R = unknown>(request: Record<string, unknown>) => Promise<R>,
   request: QortalRequestPayload,
 ): Promise<T> {
-  if (request.action.toUpperCase() === 'FETCH_NODE_API') {
+  const publicContext = getQortalPublicRuntimeContext();
+  const action = request.action.toUpperCase();
+
+  if (publicContext) {
+    switch (action) {
+      case 'SHOW_ACTIONS':
+        return [...QORTAL_PUBLIC_READ_ACTIONS] as T;
+      case 'WHICH_UI':
+        return (publicContext === 'gateway' ? 'QORTAL_GATEWAY' : 'QORTAL_DOMAIN_MAP') as T;
+      case 'IS_USING_PUBLIC_NODE':
+        return true as T;
+      case 'FETCH_NODE_API':
+        return (await fetchNodeApiAt(request, window.location.origin)) as T;
+      case 'GET_NODE_STATUS': {
+        const result = await fetchNodeApiAt({ ...request, path: '/admin/status' }, window.location.origin);
+
+        if (!result.ok) {
+          throw new Error(result.body || `Node status failed with HTTP ${result.status}.`);
+        }
+
+        return result.data as T;
+      }
+      default:
+        break;
+    }
+  }
+
+  if (action === 'FETCH_NODE_API') {
     try {
       const ui = await bridgeRequest<unknown>({ action: 'WHICH_UI' });
 
@@ -335,6 +396,19 @@ export async function getQortalBridgeState(): Promise<BridgeState> {
   const hasDedicatedBridge = hasQortalHomeBridge();
   const hasLegacyCandidate = hasLegacyQortalBridgeCandidate();
   const hasInjectedBridge = hasDedicatedBridge || hasLegacyCandidate;
+  const publicContext = getQortalPublicRuntimeContext();
+
+  if (hasDedicatedBridge && publicContext) {
+    return {
+      actions: [...QORTAL_PUBLIC_READ_ACTIONS],
+      host: 'gateway',
+      isHomeBridge: false,
+      isUsingPublicNode: true,
+      transport: 'gateway',
+      ui: publicContext === 'gateway' ? 'QORTAL_GATEWAY' : 'QORTAL_DOMAIN_MAP',
+    };
+  }
+
   let actions: QdnAction[] = [];
   let ui = hasInjectedBridge ? 'QORTIUM_HOME_ELECTRON' : 'BROWSER_DEV';
   let isUsingPublicNode = false;
