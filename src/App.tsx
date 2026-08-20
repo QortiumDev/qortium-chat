@@ -34,6 +34,7 @@ import {
   getGroupMembers,
   getGroupMessages,
   getMemberGroups,
+  getQortalActiveGroupStats,
   getMissingPrivateGroupKeyRequests,
   getMintingStatus,
   getNameOwnerAddressForNetwork,
@@ -54,6 +55,7 @@ import {
   publishQdnResource,
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
+  listGroups,
   searchGroups,
   selectQdnPublishSource,
   startMinting,
@@ -172,6 +174,12 @@ import {
   type PublicGroupDiscovery,
 } from './conversationModel';
 import { getConversationInitials } from './conversationPresentation';
+import {
+  discoverQortalGatewayGroups,
+  filterQortalGroupCatalogue,
+  retainSelectedQortalGatewayGroup,
+  QORTAL_GATEWAY_CANDIDATE_LIMIT,
+} from './qortalGroupDiscovery';
 import { MessageList } from './MessageList';
 import {
   getAvatarView,
@@ -314,6 +322,7 @@ const emptyJournalEntries: PendingBridgeTransactionEntry[] = [];
 // fills it; when one does, the merge skips rather than guessing (see
 // mergeActivityTimestamp's allowTombstone).
 const ACTIVITY_SWEEP_MESSAGE_LIMIT = 10;
+const QORTAL_GATEWAY_GROUP_REFRESH_MS = 60000;
 
 // Websocket reconnects back off 5s → 60s while the node stays unreachable
 // (reset by any successful frame) instead of hammering a fixed 5s cadence;
@@ -1312,7 +1321,7 @@ export default function App() {
   const [qortalActiveChats, setQortalActiveChats] = useState<AsyncState<ActiveChats>>(createState(emptyActiveChats));
   const [qortalJournalEntries, setQortalJournalEntries] = useState<PendingBridgeTransactionEntry[]>(emptyJournalEntries);
   const [qortalGroupDiscoveries, setQortalGroupDiscoveries] =
-    useState<AsyncState<PublicGroupDiscovery[]>>(createState([]));
+    useState<AsyncState<GroupData[]>>(createState([]));
   const [qortalSearch, setQortalSearch] = useState('');
   const [isQortalGroupSearchOpen, setQortalGroupSearchOpen] = useState(false);
   const [isQortalGroupsCollapsed, setQortalGroupsCollapsed] = useState(false);
@@ -1435,6 +1444,8 @@ export default function App() {
   const qortalJournalRequestGuardRef = useRef(new LatestRequestGuard());
   const groupDiscoveryRequestRef = useRef(0);
   const qortalGroupDiscoveryRequestRef = useRef(0);
+  const qortalGatewayGroupRequestRef = useRef(0);
+  const qortalGroupCatalogueRef = useRef<{ actionsKey: string; groups: GroupData[] } | null>(null);
   const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
   // Home 2 versions before the unlock ordering fix can notify this QDN view
   // that its account became unlocked, then reject UNLOCK_SELECTED_ACCOUNT
@@ -1712,6 +1723,7 @@ export default function App() {
   // Live mirror of the selected chat key so async loads can drop results that
   // resolve after the user has switched chats (see loadMessages).
   const selectedChatKeyRef = useRef(selectedChatKey);
+  const selectedChatRef = useRef(selectedChat);
   // Live mirror of "a dialog (account info / avatar lightbox) is open", read
   // by lower-layer Escape handlers so one press dismisses one layer only.
   const hasStackedDialogRef = useRef(false);
@@ -1730,6 +1742,7 @@ export default function App() {
   selectedDirectAddressRef.current = selectedDirectAddress;
   selectedQortalDirectAddressRef.current = selectedQortalDirectAddress;
   selectedChatKeyRef.current = selectedChatKey;
+  selectedChatRef.current = selectedChat;
   messagesChatKeyRef.current = messagesChatKey;
   hasSelectedChatRef.current = selectedChat !== null;
   currentAccountAddressRef.current = account?.address ?? null;
@@ -2203,19 +2216,25 @@ export default function App() {
   const qortalGroupDiscoveryConversations = useMemo(
     () =>
       qortalGroupDiscoveries.value
-        .filter(({ group }) => !qortalJoinedIds.has(group.groupId))
-        .map(({ activityAt, group, latestMessage }) =>
+        .filter((group) => !qortalJoinedIds.has(group.groupId))
+        .map((group) =>
           createGroupConversationSummary({
             access: 'read-only',
-            activityAt,
+            activityAt: qortalGroupActivityByIdDisplay.get(group.groupId) ?? null,
             group,
             membership: 'preview',
             network: 'qortal',
-            preview: getMessageSnippet(latestMessage, t, 80),
+            preview: qortalGroupPreviewByGroupId.get(group.groupId) ?? null,
             title: getGroupTitle(group, t),
           }),
         ),
-    [qortalGroupDiscoveries.value, qortalJoinedIds, t],
+    [
+      qortalGroupActivityByIdDisplay,
+      qortalGroupDiscoveries.value,
+      qortalGroupPreviewByGroupId,
+      qortalJoinedIds,
+      t,
+    ],
   );
   // Direct entries come from the decrypted private list when Home provides it;
   // anything still encrypted stays preview-less rather than showing a stub.
@@ -3488,29 +3507,38 @@ export default function App() {
     }
   }
 
-  // --- Chat 2.0 slice 2: Qortal groups --------------------------------------
-  // Discovery is always explicit: neither network loads the public catalogue
-  // during startup or account refresh. That keeps joined chats stable while a
-  // user is composing and bounds the extra public-node reads to this surface.
+  // --- Qortal group search ---------------------------------------------------
+  // Qortal Core has no group-name search endpoint. The first submitted query
+  // loads the complete catalogue once for this page session; subsequent
+  // searches are local and never require a group to have current chat activity.
   async function loadQortalGroupDiscoveries(
     nextSearch = qortalSearch,
     actionList = qortalBridge.value.actions,
   ) {
     const requestId = ++qortalGroupDiscoveryRequestRef.current;
+    const trimmedSearch = nextSearch.trim();
 
     setQortalGroupDiscoveries((current) => ({ phase: 'loading', value: current.value }));
 
     try {
-      const catalogue = await searchGroups('qortal', nextSearch, actionList);
-      const discoveries = await qualifyPublicGroupDiscoveries({
-        groups: catalogue,
-        loadMessages: (group) =>
-          getGroupMessages('qortal', group, actionList, {
-            decryptPrivate: false,
-            limit: ACTIVITY_SWEEP_MESSAGE_LIMIT,
-          }),
-        memberGroupIds: new Set(qortalMemberGroups.value.map((group) => group.groupId)),
-      });
+      let discoveries: GroupData[];
+
+      if (!trimmedSearch) {
+        discoveries = qortalGroups.value.filter((group) => group.groupId > 0);
+      } else {
+        const actionsKey = actionList.join('\n');
+        let catalogue = qortalGroupCatalogueRef.current;
+
+        if (!catalogue || catalogue.actionsKey !== actionsKey) {
+          catalogue = {
+            actionsKey,
+            groups: await listGroups('qortal', actionList, 0),
+          };
+          qortalGroupCatalogueRef.current = catalogue;
+        }
+
+        discoveries = filterQortalGroupCatalogue(catalogue.groups, trimmedSearch);
+      }
 
       if (qortalGroupDiscoveryRequestRef.current === requestId) {
         setQortalGroupDiscoveries({ phase: 'ready', value: discoveries });
@@ -3523,6 +3551,74 @@ export default function App() {
           value: [],
         });
       }
+    }
+  }
+
+  async function loadQortalGatewayGroups(
+    actionList = qortalBridge.value.actions,
+    options: { quiet?: boolean } = {},
+  ) {
+    const requestId = ++qortalGatewayGroupRequestRef.current;
+
+    if (!options.quiet) {
+      setQortalGroups((current) => ({ phase: 'loading', value: current.value }));
+    }
+
+    try {
+      const stats = await getQortalActiveGroupStats(QORTAL_GATEWAY_CANDIDATE_LIMIT);
+      const discoveries = await discoverQortalGatewayGroups({
+        loadGroup: (groupId) => getGroup('qortal', groupId, actionList),
+        loadMessages: (group) =>
+          getGroupMessages('qortal', group, actionList, {
+            decryptPrivate: false,
+            limit: ACTIVITY_SWEEP_MESSAGE_LIMIT,
+          }),
+        stats,
+      });
+
+      if (qortalGatewayGroupRequestRef.current !== requestId) {
+        return;
+      }
+
+      const selectedGroup =
+        selectedChatRef.current?.kind === 'group' && selectedChatRef.current.network === 'qortal'
+          ? selectedChatRef.current.group
+          : null;
+      const publicGroups = retainSelectedQortalGatewayGroup(
+        discoveries.map(({ group }) => group),
+        selectedGroup,
+      );
+
+      setQortalGroups({
+        phase: 'ready',
+        value: withGeneralChatGroup(publicGroups, '', t),
+      });
+      setQortalActiveChats({
+        phase: 'ready',
+        value: {
+          direct: [],
+          groups: discoveries.map(({ group, latestMessage }) => ({
+            data: latestMessage.data,
+            encoding: latestMessage.encoding,
+            groupId: group.groupId,
+            groupName: group.groupName,
+            sender: latestMessage.sender,
+            senderName: latestMessage.senderName ?? undefined,
+            signature: latestMessage.signature,
+            timestamp: latestMessage.timestamp,
+          })),
+        },
+      });
+    } catch (error) {
+      if (qortalGatewayGroupRequestRef.current !== requestId || options.quiet) {
+        return;
+      }
+
+      setQortalGroups((current) => ({
+        error: getBridgeErrorMessage(error, t('status.loadingError.groups'), t),
+        phase: 'error',
+        value: current.value,
+      }));
     }
   }
 
@@ -7436,6 +7532,7 @@ export default function App() {
         setQortalActiveChats({ phase: 'ready', value: emptyActiveChats });
         setQortalAccountJoinRequests({ phase: 'ready', value: emptyJoinRequests });
         setQortalAdminJoinRequests({ phase: 'ready', value: emptyAdminJoinRequests });
+        void loadQortalGatewayGroups(nextQortalBridge.actions, { quiet: true });
 
         if (
           !hasSelectedChatRef.current &&
@@ -8876,6 +8973,26 @@ export default function App() {
 
     return () => window.clearInterval(interval);
   }, [qortalAccount?.address, qortalAvailable, qortalBridge.value.actions.join('\n')]);
+
+  // A public gateway has no selected account and therefore no account-active
+  // chat feed. Refresh Core's bounded public groupstats seed while visible;
+  // the loader keeps the currently selected open group for the session if its
+  // last message expires between passes.
+  useEffect(() => {
+    if (!qortalPublicRuntime || !qortalAvailable || qortalBridge.phase !== 'ready') {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      void loadQortalGatewayGroups(qortalBridge.value.actions, { quiet: true });
+    }, QORTAL_GATEWAY_GROUP_REFRESH_MS);
+
+    return () => window.clearInterval(interval);
+  }, [qortalAvailable, qortalBridge.phase, qortalBridge.value.actions.join('\n'), qortalPublicRuntime]);
 
   // Item D: once Qortium's bridge is ready and an account is connected, fetch
   // its pending-transaction journal once (gated on GET_PENDING_TRANSACTIONS

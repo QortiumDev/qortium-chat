@@ -131,6 +131,20 @@ const bootstrap = `
         });
       }
 
+      if (url.pathname === '/chat/groupstats') {
+        return new Response(JSON.stringify([{ groupId: 23, size: 512 }]), {
+          headers: { 'content-type': 'application/json' },
+          status: 200
+        });
+      }
+
+      if (url.pathname === '/groups/23') {
+        return new Response(JSON.stringify({ groupId: 23, groupName: 'Public Test Group', isOpen: true }), {
+          headers: { 'content-type': 'application/json' },
+          status: 200
+        });
+      }
+
       return nativeFetch(input, init);
     };
     window.WebSocket = class {
@@ -146,7 +160,9 @@ const bootstrap = `
         case 'LIST_GROUPS':
           return [
             { groupId: 0, groupName: 'General Chat', isOpen: true },
-            { groupId: 23, groupName: 'Public Test Group', isOpen: true }
+            { groupId: 23, groupName: 'Public Test Group', isOpen: true },
+            { groupId: 223, groupName: 'Quiet Archive', isOpen: true },
+            { groupId: 224, groupName: 'Private Planning', isOpen: false }
           ];
         case 'SEARCH_CHAT_MESSAGES':
           return request.txGroupId === 23
@@ -214,7 +230,9 @@ try {
           .find((button) => button.textContent.trim() === 'Groups');
         const selectedTitle = document.querySelector('.chat-pane__title, .chat-header__title')?.textContent.trim() ?? '';
 
-        return notices.length >= 2 && groupsToggle && document.body.textContent.includes('General Chat')
+        return notices.length >= 2 && groupsToggle &&
+          document.body.textContent.includes('General Chat') &&
+          document.body.textContent.includes('Public Test Group')
           ? {
               connectButtons: document.querySelectorAll('.account-connect button').length,
               groupsExpanded: groupsToggle.getAttribute('aria-expanded'),
@@ -249,12 +267,16 @@ try {
   await evaluate(
     client,
     `(() => {
+      const input = document.querySelector('.network-section--qortal form.search input');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, 'private');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
       document.querySelector('.network-section--qortal form.search').requestSubmit();
     })()`,
   );
 
-  await waitUntil('Qortal public group results', 12_000, async () =>
-    evaluate(client, `document.body.textContent.includes('Public Test Group')`),
+  await waitUntil('Qortal full-catalogue group results', 12_000, async () =>
+    evaluate(client, `document.body.textContent.includes('Private Planning')`),
   );
 
   const verified = await evaluate(
@@ -268,6 +290,7 @@ try {
         .find((button) => button.textContent.trim() === 'Groups')
         .getAttribute('aria-expanded'),
       loadingRows: document.querySelectorAll('.loading-row').length,
+      privateUnavailableIcons: document.querySelectorAll('.group-discovery .group-row__unavailable').length,
       notificationStorage: localStorage.getItem('qortium-chat-notifications-v2'),
       sidebarStorage: localStorage.getItem('qortium-chat:sidebarCollapse'),
       websocketCount: window.__gatewaySmoke.websocketCount
@@ -300,7 +323,10 @@ try {
     verified.calls.includes('WHICH_UI') ||
     !verified.calls.includes('LIST_GROUPS') ||
     !verified.calls.includes('SEARCH_CHAT_MESSAGES') ||
+    !verified.fetchCalls.some((url) => url.includes('/chat/groupstats?limit=50')) ||
+    !verified.fetchCalls.some((url) => url === '/groups/23') ||
     !verified.fetchCalls.some((url) => url.includes('/transactions/unconfirmed?txType=MESSAGE')) ||
+    verified.privateUnavailableIcons !== 1 ||
     verified.sidebarStorage !== expectedSidebar ||
     verified.notificationStorage !== expectedNotifications ||
     verified.websocketCount !== 0

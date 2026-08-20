@@ -45,6 +45,7 @@ import {
   getQdnResourceStreamUrl,
   getQdnResourceUrl,
   getQortalUserAccount,
+  getQortalActiveGroupStats,
   getTransactionStatus,
   getPrivateDirectActiveChats,
   getPrivateGroupActiveChats,
@@ -55,6 +56,7 @@ import {
   isQortiumPrivateGroupChatState,
   joinGroup,
   leaveGroup,
+  listGroups,
   openChatAttachmentViewer,
   openQdnResourceViewer,
   publishChatAttachment,
@@ -1220,22 +1222,46 @@ describe('Core API path builders', () => {
       });
     });
 
-    it('searches Qortal groups by listing every group and filtering client-side (no SEARCH_GROUPS on Qortal)', async () => {
+    it('searches the complete Qortal catalogue and filters by name or numeric id (no SEARCH_GROUPS on Qortal)', async () => {
       qortalRequestMock.mockResolvedValueOnce([
         { groupId: 1, groupName: 'Chess Fans' },
         { groupId: 2, groupName: 'Dev Talk' },
-        { groupId: 3, groupName: 'Chess Openings' },
+        { groupId: 110, groupName: 'Chess Openings' },
       ]);
 
       // Qortal never advertises SEARCH_GROUPS (Qortium-only — Qortal Core has
       // no /groups/search), only LIST_GROUPS.
       await expect(searchGroups('qortal', 'chess', ['LIST_GROUPS'])).resolves.toEqual([
         { groupId: 1, groupName: 'Chess Fans' },
-        { groupId: 3, groupName: 'Chess Openings' },
+        { groupId: 110, groupName: 'Chess Openings' },
       ]);
       // One LIST_GROUPS call, not a search action.
       expect(qortalRequestMock).toHaveBeenCalledTimes(1);
-      expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'LIST_GROUPS', limit: 100, reverse: false });
+      expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'LIST_GROUPS', limit: 0, reverse: false });
+    });
+
+    it('loads and bounds the Qortal gateway active-group seed', async () => {
+      qortalRequestMock.mockResolvedValueOnce({
+        data: [{ groupId: 23, size: 500 }],
+        ok: true,
+        status: 200,
+      });
+
+      await expect(getQortalActiveGroupStats(500)).resolves.toEqual([{ groupId: 23, size: 500 }]);
+      expect(qortalRequestMock).toHaveBeenCalledWith({
+        action: 'FETCH_NODE_API',
+        maxBytes: 65536,
+        path: '/chat/groupstats?limit=50',
+      });
+    });
+
+    it('loads the full Qortal catalogue with an unlimited LIST_GROUPS request', async () => {
+      qortalRequestMock.mockResolvedValueOnce([{ groupId: 110, groupName: 'Late group' }]);
+
+      await expect(listGroups('qortal', ['LIST_GROUPS'], 0)).resolves.toEqual([
+        { groupId: 110, groupName: 'Late group' },
+      ]);
+      expect(qortalRequestMock).toHaveBeenCalledWith({ action: 'LIST_GROUPS', limit: 0, reverse: false });
     });
 
     it('still uses SEARCH_GROUPS on Qortium even when a query is present (byte-identical to slice 1)', async () => {
