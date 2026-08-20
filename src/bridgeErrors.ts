@@ -69,3 +69,46 @@ export function getBridgeErrorDetails(error: unknown): BridgeErrorDetails {
 export function isPendingReconciliationRequired(error: unknown): boolean {
   return getBridgeErrorCode(error) === 'PENDING_TRANSACTION_RECONCILIATION_REQUIRED';
 }
+
+const DEFINITE_PRE_BROADCAST_CHAT_ERROR_CODES = new Set<BridgeErrorCode>([
+  'ACCOUNT_LOCKED',
+  'NODE_CAPABILITY_MISSING',
+  'MISSING_GROUP_KEY',
+  'MISSING_RECIPIENT_PUBLIC_KEY',
+  'NOT_GROUP_MEMBER',
+  'ROUTE_UNAVAILABLE',
+  'STALE_CONTEXT',
+  'USER_CANCELLED',
+  'VALIDATION_FAILED',
+]);
+
+/**
+ * Home turns a failure after signing/dispatch into a signed `outcome: unknown`
+ * result. A thrown structured precondition error therefore proves this attempt
+ * did not broadcast and can use Chat's rejected/retryable delivery state.
+ * Plain/transport errors, generic HOME_BRIDGE_ERROR, and reconciliation blocks
+ * remain ambiguous because repeating them could duplicate a transaction.
+ */
+export function isDefiniteChatMutationRejection(error: unknown): boolean {
+  const details = getBridgeErrorDetails(error);
+
+  if (
+    details.outcome === 'unknown' ||
+    details.code === 'PENDING_TRANSACTION_RECONCILIATION_REQUIRED'
+  ) {
+    return false;
+  }
+
+  if (details.outcome === 'rejected') {
+    return true;
+  }
+
+  return !!details.code && DEFINITE_PRE_BROADCAST_CHAT_ERROR_CODES.has(details.code as BridgeErrorCode);
+}
+
+/** Exact compatibility signal for Home 2's resolved-before-state-update race. */
+export function isHomeUnlockStateRace(error: unknown): boolean {
+  const details = getBridgeErrorDetails(error);
+
+  return details.action === 'UNLOCK_SELECTED_ACCOUNT' && details.code === 'ACCOUNT_LOCKED';
+}

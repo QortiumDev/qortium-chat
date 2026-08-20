@@ -17,6 +17,7 @@ import {
   QDN_PUBLISH_SOURCE_MAX_BYTES,
   shouldClearStagedAttachmentOnAccountLock,
 } from './attachments';
+import { AccountUnlockTransition } from './accountUnlockTransition';
 import {
   buildActiveChatsWebSocketUrl,
   buildGroupMessagesWebSocketUrl,
@@ -62,7 +63,12 @@ import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch
 import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
 import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
 import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
-import { getBridgeErrorCode, isPendingReconciliationRequired } from './bridgeErrors';
+import {
+  getBridgeErrorCode,
+  isDefiniteChatMutationRejection,
+  isHomeUnlockStateRace,
+  isPendingReconciliationRequired,
+} from './bridgeErrors';
 import {
   clearNetworkKeyedEntries,
   filterChatJournalEntries,
@@ -1420,6 +1426,12 @@ export default function App() {
   const groupDiscoveryRequestRef = useRef(0);
   const qortalGroupDiscoveryRequestRef = useRef(0);
   const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
+  // Home 2 versions before the unlock ordering fix can notify this QDN view
+  // that its account became unlocked, then reject UNLOCK_SELECTED_ACCOUNT
+  // because their permission resolver raced the main-process state update.
+  // Active transitions latch that notification so the initiating action can
+  // continue once without opening a second unlock prompt.
+  const accountUnlockTransitionsRef = useRef(new Set<AccountUnlockTransition>());
   const selectedAccountRefreshCallbackRef = useRef<() => void>(() => undefined);
   const [directAddress, setDirectAddress] = useState('');
   const [isDirectSearchOpen, setDirectSearchOpen] = useState(false);
@@ -4771,8 +4783,12 @@ export default function App() {
     }
 
     setWriteError('');
+    const requestedAccount = account;
     const requestedAccountAddress = account.address;
     const refreshGeneration = accountRefreshGenerationRef.current;
+    const unlockTransition = new AccountUnlockTransition();
+
+    accountUnlockTransitionsRef.current.add(unlockTransition);
 
     try {
       const selectedAccount = normalizeSelectedAccount(
@@ -4793,6 +4809,27 @@ export default function App() {
 
       return selectedAccount.isUnlocked ? selectedAccount : null;
     } catch (error) {
+      // Compatibility for older Home 2 builds: the account-state event is
+      // emitted only after qdn-views has recorded the unlocked state, so it is
+      // safe to continue this original action once. A timeout or any other
+      // error keeps the draft/action untouched.
+      if (isHomeUnlockStateRace(error) && await unlockTransition.wait()) {
+        if (
+          accountRefreshGenerationRef.current === refreshGeneration &&
+          !accountRefreshPendingRef.current &&
+          currentAccountAddressRef.current === requestedAccountAddress
+        ) {
+          const selectedAccount = { ...requestedAccount, isUnlocked: true };
+
+          setAccount(selectedAccount);
+          setAccountError('');
+          setWriteError('');
+          return selectedAccount;
+        }
+
+        return null;
+      }
+
       if (
         accountRefreshGenerationRef.current === refreshGeneration &&
         !accountRefreshPendingRef.current &&
@@ -4801,6 +4838,9 @@ export default function App() {
         setWriteError(getBridgeErrorMessage(error, t('status.loadingError.selectedAccount'), t));
       }
       return null;
+    } finally {
+      accountUnlockTransitionsRef.current.delete(unlockTransition);
+      unlockTransition.dispose();
     }
   }
 
@@ -5330,7 +5370,7 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? isChatSendRejectedError(error)
+            ? isChatSendRejectedError(error) || isDefiniteChatMutationRejection(error)
               ? failPendingSend(candidate, message)
               : failPendingSendAmbiguously(candidate, message)
             : candidate,
@@ -5427,7 +5467,7 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? isChatSendRejectedError(error)
+            ? isChatSendRejectedError(error) || isDefiniteChatMutationRejection(error)
               ? failPendingRevision(candidate, message)
               : failPendingRevisionAmbiguously(candidate, message)
             : candidate,
@@ -8708,13 +8748,27 @@ export default function App() {
       }
 
       if (isSelectedAccountChangedMessage(event.data)) {
-        startupAccountRefreshCoordinatorRef.current?.notify();
+        let consumedByUnlockTransition = false;
+
+        for (const transition of accountUnlockTransitionsRef.current) {
+          consumedByUnlockTransition = transition.notify() || consumedByUnlockTransition;
+        }
+
+        if (!consumedByUnlockTransition) {
+          startupAccountRefreshCoordinatorRef.current?.notify();
+        }
       }
     }
 
     window.addEventListener('message', handleHostMessage);
 
-    return () => window.removeEventListener('message', handleHostMessage);
+    return () => {
+      window.removeEventListener('message', handleHostMessage);
+      for (const transition of accountUnlockTransitionsRef.current) {
+        transition.dispose();
+      }
+      accountUnlockTransitionsRef.current.clear();
+    };
   }, []);
 
   useEffect(() => {

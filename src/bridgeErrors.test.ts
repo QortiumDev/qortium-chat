@@ -3,6 +3,8 @@ import {
   BRIDGE_ERROR_CODES,
   getBridgeErrorCode,
   getBridgeErrorDetails,
+  isDefiniteChatMutationRejection,
+  isHomeUnlockStateRace,
   isPendingReconciliationRequired,
 } from './bridgeErrors';
 
@@ -97,5 +99,31 @@ describe('bridgeErrors', () => {
     expect(isPendingReconciliationRequired({ code: 'ROUTE_UNAVAILABLE' })).toBe(false);
     expect(isPendingReconciliationRequired(new Error('no code'))).toBe(false);
     expect(isPendingReconciliationRequired(null)).toBe(false);
+  });
+
+  it('classifies structured pre-broadcast chat failures as definite rejections', () => {
+    expect(isDefiniteChatMutationRejection({ code: 'ACCOUNT_LOCKED' })).toBe(true);
+    expect(isDefiniteChatMutationRejection({ code: 'ROUTE_UNAVAILABLE' })).toBe(true);
+    expect(isDefiniteChatMutationRejection({ code: 'HOME_BRIDGE_ERROR', outcome: 'rejected' })).toBe(true);
+  });
+
+  it('keeps true unknown, reconciliation, generic, and transport failures non-retryable', () => {
+    expect(isDefiniteChatMutationRejection({ code: 'ACCOUNT_LOCKED', outcome: 'unknown' })).toBe(false);
+    expect(isDefiniteChatMutationRejection({
+      code: 'PENDING_TRANSACTION_RECONCILIATION_REQUIRED',
+      outcome: 'rejected',
+    })).toBe(false);
+    expect(isDefiniteChatMutationRejection({ code: 'HOME_BRIDGE_ERROR' })).toBe(false);
+    expect(isDefiniteChatMutationRejection(new Error('Request timed out.'))).toBe(false);
+  });
+
+  it('recognizes only the structured Home unlock/account-state race', () => {
+    expect(isHomeUnlockStateRace({
+      action: 'UNLOCK_SELECTED_ACCOUNT',
+      code: 'ACCOUNT_LOCKED',
+    })).toBe(true);
+    expect(isHomeUnlockStateRace({ action: 'SEND_CHAT_MESSAGE', code: 'ACCOUNT_LOCKED' })).toBe(false);
+    expect(isHomeUnlockStateRace({ action: 'UNLOCK_SELECTED_ACCOUNT', code: 'USER_CANCELLED' })).toBe(false);
+    expect(isHomeUnlockStateRace(new Error('The account was not unlocked.'))).toBe(false);
   });
 });
