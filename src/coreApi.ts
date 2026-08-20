@@ -252,6 +252,37 @@ export async function getNodeStatus() {
   return qdnRequest<NodeStatus>({ action: 'GET_NODE_STATUS' });
 }
 
+export async function getQortalActiveGroupStats(limit = 50) {
+  const normalizedLimit = Math.min(50, Math.max(1, Math.floor(limit)));
+
+  return fetchNodeApiDataFor<Array<{ groupId: number; size?: number }>>(
+    'qortal',
+    `/chat/groupstats?limit=${normalizedLimit}`,
+    'Active group chats',
+    65536,
+  );
+}
+
+export async function listGroups(
+  network: ChatNetwork,
+  actions?: QdnAction[],
+  limit = DEFAULT_LIST_LIMIT,
+) {
+  if (hasBridgeAction(actions, 'LIST_GROUPS')) {
+    return bridgeRequest<GroupData[]>(network, {
+      action: 'LIST_GROUPS',
+      limit,
+      reverse: false,
+    });
+  }
+
+  return fetchNodeApiDataFor<GroupData[]>(
+    network,
+    `/groups?limit=${Math.max(0, Math.floor(limit))}&reverse=false`,
+    'Group catalogue',
+  );
+}
+
 // `network` picks Qortium vs Qortal (default 'qortium' keeps every pre-dual-
 // chain call site byte-identical). SEARCH_GROUPS is Qortium-only — Qortal Core
 // has no /groups/search — so a Qortal search with a query term lists every
@@ -271,22 +302,16 @@ export async function searchGroups(network: ChatNetwork, search: string, actions
   }
 
   if (!trimmedSearch && hasBridgeAction(actions, 'LIST_GROUPS')) {
-    return bridgeRequest<GroupData[]>(network, {
-      action: 'LIST_GROUPS',
-      limit: DEFAULT_LIST_LIMIT,
-      reverse: false,
-    });
+    return listGroups(network, actions);
   }
 
   if (trimmedSearch && network === 'qortal' && hasBridgeAction(actions, 'LIST_GROUPS')) {
-    const allGroups = await bridgeRequest<GroupData[]>(network, {
-      action: 'LIST_GROUPS',
-      limit: DEFAULT_LIST_LIMIT,
-      reverse: false,
-    });
+    const allGroups = await listGroups(network, actions, 0);
     const needle = trimmedSearch.toLowerCase();
 
-    return allGroups.filter((group) => group.groupName?.toLowerCase().includes(needle));
+    return allGroups.filter((group) =>
+      group.groupName?.toLowerCase().includes(needle) || String(group.groupId) === needle,
+    );
   }
 
   return fetchNodeApiDataFor<GroupData[]>(network, buildGroupsPath(search), 'Group search');
