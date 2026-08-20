@@ -12,6 +12,14 @@ import {
   buildQortalHubGroupChatReactionPayload,
   normalizeQortalOutgoingMessage,
 } from './qortalChatPayload';
+import {
+  getQortalGeneralChatMessages,
+  rememberQortalGeneralChatAccount,
+  sendQortalGeneralChatDelete,
+  sendQortalGeneralChatEdit,
+  sendQortalGeneralChatMessage,
+  sendQortalGeneralChatReaction,
+} from './qortalGeneralChat';
 import type {
   ActiveChats,
   ChatAttachmentOutcome,
@@ -664,6 +672,15 @@ export async function getGroupMessages(
   // `limit` lets cheap callers (the sidebar activity sweep) request a small
   // window instead of the full transcript page.
   const limit = options.limit ?? DEFAULT_LIST_LIMIT;
+
+  // Qortal Core rejects/discards native groupless CHAT transactions. Community
+  // Edition's General Chat protocol instead carries the signed group-0 CHAT
+  // bytes inside an unconfirmable MESSAGE transaction. Read that wrapper feed
+  // directly before considering Hub's ordinary SEARCH_CHAT_MESSAGES action.
+  if (network === 'qortal' && groupId === 0) {
+    return getQortalGeneralChatMessages({ before: options.before, limit });
+  }
+
   const messageRequest = {
     encoding: 'BASE64',
     // Home 2's native chain-read gate requires the Core-canonical field name,
@@ -1621,11 +1638,8 @@ export async function sendChatMessage(
 ) {
   const txGroupId = normalizeChatGroupId(groupId);
 
-  // Qortal has no general chat (txGroupId 0 is Qortium-only — Home's bridge
-  // rejects it on qortalRequest); catch it here too so a caller mistake fails
-  // fast instead of round-tripping to Home first.
   if (network === 'qortal' && txGroupId === 0) {
-    throw new Error('Qortal has no general chat group.');
+    return sendQortalGeneralChatMessage(message, chatReference);
   }
 
   const request = {
@@ -1641,14 +1655,6 @@ export async function sendChatMessage(
   return normalizeChatSendResult(
     await bridgeRequest<unknown>(network, chatReference ? { ...request, chatReference } : request),
   );
-}
-
-function assertQortalGeneralChatAllowed(network: ChatNetwork, txGroupId: number) {
-  // Same guard as sendChatMessage: fail fast on a caller mistake instead of
-  // round-tripping to Home first (Qortal has no general/txGroupId-0 chat).
-  if (network === 'qortal' && txGroupId === 0) {
-    throw new Error('Qortal has no general chat group.');
-  }
 }
 
 // Public group message revisions (edit/delete/reaction) all ride the same
@@ -1674,7 +1680,9 @@ export async function sendChatEdit(
 ) {
   const txGroupId = normalizeChatGroupId(groupId);
 
-  assertQortalGeneralChatAllowed(network, txGroupId);
+  if (network === 'qortal' && txGroupId === 0) {
+    return sendQortalGeneralChatEdit(message, chatReference);
+  }
 
   if (hasBridgeAction(actions, 'SEND_CHAT_EDIT')) {
     const wireMessage =
@@ -1708,7 +1716,9 @@ export async function sendChatDelete(
 ) {
   const txGroupId = normalizeChatGroupId(groupId);
 
-  assertQortalGeneralChatAllowed(network, txGroupId);
+  if (network === 'qortal' && txGroupId === 0) {
+    return sendQortalGeneralChatDelete(chatReference);
+  }
 
   if (hasBridgeAction(actions, 'SEND_CHAT_DELETE')) {
     const wireMessage =
@@ -1737,10 +1747,12 @@ export async function sendChatReaction(
 ) {
   const txGroupId = normalizeChatGroupId(groupId);
 
-  assertQortalGeneralChatAllowed(network, txGroupId);
-
   // Throws for empty/>32-char content before any bridge call, on both paths.
   const qortiumReactionMessage = buildReactionMessageText(content, contentState);
+
+  if (network === 'qortal' && txGroupId === 0) {
+    return sendQortalGeneralChatReaction(chatReference, content, contentState);
+  }
 
   if (hasBridgeAction(actions, 'SEND_CHAT_REACTION')) {
     const wireMessage =
@@ -1933,6 +1945,7 @@ export async function getQortalUserAccount(actions?: QdnAction[]): Promise<Qorta
   const account = await bridgeRequest<{ address: string; publicKey?: string | null }>('qortal', {
     action: 'GET_USER_ACCOUNT',
   });
+  rememberQortalGeneralChatAccount({ address: account.address, publicKey: account.publicKey ?? null });
   let name: string | null = null;
 
   if (hasBridgeAction(actions, 'GET_PRIMARY_NAME')) {

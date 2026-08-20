@@ -2157,7 +2157,7 @@ export default function App() {
           access: 'interactive',
           activityAt: qortalGroupActivityByIdDisplay.get(group.groupId) ?? null,
           group,
-          membership: 'joined',
+          membership: isGeneralChatGroup(group) ? 'public' : 'joined',
           network: 'qortal',
           preview: qortalGroupPreviewByGroupId.get(group.groupId) ?? null,
           title: getGroupTitle(group, t),
@@ -2696,6 +2696,7 @@ export default function App() {
   // Moved above the Qortal composer-gating block below (which now needs
   // isConfirmedJoinedQortalGroup earlier, for shouldDecryptSelectedGroupMessages).
   const isSelectedQortalGroup = selectedChat?.kind === 'group' && selectedChat.network === 'qortal';
+  const isSelectedQortalGeneralChat = isSelectedQortalGroup && isSelectedGeneralChat;
   const isConfirmedJoinedQortalGroup =
     isSelectedQortalGroup &&
     qortalMemberGroups.phase === 'ready' &&
@@ -2807,7 +2808,9 @@ export default function App() {
   // affordance itself is derived separately below (isJoinableQortalGroup /
   // canSubmitQortalJoin) now that Home 2 advertises JOIN_GROUP/LEAVE_GROUP on
   // the Qortal bridge too.
-  const canSendQortalGroupChat = hasAction(qortalBridge.value.actions, 'SEND_CHAT_MESSAGE');
+  const canSendQortalGroupChat = isSelectedQortalGeneralChat
+    ? isQortalHub && hasAction(qortalBridge.value.actions, 'SIGN_TRANSACTION')
+    : hasAction(qortalBridge.value.actions, 'SEND_CHAT_MESSAGE');
   // P3 safety routing counterpart of canSendPrivateGroupChat above.
   const canSendQortalPrivateGroupChat = hasAction(qortalBridge.value.actions, 'SEND_PRIVATE_GROUP_CHAT_MESSAGE');
   // P3 item 3: for a closed Qortal group, membership is confirmed off the
@@ -2818,10 +2821,11 @@ export default function App() {
   // after the private-group state store.
   const canPostInSelectedQortalGroup =
     isSelectedQortalGroup &&
-    isConfirmedJoinedQortalGroup &&
-    (selectedChat.group.isOpen === true
-      ? true
-      : canSendQortalPrivateGroupChat && selectedQortalPrivateGroupChatState?.isMember === true);
+    (isSelectedQortalGeneralChat ||
+      (isConfirmedJoinedQortalGroup &&
+        (selectedChat.group.isOpen === true
+          ? true
+          : canSendQortalPrivateGroupChat && selectedQortalPrivateGroupChatState?.isMember === true)));
   // Home 2's Qortal lane shares its wallet lock with Qortium, but Qortal Hub
   // has no Qortium identity or unlock action. In Hub, a successful
   // GET_USER_ACCOUNT permission response is the complete writable identity.
@@ -3691,7 +3695,9 @@ export default function App() {
       setQortalMemberGroups({ phase: 'ready', value: snapshot.memberGroups });
       setQortalGroups({
         phase: 'ready',
-        value: snapshot.memberGroups.filter((group) => group.groupId !== GENERAL_CHAT_GROUP_ID),
+        value: isQortalHub
+          ? withGeneralChatGroup(snapshot.memberGroups, '', t)
+          : snapshot.memberGroups.filter((group) => group.groupId !== GENERAL_CHAT_GROUP_ID),
       });
       void loadQortalActiveChats(snapshot.account.address, actionList);
       loadQortalJoinRequestState(nextAccountAddress);

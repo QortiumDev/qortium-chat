@@ -91,6 +91,12 @@ const qdnRequestMock = vi.hoisted(() => vi.fn());
 // 'qortal' — mocked here the same way qdnRequest already is above, so the
 // qortal-specific tests below never touch the real window.qortalRequest.
 const qortalRequestMock = vi.hoisted(() => vi.fn());
+const qortalGeneralChatMessagesMock = vi.hoisted(() => vi.fn());
+const rememberQortalGeneralChatAccountMock = vi.hoisted(() => vi.fn());
+const qortalGeneralChatDeleteMock = vi.hoisted(() => vi.fn());
+const qortalGeneralChatEditMock = vi.hoisted(() => vi.fn());
+const qortalGeneralChatMessageMock = vi.hoisted(() => vi.fn());
+const qortalGeneralChatReactionMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./qdnRequest', () => ({
   buildNodeWebSocketUrl: (path: string) => `ws://127.0.0.1:24891${path}`,
@@ -101,10 +107,25 @@ vi.mock('./qortalRequest', () => ({
   qortalRequest: qortalRequestMock,
 }));
 
+vi.mock('./qortalGeneralChat', () => ({
+  getQortalGeneralChatMessages: qortalGeneralChatMessagesMock,
+  rememberQortalGeneralChatAccount: rememberQortalGeneralChatAccountMock,
+  sendQortalGeneralChatDelete: qortalGeneralChatDeleteMock,
+  sendQortalGeneralChatEdit: qortalGeneralChatEditMock,
+  sendQortalGeneralChatMessage: qortalGeneralChatMessageMock,
+  sendQortalGeneralChatReaction: qortalGeneralChatReactionMock,
+}));
+
 describe('Core API path builders', () => {
   beforeEach(() => {
     qdnRequestMock.mockReset();
     qortalRequestMock.mockReset();
+    qortalGeneralChatMessagesMock.mockReset();
+    rememberQortalGeneralChatAccountMock.mockReset();
+    qortalGeneralChatDeleteMock.mockReset();
+    qortalGeneralChatEditMock.mockReset();
+    qortalGeneralChatMessageMock.mockReset();
+    qortalGeneralChatReactionMock.mockReset();
   });
 
   it('builds browse and search group paths', () => {
@@ -1232,10 +1253,33 @@ describe('Core API path builders', () => {
       });
     });
 
-    it('rejects sending to Qortal group 0 (no general chat there) without ever calling the bridge', async () => {
-      await expect(sendChatMessage('qortal', 0, 'hi')).rejects.toThrow('Qortal has no general chat group.');
+    it('routes Qortal group 0 sends through the MESSAGE-wrapped General Chat protocol', async () => {
+      qortalGeneralChatMessageMock.mockResolvedValueOnce({ signature: 'wrapped-sig', timestamp: 1700000000020 });
+
+      await expect(sendChatMessage('qortal', 0, 'hi')).resolves.toEqual({
+        signature: 'wrapped-sig',
+        timestamp: 1700000000020,
+      });
+      expect(qortalGeneralChatMessageMock).toHaveBeenCalledWith('hi', undefined);
       expect(qortalRequestMock).not.toHaveBeenCalled();
       expect(qdnRequestMock).not.toHaveBeenCalled();
+    });
+
+    it('reads Qortal group 0 from the MESSAGE wrapper feed', async () => {
+      qortalGeneralChatMessagesMock.mockResolvedValueOnce([
+        { sender: 'Qsender', signature: 'wrapped-sig', timestamp: 100, txGroupId: 0 },
+      ]);
+
+      await expect(
+        getGroupMessages(
+          'qortal',
+          { groupId: 0, groupName: 'General Chat', isOpen: true },
+          ['SEARCH_CHAT_MESSAGES'],
+          { before: 501, limit: 20 },
+        ),
+      ).resolves.toEqual([{ sender: 'Qsender', signature: 'wrapped-sig', timestamp: 100, txGroupId: 0 }]);
+      expect(qortalGeneralChatMessagesMock).toHaveBeenCalledWith({ before: 501, limit: 20 });
+      expect(qortalRequestMock).not.toHaveBeenCalled();
     });
 
     it('still allows Qortium group 0 (general chat) sends', async () => {
@@ -1322,6 +1366,10 @@ describe('Core API path builders', () => {
       expect(qortalRequestMock).toHaveBeenNthCalledWith(2, {
         action: 'GET_PRIMARY_NAME',
         address: 'QortalAddr',
+      });
+      expect(rememberQortalGeneralChatAccountMock).toHaveBeenCalledWith({
+        address: 'QortalAddr',
+        publicKey: 'pub123',
       });
     });
 
@@ -1511,16 +1559,25 @@ describe('Core API path builders', () => {
         expect(qortalRequestMock).not.toHaveBeenCalled();
       });
 
-      it('rejects Qortal group 0 for edit/delete/reaction, same as sendChatMessage', async () => {
-        await expect(sendChatEdit('qortal', 0, 'x', 'ref', ['SEND_CHAT_EDIT'])).rejects.toThrow(
-          'Qortal has no general chat group.',
-        );
-        await expect(sendChatDelete('qortal', 0, 'ref', ['SEND_CHAT_DELETE'])).rejects.toThrow(
-          'Qortal has no general chat group.',
-        );
+      it('routes Qortal group 0 edit/delete/reaction through the MESSAGE wrapper protocol', async () => {
+        qortalGeneralChatEditMock.mockResolvedValueOnce({ signature: 'edit', timestamp: 1 });
+        qortalGeneralChatDeleteMock.mockResolvedValueOnce({ signature: 'delete', timestamp: 2 });
+        qortalGeneralChatReactionMock.mockResolvedValueOnce({ signature: 'reaction', timestamp: 3 });
+
+        await expect(sendChatEdit('qortal', 0, 'x', 'ref', ['SEND_CHAT_EDIT'])).resolves.toEqual({
+          signature: 'edit',
+          timestamp: 1,
+        });
+        await expect(sendChatDelete('qortal', 0, 'ref', ['SEND_CHAT_DELETE'])).resolves.toEqual({
+          signature: 'delete',
+          timestamp: 2,
+        });
         await expect(
           sendChatReaction('qortal', 0, 'ref', '👍', true, ['SEND_CHAT_REACTION']),
-        ).rejects.toThrow('Qortal has no general chat group.');
+        ).resolves.toEqual({ signature: 'reaction', timestamp: 3 });
+        expect(qortalGeneralChatEditMock).toHaveBeenCalledWith('x', 'ref');
+        expect(qortalGeneralChatDeleteMock).toHaveBeenCalledWith('ref');
+        expect(qortalGeneralChatReactionMock).toHaveBeenCalledWith('ref', '👍', true);
         expect(qortalRequestMock).not.toHaveBeenCalled();
         expect(qdnRequestMock).not.toHaveBeenCalled();
       });
