@@ -1,7 +1,7 @@
 import nacl from 'tweetnacl';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { base58Encode } from './base58';
+import { base58Decode, base58Encode } from './base58';
 import {
   buildUnsignedQortalGeneralChatBytes,
   buildUnsignedQortalGeneralWrapperBytes,
@@ -9,6 +9,7 @@ import {
   deriveQortalGeneralWrapperKeys,
   getQortalGeneralChatMessages,
   parseSignedQortalGeneralChatBytes,
+  sendQortalGeneralChatMessage,
   stampQortalGeneralChatNonce,
 } from './qortalGeneralChat';
 
@@ -35,6 +36,10 @@ function signedGeneralChat(message = '{"version":3,"messageText":"hello"}') {
 describe('Qortal MESSAGE-wrapped General Chat', () => {
   beforeEach(() => {
     qortalRequestMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('builds and verifies the signed embedded group-0 CHAT transaction', () => {
@@ -176,5 +181,65 @@ describe('Qortal MESSAGE-wrapped General Chat', () => {
         timestamp: 1_700_000_000_000,
       }),
     ).toThrow('Message is too large for Qortal General Chat.');
+  });
+
+  it('asks Hub to sign only the inner CHAT and posts a MESSAGE containing those signed bytes', async () => {
+    const accountKeyPair = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    let signedChat: Uint8Array | null = null;
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('true', { status: 200 }));
+
+    class ImmediatePowWorker {
+      private messageListener: ((event: { data: { id: string; nonce: number } }) => void) | null = null;
+
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        if (type === 'message') {
+          this.messageListener = listener as unknown as (event: { data: { id: string; nonce: number } }) => void;
+        }
+      }
+
+      postMessage(value: { difficulty: number; id: string }) {
+        queueMicrotask(() => this.messageListener?.({ data: { id: value.id, nonce: value.difficulty } }));
+      }
+
+      terminate() {}
+    }
+
+    qortalRequestMock.mockImplementation(async (request: Record<string, unknown>) => {
+      if (request.action === 'WHICH_UI') return 'HUB_WEB';
+      if (request.action === 'GET_USER_ACCOUNT') {
+        return { address: 'Qaccount', publicKey: base58Encode(accountKeyPair.publicKey) };
+      }
+      if (request.action === 'SIGN_TRANSACTION') {
+        const unsignedChat = base58Decode(String(request.unsignedBytes));
+        const signature = nacl.sign.detached(unsignedChat, accountKeyPair.secretKey);
+
+        signedChat = new Uint8Array([...unsignedChat, ...signature]);
+        return base58Encode(signedChat);
+      }
+      throw new Error(`Unexpected Qortal request: ${String(request.action)}`);
+    });
+
+    vi.stubGlobal('Worker', ImmediatePowWorker);
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('window', {
+      location: { origin: 'https://hub.example' },
+      setTimeout,
+    });
+
+    const result = await sendQortalGeneralChatMessage('hello wrapper');
+    const signRequest = qortalRequestMock.mock.calls.find(([request]) => request.action === 'SIGN_TRANSACTION')?.[0];
+
+    expect(signRequest).toMatchObject({ action: 'SIGN_TRANSACTION', process: false });
+    expect(new DataView(base58Decode(String(signRequest.unsignedBytes)).buffer).getInt32(0)).toBe(18);
+    expect(result.signature).toBe(base58Encode(signedChat!.slice(-64)));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://hub.example/transactions/process?apiVersion=2');
+
+    const postedWrapper = base58Decode(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const wrapperView = new DataView(postedWrapper.buffer, postedWrapper.byteOffset, postedWrapper.byteLength);
+    const embeddedLength = wrapperView.getInt32(150);
+
+    expect(wrapperView.getInt32(0)).toBe(17);
+    expect(postedWrapper.slice(154, 154 + embeddedLength)).toEqual(signedChat);
   });
 });

@@ -7,8 +7,8 @@ const repoRoot = process.cwd();
 const previewPort = 4180;
 const cdpPort = 9340;
 const previewUrl = `http://127.0.0.1:${previewPort}/`;
-const screenshotPath = path.join(tmpdir(), 'qortium-chat-gateway-readonly-smoke.png');
-const browserProfile = mkdtempSync(path.join(tmpdir(), 'qortium-chat-gateway-smoke-'));
+const screenshotPath = path.join(tmpdir(), 'qortium-chat-qortal-gateway-readonly-smoke.png');
+const browserProfile = mkdtempSync(path.join(tmpdir(), 'qortium-chat-qortal-gateway-smoke-'));
 const children = [];
 
 function delay(milliseconds) {
@@ -117,37 +117,52 @@ const bootstrap = `
       replies: true,
       version: 2
     }));
-    window.__gatewaySmoke = { calls: [], websocketCount: 0 };
+    window._qdnContext = 'gateway';
+    window.__gatewaySmoke = { calls: [], fetchCalls: [], websocketCount: 0 };
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+      window.__gatewaySmoke.fetchCalls.push(url.pathname + url.search);
+
+      if (url.pathname === '/transactions/unconfirmed' && url.searchParams.get('txType') === 'MESSAGE') {
+        return new Response('[]', {
+          headers: { 'content-type': 'application/json' },
+          status: 200
+        });
+      }
+
+      return nativeFetch(input, init);
+    };
     window.WebSocket = class {
       constructor() {
         window.__gatewaySmoke.websocketCount += 1;
         throw new Error('Gateway mode must not construct a WebSocket.');
       }
     };
-    window.qdnRequest = async (request) => {
+    window.qortalRequest = async (request) => {
       window.__gatewaySmoke.calls.push({ ...request });
 
       switch (String(request.action || '').toUpperCase()) {
-        case 'SHOW_ACTIONS':
-          return ['FETCH_NODE_API', 'GET_NODE_STATUS', 'IS_USING_PUBLIC_NODE', 'SHOW_ACTIONS', 'WHICH_UI'];
-        case 'WHICH_UI':
-          return 'QORTIUM_GATEWAY';
-        case 'IS_USING_PUBLIC_NODE':
-          return true;
-        case 'GET_NODE_STATUS':
-          return { height: 100, isSynchronizing: false, syncPercent: 100 };
-        case 'FETCH_NODE_API':
-          return {
-            body: '[]',
-            contentLength: 2,
-            contentType: 'application/json',
-            data: [],
-            ok: true,
-            status: 200,
-            statusText: 'OK'
-          };
+        case 'LIST_GROUPS':
+          return [
+            { groupId: 0, groupName: 'General Chat', isOpen: true },
+            { groupId: 23, groupName: 'Public Test Group', isOpen: true }
+          ];
+        case 'SEARCH_CHAT_MESSAGES':
+          return request.txGroupId === 23
+            ? [{
+                data: btoa(JSON.stringify({ messageText: 'gateway result', version: 3 })),
+                encoding: 'BASE64',
+                isEncrypted: false,
+                isText: true,
+                sender: 'Qsender',
+                signature: 'gateway-message',
+                timestamp: 1700000000000,
+                txGroupId: 23
+              }]
+            : [];
         default:
-          throw new Error('Unsupported gateway action: ' + request.action);
+          throw new Error('Unsupported Qortal gateway action: ' + request.action);
       }
     };
   })();
@@ -188,7 +203,7 @@ try {
   await client.send('Page.addScriptToEvaluateOnNewDocument', { source: bootstrap });
   await client.send('Page.navigate', { url: previewUrl });
 
-  const rendered = await waitUntil('gateway read-only UI', 12_000, async () =>
+  const rendered = await waitUntil('Qortal gateway read-only UI', 12_000, async () =>
     evaluate(
       client,
       `(() => {
@@ -196,13 +211,17 @@ try {
           .map((element) => element.textContent.trim())
           .filter(Boolean);
         const groupsToggle = [...document.querySelectorAll('.panel__toggle')]
-          .find((button) => button.textContent.includes('Joined groups'));
+          .find((button) => button.textContent.trim() === 'Groups');
+        const selectedTitle = document.querySelector('.chat-pane__title, .chat-header__title')?.textContent.trim() ?? '';
 
-        return notices.length >= 2 && groupsToggle
+        return notices.length >= 2 && groupsToggle && document.body.textContent.includes('General Chat')
           ? {
               connectButtons: document.querySelectorAll('.account-connect button').length,
               groupsExpanded: groupsToggle.getAttribute('aria-expanded'),
-              notices
+              notices,
+              qortalSections: document.querySelectorAll('.network-section--qortal').length,
+              qortiumSections: document.querySelectorAll('.network-section--qortium').length,
+              selectedTitle
             }
           : null;
       })()`,
@@ -213,19 +232,42 @@ try {
     client,
     `(() => {
       const groupsToggle = [...document.querySelectorAll('.panel__toggle')]
-        .find((button) => button.textContent.includes('Joined groups'));
+        .find((button) => button.textContent.trim() === 'Groups');
       groupsToggle.click();
     })()`,
   );
   await delay(250);
 
+  await evaluate(
+    client,
+    `(() => {
+      const searchButton = document.querySelector('.network-section--qortal button[aria-label="Search groups"]');
+      searchButton.click();
+    })()`,
+  );
+  await delay(100);
+  await evaluate(
+    client,
+    `(() => {
+      document.querySelector('.network-section--qortal form.search').requestSubmit();
+    })()`,
+  );
+
+  await waitUntil('Qortal public group results', 12_000, async () =>
+    evaluate(client, `document.body.textContent.includes('Public Test Group')`),
+  );
+
   const verified = await evaluate(
     client,
     `(() => ({
       calls: window.__gatewaySmoke.calls.map((call) => call.action),
+      directPanels: [...document.querySelectorAll('.network-section--qortal .panel__toggle')]
+        .filter((button) => button.textContent.trim() === 'Direct').length,
+      fetchCalls: window.__gatewaySmoke.fetchCalls,
       groupsExpanded: [...document.querySelectorAll('.panel__toggle')]
-        .find((button) => button.textContent.includes('Joined groups'))
+        .find((button) => button.textContent.trim() === 'Groups')
         .getAttribute('aria-expanded'),
+      loadingRows: document.querySelectorAll('.loading-row').length,
       notificationStorage: localStorage.getItem('qortium-chat-notifications-v2'),
       sidebarStorage: localStorage.getItem('qortium-chat:sidebarCollapse'),
       websocketCount: window.__gatewaySmoke.websocketCount
@@ -247,8 +289,18 @@ try {
 
   if (
     rendered.connectButtons !== 0 ||
-    rendered.groupsExpanded !== 'false' ||
+    rendered.qortalSections !== 1 ||
+    rendered.qortiumSections !== 0 ||
+    rendered.groupsExpanded !== 'true' ||
     verified.groupsExpanded !== 'true' ||
+    verified.directPanels !== 0 ||
+    verified.loadingRows !== 0 ||
+    verified.calls.includes('GET_USER_ACCOUNT') ||
+    verified.calls.includes('SHOW_ACTIONS') ||
+    verified.calls.includes('WHICH_UI') ||
+    !verified.calls.includes('LIST_GROUPS') ||
+    !verified.calls.includes('SEARCH_CHAT_MESSAGES') ||
+    !verified.fetchCalls.some((url) => url.includes('/transactions/unconfirmed?txType=MESSAGE')) ||
     verified.sidebarStorage !== expectedSidebar ||
     verified.notificationStorage !== expectedNotifications ||
     verified.websocketCount !== 0

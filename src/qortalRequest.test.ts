@@ -4,8 +4,10 @@ import {
   hasLegacyQortalBridgeCandidate,
   hasQortalChatBridgeActions,
   hasQortalHomeBridge,
+  isQortalPublicRuntime,
   isQortalChatBridgeAvailable,
   LOCAL_READ_ACTIONS,
+  QORTAL_PUBLIC_READ_ACTIONS,
   qortalRequest,
 } from './qortalRequest';
 
@@ -51,6 +53,30 @@ describe('qortalRequest bridge adapter', () => {
       transport: 'home',
       ui: 'HUB_ELECTRON',
     });
+  });
+
+  it.each([
+    ['gateway', 'QORTAL_GATEWAY'],
+    ['domainMap', 'QORTAL_DOMAIN_MAP'],
+  ] as const)('classifies Qortal %s renders without probing unsupported UI actions', async (context, ui) => {
+    const qortalRequestMock = vi.fn();
+
+    vi.stubGlobal('window', {
+      _qdnContext: context,
+      location: { origin: 'https://public-qortal.example' },
+      qortalRequest: qortalRequestMock,
+    });
+
+    expect(isQortalPublicRuntime()).toBe(true);
+    await expect(getQortalBridgeState()).resolves.toEqual({
+      actions: [...QORTAL_PUBLIC_READ_ACTIONS],
+      host: 'gateway',
+      isHomeBridge: false,
+      isUsingPublicNode: true,
+      transport: 'gateway',
+      ui,
+    });
+    expect(qortalRequestMock).not.toHaveBeenCalled();
   });
 
   it('recognizes a legacy Home bridge candidate without claiming a dedicated global', () => {
@@ -138,6 +164,42 @@ describe('qortalRequest bridge adapter', () => {
         ui: 'HUB_ELECTRON',
       }),
     ).toBe(true);
+  });
+
+  it('admits the accountless public Qortal read contract without account actions', () => {
+    expect(hasQortalChatBridgeActions([...QORTAL_PUBLIC_READ_ACTIONS], 'gateway')).toBe(true);
+    expect(QORTAL_PUBLIC_READ_ACTIONS).not.toContain('GET_USER_ACCOUNT');
+    expect(QORTAL_PUBLIC_READ_ACTIONS).not.toContain('SEND_CHAT_MESSAGE');
+  });
+
+  it('uses same-origin GETs for public Qortal node reads without forwarding FETCH_NODE_API', async () => {
+    const qortalRequestMock = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([{ type: 'MESSAGE' }]), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      }),
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('window', {
+      _qdnContext: 'gateway',
+      location: { origin: 'https://qortal.link' },
+      qortalRequest: qortalRequestMock,
+    });
+
+    await expect(
+      qortalRequest({
+        action: 'FETCH_NODE_API',
+        maxBytes: 4096,
+        path: '/transactions/unconfirmed?txType=MESSAGE',
+      }),
+    ).resolves.toMatchObject({ data: [{ type: 'MESSAGE' }], ok: true, status: 200 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://qortal.link/transactions/unconfirmed?txType=MESSAGE',
+      { method: 'GET' },
+    );
+    expect(qortalRequestMock).not.toHaveBeenCalled();
   });
 
   it('uses the rendered Core origin for Hub node reads instead of sending an unsupported action', async () => {
