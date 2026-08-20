@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Kan de status van de privégroepschat niet laden.",
   "button.privateGroup.publishKey": "Groepssleutel publiceren",
   "label.composer.privateGroupBytesRemaining": "{remaining} van {max} bytes resterend",
+  "hint.privateGroupKeyMissing": "Dit account heeft de privésleutel voor deze groep niet, dus verzenden is uitgeschakeld.",
+  "hint.privateGroupKeyMissingAdmin": "Vraag de sleutel aan een groepsbeheerder. Een beheerder kan deze hier aanmaken of vernieuwen.",
+  "status.privateGroupKey.requestedAdmin": "Privégroepssleutel aangevraagd. Een groepsbeheerder moet deze nu doorgeven of vernieuwen.",
+  "status.privateGroupKey.rotating": "Groepssleutel wordt aangemaakt…",
+  "status.privateGroupKey.rotated": "Privégroepssleutel aangemaakt. Berichten vernieuwd.",
+  "button.privateGroup.requestKey": "Sleutel aanvragen",
+  "button.privateGroup.keyRequested": "Sleutel aangevraagd",
+  "button.privateGroup.rotateKey": "Sleutel aanmaken / vernieuwen",
 } as const;

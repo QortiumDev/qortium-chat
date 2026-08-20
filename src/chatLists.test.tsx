@@ -43,4 +43,13 @@ describe('GroupList private-group capability badges', () => {
     expect(markup).toContain('class="group-row__lock"');
     expect(markup).not.toContain('group-row__unavailable');
   });
+
+  it('shows the chain-specific numeric group id before the protocol chip', () => {
+    const markup = renderPrivateGroup('available');
+    const idPosition = markup.indexOf('class="group-row__id">#12');
+    const protocolPosition = markup.indexOf('class="group-row__protocol">CHAT');
+
+    expect(idPosition).toBeGreaterThan(-1);
+    expect(protocolPosition).toBeGreaterThan(idPosition);
+  });
 });

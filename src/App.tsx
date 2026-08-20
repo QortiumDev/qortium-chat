@@ -55,6 +55,7 @@ import {
   publishQdnResource,
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
+  rotatePrivateGroupChatKey,
   listGroups,
   searchGroups,
   selectQdnPublishSource,
@@ -62,7 +63,12 @@ import {
   submitGroupApproval,
 } from './coreApi';
 import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch';
-import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
+import {
+  getPrivateGroupComposerMaxPlaintextBytes,
+  getPrivateGroupKeyAvailability,
+  getUtf8ByteLength,
+  isPrivateGroupKeyActionOutcomeUnknown,
+} from './privateGroupComposer';
 import { PrivateActiveChatsRequestCoordinator } from './privateActiveChatsRequest';
 import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
 import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
@@ -1577,6 +1583,16 @@ export default function App() {
   const [writeError, setWriteError] = useState('');
   const [privateGroupKeyStatus, setPrivateGroupKeyStatus] = useState('');
   const [privateGroupKeyError, setPrivateGroupKeyError] = useState('');
+  const [privateGroupKeyActionPending, setPrivateGroupKeyActionPending] = useState<'request' | 'rotate' | null>(null);
+  // Manual missing-key requests are deliberately one-shot per account/group
+  // for this session. The request is an on-chain write, so leaving the button
+  // live after success would make an impatient second click publish a duplicate.
+  const [explicitPrivateGroupKeyRequests, setExplicitPrivateGroupKeyRequests] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [uncertainPrivateGroupKeyActions, setUncertainPrivateGroupKeyActions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   // P3: GET_PRIVATE_GROUP_CHAT_STATE for the currently selected closed group,
   // keyed by `${network}:${groupId}` (see the fetch effect and
   // getPrivateGroupChatStateKey below) — drives the composer byte cap
@@ -2771,6 +2787,26 @@ export default function App() {
     ? privateGroupChatStateByKey.get(selectedPrivateGroupChatStateKey)
     : undefined;
   const selectedPrivateGroupChatState = selectedPrivateGroupChatStateAsync?.value ?? null;
+  const selectedPrivateGroupKeyAvailability =
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false
+      ? getPrivateGroupKeyAvailability(selectedChat.network ?? 'qortium', selectedPrivateGroupChatState)
+      : undefined;
+  const selectedPrivateGroupKeyMissing = selectedPrivateGroupKeyAvailability === false;
+  const selectedPrivateGroupKeyRequestIdentity =
+    selectedChat?.kind === 'group' && selectedChat.group.isOpen === false
+      ? `${selectedChat.network ?? 'qortium'}:${
+          selectedChat.network === 'qortal' ? qortalAccount?.address ?? 'none' : account?.address ?? 'none'
+        }:${selectedChat.group.groupId}`
+      : null;
+  const selectedPrivateGroupKeyAlreadyRequested =
+    selectedPrivateGroupKeyRequestIdentity !== null &&
+    explicitPrivateGroupKeyRequests.has(selectedPrivateGroupKeyRequestIdentity);
+  const selectedPrivateGroupKeyRequestUncertain =
+    selectedPrivateGroupKeyRequestIdentity !== null &&
+    uncertainPrivateGroupKeyActions.has(`request:${selectedPrivateGroupKeyRequestIdentity}`);
+  const selectedPrivateGroupKeyRotationUncertain =
+    selectedPrivateGroupKeyRequestIdentity !== null &&
+    uncertainPrivateGroupKeyActions.has(`rotate:${selectedPrivateGroupKeyRequestIdentity}`);
   // No separate `selectedQortiumPrivateGroupChatState` narrowing is kept here
   // (unlike the Qortal one below): the one Qortium consumer,
   // getPrivateGroupComposerMaxPlaintextBytes, takes the union type directly
@@ -3036,11 +3072,13 @@ export default function App() {
       ? selectedChat.kind === 'group'
         ? canUseQortalAccount &&
           (selectedChat.group.isOpen === false ? canSendQortalPrivateGroupChat : canSendQortalGroupChat) &&
+          (selectedChat.group.isOpen !== false || !selectedPrivateGroupKeyMissing) &&
           canPostInSelectedQortalGroup
         : canUseQortalAccount && canSendQortalDirectChat
       : canUseSelectedAccount &&
         (selectedChat.kind === 'group'
           ? (selectedChat.group.isOpen === false ? canSendPrivateGroupChat : canSendGroupChat) &&
+            (selectedChat.group.isOpen !== false || !selectedPrivateGroupKeyMissing) &&
             canPostInSelectedGroup
           : canSendDirectChat));
   // P3 item 2a: the composer's visible cap for a closed group reflects the
@@ -3385,6 +3423,15 @@ export default function App() {
   const isAdminOfSelectedGroup =
     selectedGroupId !== null &&
     memberGroups.value.some((group) => group.groupId === selectedGroupId && group.isAdmin === true);
+  const canRequestSelectedPrivateGroupKey =
+    selectedPrivateGroupKeyMissing &&
+    selectedChat?.kind === 'group' &&
+    hasAction(getNetworkActions(selectedChat.network ?? 'qortium'), 'REQUEST_PRIVATE_GROUP_CHAT_KEY');
+  const canRotateSelectedPrivateGroupKey =
+    canRequestSelectedPrivateGroupKey &&
+    selectedChat?.network !== 'qortal' &&
+    isAdminOfSelectedGroup &&
+    hasAction(actions, 'ROTATE_PRIVATE_GROUP_CHAT_KEY');
   const isMemberOfSelectedGroup =
     selectedGroupId !== null && memberGroups.value.some((group) => group.groupId === selectedGroupId);
   // When the selected group's only admin is the null account it has no real
@@ -5043,6 +5090,124 @@ export default function App() {
       setPrivateGroupKeyError(getBridgeErrorMessage(error, t('status.loadingError.privateGroupKeyRecovery'), t));
     } finally {
       setQortalPrivateGroupResolvePending(false);
+    }
+  }
+
+  async function refreshSelectedPrivateGroupKeyState(chat: Extract<SelectedChat, { kind: 'group' }>) {
+    const network = chat.network ?? 'qortium';
+    const chatKey = getSelectedChatKey(chat);
+    const stateKey = getPrivateGroupChatStateKey(network, chat.group.groupId);
+    const state = await getPrivateGroupChatState(network, chat.group.groupId, getNetworkActions(network));
+
+    if (selectedChatKeyRef.current !== chatKey) return;
+    setPrivateGroupChatStateByKey((current) => {
+      const next = new Map(current);
+
+      next.set(stateKey, { phase: 'ready', value: state });
+      return next;
+    });
+  }
+
+  async function handleRequestSelectedPrivateGroupKey() {
+    if (
+      privateGroupKeyActionPending ||
+      selectedPrivateGroupKeyAlreadyRequested ||
+      selectedPrivateGroupKeyRequestUncertain ||
+      selectedChat?.kind !== 'group' ||
+      selectedChat.group.isOpen !== false
+    ) return;
+    const chat = selectedChat;
+    const network = chat.network ?? 'qortium';
+    const actionList = getNetworkActions(network);
+    setPrivateGroupKeyActionPending('request');
+    try {
+      const selectedAccount = await ensureWritableAccountForNetwork(network);
+
+      if (!selectedAccount || selectedChatKeyRef.current !== getSelectedChatKey(chat)) return;
+      setPrivateGroupKeyError('');
+      setPrivateGroupKeyStatus(t('status.privateGroupKey.requesting'));
+      const outcome = await requestPrivateGroupChatKey({ groupId: chat.group.groupId }, actionList, network);
+      const requestIdentity = `${network}:${selectedAccount.address}:${chat.group.groupId}`;
+
+      if (isPrivateGroupKeyActionOutcomeUnknown(outcome)) {
+        setUncertainPrivateGroupKeyActions((current) => new Set(current).add(`request:${requestIdentity}`));
+        if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+          setPrivateGroupKeyStatus('');
+          setPrivateGroupKeyError(t('message.delivery.ambiguous'));
+        }
+        return;
+      }
+      setExplicitPrivateGroupKeyRequests((current) => {
+        if (current.has(requestIdentity)) return current;
+        const next = new Set(current);
+
+        next.add(requestIdentity);
+        return next;
+      });
+      if (outcome.kind === 'recovery' && outcome.recovered === true) {
+        await refreshSelectedPrivateGroupKeyState(chat);
+      }
+      if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+        setPrivateGroupKeyStatus(
+          outcome.kind === 'recovery' && outcome.recovered === true
+            ? t('status.privateGroupKey.recoveredQortal')
+            : t('status.privateGroupKey.requestedAdmin'),
+        );
+      }
+    } catch (error) {
+      if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+        setPrivateGroupKeyStatus('');
+        setPrivateGroupKeyError(getBridgeErrorMessage(error, t('status.loadingError.privateGroupKeyRecovery'), t));
+      }
+    } finally {
+      setPrivateGroupKeyActionPending(null);
+    }
+  }
+
+  async function handleRotateSelectedPrivateGroupKey() {
+    if (
+      privateGroupKeyActionPending ||
+      selectedChat?.kind !== 'group' ||
+      selectedChat.network === 'qortal' ||
+      selectedChat.group.isOpen !== false ||
+      !isAdminOfSelectedGroup ||
+      selectedPrivateGroupKeyRotationUncertain
+    ) return;
+    const chat = selectedChat;
+    setPrivateGroupKeyActionPending('rotate');
+    try {
+      const selectedAccount = await ensureWritableAccountForNetwork('qortium');
+
+      if (!selectedAccount || selectedChatKeyRef.current !== getSelectedChatKey(chat)) return;
+      setPrivateGroupKeyError('');
+      setPrivateGroupKeyStatus(t('status.privateGroupKey.rotating'));
+      const outcome = await rotatePrivateGroupChatKey('qortium', chat.group.groupId, actions);
+      if (isPrivateGroupKeyActionOutcomeUnknown(outcome)) {
+        const requestIdentity = `qortium:${selectedAccount.address}:${chat.group.groupId}`;
+
+        setUncertainPrivateGroupKeyActions((current) => new Set(current).add(`rotate:${requestIdentity}`));
+        if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+          setPrivateGroupKeyStatus('');
+          setPrivateGroupKeyError(t('message.delivery.ambiguous'));
+        }
+        return;
+      }
+      await refreshSelectedPrivateGroupKeyState(chat);
+      if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+        setPrivateGroupKeyStatus(t('status.privateGroupKey.rotated'));
+        void loadMessages(chat, actions, {
+          accountUnlocked: true,
+          quiet: true,
+          skipKeyRecovery: true,
+        });
+      }
+    } catch (error) {
+      if (selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+        setPrivateGroupKeyStatus('');
+        setPrivateGroupKeyError(getBridgeErrorMessage(error, t('status.loadingError.privateGroupKeyRecovery'), t));
+      }
+    } finally {
+      setPrivateGroupKeyActionPending(null);
     }
   }
 
@@ -7592,6 +7757,11 @@ export default function App() {
       await loadPendingApprovals(transaction.groupId);
     }
   }
+
+  useEffect(() => {
+    setExplicitPrivateGroupKeyRequests(new Set());
+    setUncertainPrivateGroupKeyActions(new Set());
+  }, [account?.address, qortalAccount?.address]);
 
   useEffect(() => {
     const accountRefreshCoordinator = new StartupAccountRefreshCoordinator();
@@ -10553,6 +10723,7 @@ export default function App() {
             closedLabel={t('label.group.closed')}
             contextLabel={selectedChatContextLabel}
             description={selectedChatDescription}
+            groupId={selectedChat?.kind === 'group' ? selectedChat.group.groupId : null}
             isClosed={
               selectedChat?.kind === 'group' &&
               !isGeneralChatGroup(selectedChat.group) &&
@@ -10732,6 +10903,45 @@ export default function App() {
                 {!selectedPrivateGroupFeatureUnavailable ? <p>{t('hint.groupApprovalDelay')}</p> : null}
               </div>
               {qortalMemberGroups.phase === 'ready' ? renderJoinGroupButton() : null}
+            </div>
+          ) : selectedPrivateGroupKeyMissing ? (
+            <div aria-live="polite" className="composer composer--notice">
+              <div>
+                <p>{t('hint.privateGroupKeyMissing')}</p>
+                <p>{t('hint.privateGroupKeyMissingAdmin')}</p>
+              </div>
+              <div className="private-group-key-actions">
+                {canRequestSelectedPrivateGroupKey ? (
+                  <button
+                    className="button button--secondary"
+                    disabled={
+                      privateGroupKeyActionPending !== null ||
+                      selectedPrivateGroupKeyAlreadyRequested ||
+                      selectedPrivateGroupKeyRequestUncertain
+                    }
+                    onClick={() => void handleRequestSelectedPrivateGroupKey()}
+                    type="button"
+                  >
+                    {privateGroupKeyActionPending === 'request'
+                      ? t('status.privateGroupKey.requesting')
+                      : selectedPrivateGroupKeyAlreadyRequested
+                        ? t('button.privateGroup.keyRequested')
+                      : t('button.privateGroup.requestKey')}
+                  </button>
+                ) : null}
+                {canRotateSelectedPrivateGroupKey ? (
+                  <button
+                    className="button button--secondary"
+                    disabled={privateGroupKeyActionPending !== null || selectedPrivateGroupKeyRotationUncertain}
+                    onClick={() => void handleRotateSelectedPrivateGroupKey()}
+                    type="button"
+                  >
+                    {privateGroupKeyActionPending === 'rotate'
+                      ? t('status.privateGroupKey.rotating')
+                      : t('button.privateGroup.rotateKey')}
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : !canComposeMessage ? (
             <div aria-live="polite" className="composer composer--notice">

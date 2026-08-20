@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "無法載入私人群組聊天狀態。",
   "button.privateGroup.publishKey": "發布群組金鑰",
   "label.composer.privateGroupBytesRemaining": "剩餘 {remaining}/{max} 位元組",
+  "hint.privateGroupKeyMissing": "此帳戶沒有該群組的私密金鑰，因此無法傳送訊息。",
+  "hint.privateGroupKeyMissingAdmin": "請向群組管理員要求金鑰。管理員可以在此建立或輪替金鑰。",
+  "status.privateGroupKey.requestedAdmin": "已要求私人群組金鑰。群組管理員現在需要轉送或輪替金鑰。",
+  "status.privateGroupKey.rotating": "正在建立群組金鑰…",
+  "status.privateGroupKey.rotated": "私人群組金鑰已建立。訊息已重新整理。",
+  "button.privateGroup.requestKey": "要求金鑰",
+  "button.privateGroup.keyRequested": "已要求金鑰",
+  "button.privateGroup.rotateKey": "建立 / 輪替金鑰",
 } as const;

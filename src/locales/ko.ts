@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "비공개 그룹 채팅 상태를 불러올 수 없습니다.",
   "button.privateGroup.publishKey": "그룹 키 게시",
   "label.composer.privateGroupBytesRemaining": "{max} 중 {remaining}바이트 남음",
+  "hint.privateGroupKeyMissing": "이 계정에는 이 그룹의 비공개 키가 없어 메시지 전송이 비활성화되었습니다.",
+  "hint.privateGroupKeyMissingAdmin": "그룹 관리자에게 키를 요청하세요. 관리자는 여기에서 키를 만들거나 교체할 수 있습니다.",
+  "status.privateGroupKey.requestedAdmin": "비공개 그룹 키를 요청했습니다. 이제 그룹 관리자가 키를 전달하거나 교체해야 합니다.",
+  "status.privateGroupKey.rotating": "그룹 키를 만드는 중…",
+  "status.privateGroupKey.rotated": "비공개 그룹 키를 만들었습니다. 메시지를 새로고침했습니다.",
+  "button.privateGroup.requestKey": "키 요청",
+  "button.privateGroup.keyRequested": "키 요청됨",
+  "button.privateGroup.rotateKey": "키 만들기 / 교체",
 } as const;

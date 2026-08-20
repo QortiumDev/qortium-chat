@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Nie można załadować stanu prywatnego czatu grupowego.",
   "button.privateGroup.publishKey": "Opublikuj klucz grupy",
   "label.composer.privateGroupBytesRemaining": "Pozostało {remaining} z {max} bajtów",
+  "hint.privateGroupKeyMissing": "To konto nie ma prywatnego klucza tej grupy, dlatego wysyłanie jest wyłączone.",
+  "hint.privateGroupKeyMissingAdmin": "Poproś administratora grupy o klucz. Administrator może go tutaj utworzyć lub zmienić.",
+  "status.privateGroupKey.requestedAdmin": "Poproszono o klucz prywatnej grupy. Administrator musi go teraz przekazać lub zmienić.",
+  "status.privateGroupKey.rotating": "Tworzenie klucza grupy…",
+  "status.privateGroupKey.rotated": "Utworzono klucz prywatnej grupy. Wiadomości odświeżono.",
+  "button.privateGroup.requestKey": "Poproś o klucz",
+  "button.privateGroup.keyRequested": "Poproszono o klucz",
+  "button.privateGroup.rotateKey": "Utwórz / zmień klucz",
 } as const;

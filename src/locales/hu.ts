@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Nem sikerült betölteni a privát csoportos csevegés állapotát.",
   "button.privateGroup.publishKey": "Csoportkulcs közzététele",
   "label.composer.privateGroupBytesRemaining": "{remaining}/{max} bájt van hátra",
+  "hint.privateGroupKeyMissing": "Ez a fiók nem rendelkezik a csoport privát kulcsával, ezért a küldés le van tiltva.",
+  "hint.privateGroupKeyMissingAdmin": "Kérd a kulcsot egy csoportadminisztrátortól. Egy admin itt létrehozhatja vagy lecserélheti.",
+  "status.privateGroupKey.requestedAdmin": "A privát csoportkulcsot kértük. Egy csoportadminisztrátornak most továbbítania vagy lecserélnie kell.",
+  "status.privateGroupKey.rotating": "Csoportkulcs létrehozása…",
+  "status.privateGroupKey.rotated": "A privát csoportkulcs létrejött. Az üzenetek frissültek.",
+  "button.privateGroup.requestKey": "Kulcs kérése",
+  "button.privateGroup.keyRequested": "Kulcs kérve",
+  "button.privateGroup.rotateKey": "Kulcs létrehozása / cseréje",
 } as const;

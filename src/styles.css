@@ -1493,6 +1493,7 @@ samp,
   color: var(--qc-color-muted);
 }
 
+.group-row__id,
 .group-row__protocol {
   display: inline-flex;
   align-items: center;
@@ -3749,6 +3750,13 @@ button.message__reply-preview:focus-visible,
 
 .composer--notice .button {
   flex: 0 0 auto;
+}
+
+.composer--notice > .private-group-key-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .error {

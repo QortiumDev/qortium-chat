@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Nu s-a putut încărca starea chatului de grup privat.",
   "button.privateGroup.publishKey": "Publică cheia grupului",
   "label.composer.privateGroupBytesRemaining": "{remaining} din {max} octeți rămași",
+  "hint.privateGroupKeyMissing": "Acest cont nu are cheia privată pentru acest grup, așa că trimiterea este dezactivată.",
+  "hint.privateGroupKeyMissingAdmin": "Solicită cheia de la un administrator al grupului. Un administrator o poate crea sau roti aici.",
+  "status.privateGroupKey.requestedAdmin": "Cheia grupului privat a fost solicitată. Un administrator trebuie acum să o retransmită sau să o rotească.",
+  "status.privateGroupKey.rotating": "Se creează cheia grupului…",
+  "status.privateGroupKey.rotated": "Cheia grupului privat a fost creată. Mesajele au fost actualizate.",
+  "button.privateGroup.requestKey": "Solicită cheia",
+  "button.privateGroup.keyRequested": "Cheie solicitată",
+  "button.privateGroup.rotateKey": "Creează / rotește cheia",
 } as const;

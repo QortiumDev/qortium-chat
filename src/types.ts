@@ -471,6 +471,8 @@ export type QortiumPrivateGroupChatState = {
   exists?: true;
   groupId: number;
   isOpen: false;
+  /** Account-relative Home 2 signal; absent on older hosts. */
+  keyAvailable?: boolean;
   maxMessagePlaintextBytes: number;
   maxV1Members?: number;
   memberCount: number;

@@ -352,4 +352,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Δεν ήταν δυνατή η φόρτωση της κατάστασης της ιδιωτικής ομαδικής συνομιλίας.",
   "button.privateGroup.publishKey": "Δημοσίευση κλειδιού ομάδας",
   "label.composer.privateGroupBytesRemaining": "{remaining} από {max} bytes απομένουν",
+  "hint.privateGroupKeyMissing": "Αυτός ο λογαριασμός δεν διαθέτει το ιδιωτικό κλειδί αυτής της ομάδας, επομένως η αποστολή είναι απενεργοποιημένη.",
+  "hint.privateGroupKeyMissingAdmin": "Ζητήστε το κλειδί από έναν διαχειριστή της ομάδας. Ένας διαχειριστής μπορεί να το δημιουργήσει ή να το ανανεώσει εδώ.",
+  "status.privateGroupKey.requestedAdmin": "Ζητήθηκε το κλειδί της ιδιωτικής ομάδας. Ένας διαχειριστής πρέπει τώρα να το προωθήσει ή να το ανανεώσει.",
+  "status.privateGroupKey.rotating": "Δημιουργία κλειδιού ομάδας…",
+  "status.privateGroupKey.rotated": "Το κλειδί της ιδιωτικής ομάδας δημιουργήθηκε. Τα μηνύματα ανανεώθηκαν.",
+  "button.privateGroup.requestKey": "Αίτημα κλειδιού",
+  "button.privateGroup.keyRequested": "Το κλειδί ζητήθηκε",
+  "button.privateGroup.rotateKey": "Δημιουργία / ανανέωση κλειδιού",
 } as const;

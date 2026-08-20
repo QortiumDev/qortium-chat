@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Yksityisen ryhmäkeskustelun tilaa ei voitu ladata.",
   "button.privateGroup.publishKey": "Julkaise ryhmäavain",
   "label.composer.privateGroupBytesRemaining": "{remaining}/{max} tavua jäljellä",
+  "hint.privateGroupKeyMissing": "Tällä tilillä ei ole tämän ryhmän yksityistä avainta, joten lähettäminen on poistettu käytöstä.",
+  "hint.privateGroupKeyMissingAdmin": "Pyydä avainta ryhmän ylläpitäjältä. Ylläpitäjä voi luoda tai vaihtaa avaimen täällä.",
+  "status.privateGroupKey.requestedAdmin": "Yksityisen ryhmän avainta pyydettiin. Ryhmän ylläpitäjän on nyt välitettävä tai vaihdettava se.",
+  "status.privateGroupKey.rotating": "Luodaan ryhmäavainta…",
+  "status.privateGroupKey.rotated": "Yksityisen ryhmän avain luotu. Viestit päivitetty.",
+  "button.privateGroup.requestKey": "Pyydä avainta",
+  "button.privateGroup.keyRequested": "Avainta pyydetty",
+  "button.privateGroup.rotateKey": "Luo / vaihda avain",
 } as const;

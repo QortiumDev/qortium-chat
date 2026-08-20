@@ -354,4 +354,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "无法加载私密群组聊天状态。",
   "button.privateGroup.publishKey": "发布群组密钥",
   "label.composer.privateGroupBytesRemaining": "剩余 {remaining}/{max} 字节",
+  "hint.privateGroupKeyMissing": "此账户没有该群组的私钥，因此无法发送消息。",
+  "hint.privateGroupKeyMissingAdmin": "请向群组管理员请求密钥。管理员可以在此创建或轮换密钥。",
+  "status.privateGroupKey.requestedAdmin": "已请求私有群组密钥。群组管理员现在需要转发或轮换密钥。",
+  "status.privateGroupKey.rotating": "正在创建群组密钥…",
+  "status.privateGroupKey.rotated": "私有群组密钥已创建。消息已刷新。",
+  "button.privateGroup.requestKey": "请求密钥",
+  "button.privateGroup.keyRequested": "已请求密钥",
+  "button.privateGroup.rotateKey": "创建 / 轮换密钥",
 } as const;

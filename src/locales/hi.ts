@@ -352,4 +352,12 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "निजी समूह चैट की स्थिति लोड नहीं की जा सकी।",
   "button.privateGroup.publishKey": "समूह कुंजी प्रकाशित करें",
   "label.composer.privateGroupBytesRemaining": "{max} में से {remaining} बाइट शेष",
+  "hint.privateGroupKeyMissing": "इस खाते के पास इस समूह की निजी कुंजी नहीं है, इसलिए संदेश भेजना बंद है।",
+  "hint.privateGroupKeyMissingAdmin": "समूह व्यवस्थापक से कुंजी का अनुरोध करें। व्यवस्थापक यहाँ कुंजी बना या बदल सकता है।",
+  "status.privateGroupKey.requestedAdmin": "निजी समूह कुंजी का अनुरोध किया गया। अब समूह व्यवस्थापक को इसे भेजना या बदलना होगा।",
+  "status.privateGroupKey.rotating": "समूह कुंजी बनाई जा रही है…",
+  "status.privateGroupKey.rotated": "निजी समूह कुंजी बनाई गई। संदेश ताज़ा किए गए।",
+  "button.privateGroup.requestKey": "कुंजी का अनुरोध करें",
+  "button.privateGroup.keyRequested": "कुंजी का अनुरोध किया गया",
+  "button.privateGroup.rotateKey": "कुंजी बनाएँ / बदलें",
 } as const;
