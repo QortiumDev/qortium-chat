@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AccountUnlockTransition } from './accountUnlockTransition';
 import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
 
 function createHarness() {
@@ -154,6 +155,82 @@ describe('StartupAccountRefreshCoordinator', () => {
     runFallbacks();
     coordinator.request();
     expect(refreshCount).toBe(2);
+  });
+
+  it('pauses the startup fallback until a host-owned account transition settles', () => {
+    const { coordinator, runFallbacks, scheduled } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+    const resume = coordinator.pause();
+
+    expect(scheduled.size).toBe(0);
+    runFallbacks();
+    expect(refreshCount).toBe(0);
+
+    resume();
+    expect(scheduled.size).toBe(1);
+    runFallbacks();
+    expect(refreshCount).toBe(1);
+  });
+
+  it('accepts an unlocked account snapshot in place of the startup refresh', () => {
+    const { coordinator, runFallbacks } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+    const resume = coordinator.pause();
+
+    coordinator.notify();
+    coordinator.satisfyInitialRefresh();
+    resume();
+    runFallbacks();
+
+    expect(refreshCount).toBe(0);
+
+    coordinator.notify();
+    expect(refreshCount).toBe(1);
+  });
+
+  it('preserves an initiating action across the unlock event and startup fallback', async () => {
+    const { coordinator, runFallbacks } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+    const resume = coordinator.pause();
+    const unlockTransition = new AccountUnlockTransition();
+
+    expect(unlockTransition.notify()).toBe(true);
+    coordinator.satisfyInitialRefresh();
+    expect(await unlockTransition.wait()).toBe(true);
+    resume();
+    runFallbacks();
+
+    expect(refreshCount).toBe(0);
+    unlockTransition.dispose();
+  });
+
+  it('can be satisfied before initialization finishes without scheduling a fallback', () => {
+    const { coordinator, runFallbacks, scheduled } = createHarness();
+    let refreshCount = 0;
+
+    coordinator.satisfyInitialRefresh();
+    coordinator.markReady(() => {
+      refreshCount += 1;
+    });
+
+    expect(scheduled.size).toBe(1);
+    runFallbacks();
+    expect(refreshCount).toBe(0);
+
+    coordinator.notify();
+    expect(refreshCount).toBe(1);
   });
 
   it('falls back to an initial refresh when the host sends no notification', () => {
