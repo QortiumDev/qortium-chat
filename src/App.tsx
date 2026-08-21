@@ -235,6 +235,11 @@ import {
 } from './qortalAccountSession';
 import { getLegacyQortiumMigrationHint } from './qortalUiMigration';
 import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
+import {
+  getTrackedTransactionNetwork,
+  isTrackedTransactionForConversation,
+  selectConversationSystemMessages,
+} from './trackedTransactions';
 import { getDirectSectionDefaultCollapse, getPrivateChatCapabilityStatus } from './sidebarSections';
 import {
   mergePersistedDirect,
@@ -2289,15 +2294,17 @@ export default function App() {
     return previews;
   }, [qortalActiveChats.value.direct, t]);
   // Memoized: this array feeds the memoized MessageList as `systemMessages`,
-  // and a fresh identity per render would defeat its memo bailout.
+  // and a fresh identity per render would defeat its memo bailout. Selection
+  // is network-scoped (see trackedTransactions.ts): a Qortal tracked
+  // transaction for numeric group N must never render in the Qortium group-N
+  // conversation, and vice versa. The primitive network dep (not selectedChat
+  // itself) keeps the bailout intact across unrelated selection re-renders.
+  const selectedConversationNetwork: ChatNetwork | null =
+    selectedChat?.kind === 'group' ? selectedChat.network ?? 'qortium' : null;
   const selectedTransactions = useMemo(
     () =>
-      isSelectedQortiumGroup
-        ? Object.values(trackedTransactions).filter(
-            (transaction) => selectedGroupId !== null && transaction.groupId === selectedGroupId,
-          )
-        : [],
-    [isSelectedQortiumGroup, trackedTransactions, selectedGroupId],
+      selectConversationSystemMessages(trackedTransactions, selectedConversationNetwork, selectedGroupId),
+    [selectedConversationNetwork, trackedTransactions, selectedGroupId],
   );
   // The rendered feed is the live tail plus any older history paged in behind
   // it. The live tail only participates while it belongs to the selected chat
@@ -7654,18 +7661,60 @@ export default function App() {
   }
 
   async function refreshAfterTrackedTransaction(transaction: TrackedTransaction) {
+    const network = getTrackedTransactionNetwork(transaction);
+    // Same-numeric-groupId isolation: only the open conversation on the
+    // transaction's own network gets its member roster refreshed (see
+    // trackedTransactions.ts).
+    const selectedGroupForTransaction =
+      selectedChat?.kind === 'group' &&
+      isTrackedTransactionForConversation(
+        transaction,
+        selectedChat.network ?? 'qortium',
+        selectedChat.group.groupId,
+      )
+        ? selectedChat.group
+        : null;
+
+    if (network === 'qortal') {
+      // Mirrors the post-submit refreshes in handleJoinQortalGroup/
+      // handleLeaveQortalGroup/handleApproveQortalJoinRequest on the D6
+      // Qortal state slots — never loadAccountData, which would touch the
+      // Qortium account/member-groups state for a Qortal confirmation.
+      if (qortalAccount) {
+        await loadQortalMemberGroups(qortalAccount.address);
+
+        // A closed group's confirmed JOIN_GROUP lands as a join request, and
+        // a confirmed approval clears one — refresh the side the transaction
+        // can change so the request-pending hints track confirmation.
+        if (canReadQortalAccountJoinRequests) {
+          await loadQortalAccountJoinRequests(qortalAccount.address);
+        }
+
+        if (transaction.action === 'approve') {
+          await loadQortalAdminJoinRequests(qortalAccount.address);
+        }
+      }
+
+      if (selectedGroupForTransaction) {
+        await loadGroupMembers(selectedGroupForTransaction, qortalBridge.value.actions, {
+          network: 'qortal',
+        });
+      }
+
+      return;
+    }
+
     if (account) {
       await loadAccountData(account);
     }
 
-    if (
-      selectedChat?.kind === 'group' &&
-      selectedChat.network !== 'qortal' &&
-      selectedChat.group.groupId === transaction.groupId
-    ) {
-      await loadGroupMembers(selectedChat.group);
+    if (selectedGroupForTransaction) {
+      await loadGroupMembers(selectedGroupForTransaction);
     }
 
+    // GROUP_APPROVAL chain governance is Qortium-only (see
+    // handleApproveQortalJoinRequest's comment), so this stays in the
+    // Qortium arm by construction.
     if (
       selectedChat?.network !== 'qortal' &&
       transaction.action === 'groupApproval' &&
@@ -9238,7 +9287,12 @@ export default function App() {
         }
 
         try {
-          const status = await getTransactionStatus(transaction.signature);
+          // Route the status probe to the transaction's own chain — a Qortal
+          // join/leave/approve confirms on the Qortal node, never Qortium's.
+          const status = await getTransactionStatus(
+            transaction.signature,
+            getTrackedTransactionNetwork(transaction),
+          );
 
           if (isDisposed) {
             return;
