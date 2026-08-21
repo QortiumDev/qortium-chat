@@ -138,7 +138,13 @@ import { resolveGroupPreviewRevision, type GroupPreviewRevision } from './groupP
 import {
   getReactionPendingKey,
 } from './messageReactions';
-import { getBridgeState, hasAction, hasHomeBridge, qdnRequest } from './qdnRequest';
+import {
+  canUseNodeWebSockets,
+  getBridgeState,
+  hasAction,
+  hasHomeBridge,
+  qdnRequest,
+} from './qdnRequest';
 import { isHomeV2AppTab } from './hostContext';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
 import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
@@ -222,7 +228,11 @@ import {
   type ShowChatNotificationResult,
 } from './notifications';
 import { LatestRequestGuard } from './latestRequest';
-import { canUseQortalAccountForHost, loadQortalAccountSnapshot } from './qortalAccountSession';
+import {
+  canUseQortalAccountForHost,
+  loadQortalAccountSnapshot,
+  shouldRecoverQortiumAccountFromSharedHomeIdentity,
+} from './qortalAccountSession';
 import { getLegacyQortiumMigrationHint } from './qortalUiMigration';
 import { StartupAccountRefreshCoordinator } from './startupAccountRefresh';
 import { getDirectSectionDefaultCollapse, getPrivateChatCapabilityStatus } from './sidebarSections';
@@ -1450,6 +1460,7 @@ export default function App() {
   const qortalGatewayGroupRequestRef = useRef(0);
   const qortalGroupCatalogueRef = useRef<{ actionsKey: string; groups: GroupData[] } | null>(null);
   const startupAccountRefreshCoordinatorRef = useRef<StartupAccountRefreshCoordinator | null>(null);
+  const qortiumSharedIdentityRecoveryAttemptRef = useRef<string | null>(null);
   // Home 2 versions before the unlock ordering fix can notify this QDN view
   // that its account became unlocked, then reject UNLOCK_SELECTED_ACCOUNT
   // because their permission resolver raced the main-process state update.
@@ -1635,6 +1646,7 @@ export default function App() {
   const [now, setNow] = useState(() => Date.now());
   const actions = bridge.value.actions;
   const actionsKey = actions.join('\n');
+  const nodeWebSocketsAvailable = canUseNodeWebSockets();
   const qortalActionsKey = qortalBridge.value.actions.join('\n');
   const avatarActionsByNetwork = useMemo(
     () => ({ qortal: qortalBridge.value.actions, qortium: actions }),
@@ -7371,6 +7383,42 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    if (account) {
+      qortiumSharedIdentityRecoveryAttemptRef.current = null;
+      return;
+    }
+
+    if (!shouldRecoverQortiumAccountFromSharedHomeIdentity(
+      bridge.value.host,
+      bridge.phase === 'ready',
+      qortalAccount?.address ?? null,
+      null,
+      accountRefreshPending,
+    )) {
+      return;
+    }
+
+    const recoveryKey = `${qortalAccount?.address ?? ''}\n${actionsKey}`;
+
+    if (qortiumSharedIdentityRecoveryAttemptRef.current === recoveryKey) {
+      return;
+    }
+
+    // Dashboard unlocks can expose the shared Qortal identity before Chat's
+    // Qortium-side notification arrives. Recover that missing half once for
+    // this account/action catalogue without reopening a denied prompt loop.
+    qortiumSharedIdentityRecoveryAttemptRef.current = recoveryKey;
+    void connectSelectedAccount(actions);
+  }, [
+    account?.address,
+    accountRefreshPending,
+    actionsKey,
+    bridge.phase,
+    bridge.value.host,
+    qortalAccount?.address,
+  ]);
+
   // A live foreground SHOW_NOTIFICATION call is best-effort and never throws
   // (see notifications.ts), but a `revoked`/`disabled` result is a signal
   // worth reflecting: Home is telling Chat its one durable app permission is
@@ -8988,7 +9036,7 @@ export default function App() {
   // timestamps for known addresses but never adds new decrypted entries, so the
   // list itself must be re-fetched periodically to discover new conversations.
   useEffect(() => {
-    if (!account || !isAccountUnlocked || !canReadPrivateDirectChat) {
+    if (!account || !nodeWebSocketsAvailable || !isAccountUnlocked || !canReadPrivateDirectChat) {
       return undefined;
     }
 
@@ -9003,7 +9051,7 @@ export default function App() {
     }, 30000);
 
     return () => window.clearInterval(interval);
-  }, [account?.address, actionsKey, canReadPrivateDirectChat, isAccountUnlocked]);
+  }, [account?.address, actionsKey, canReadPrivateDirectChat, isAccountUnlocked, nodeWebSocketsAvailable]);
 
   // Qortal does not have a protocol-specific websocket route in the current
   // bridge, so refresh its active group snapshot while visible. This drives
@@ -9308,6 +9356,7 @@ export default function App() {
 
     if (
       bridge.value.transport === 'gateway' ||
+      !nodeWebSocketsAvailable ||
       selectedChat.kind !== 'group' ||
       selectedChat.group.isOpen === false ||
       selectedChat.network === 'qortal'
@@ -9468,6 +9517,7 @@ export default function App() {
     isAccountUnlocked,
     selectedClosedGroupReadKey,
     bridge.value.transport,
+    nodeWebSocketsAvailable,
   ]);
 
   // P3 item 2: GET_PRIVATE_GROUP_CHAT_STATE for the selected closed group.
@@ -9590,6 +9640,23 @@ export default function App() {
     }
 
     const address = account.address;
+
+    if (!nodeWebSocketsAvailable) {
+      const selectedAccount = account;
+
+      void loadActiveChats(selectedAccount, actions, { quiet: true });
+
+      const interval = window.setInterval(() => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+          return;
+        }
+
+        void loadActiveChats(selectedAccount, actions, { quiet: true });
+      }, 15000);
+
+      return () => window.clearInterval(interval);
+    }
+
     let socket: WebSocket | null = null;
     let reconnectTimeout = 0;
     let reconnectDelay = WS_RECONNECT_BASE_MS;
@@ -9731,7 +9798,7 @@ export default function App() {
 
       socket?.close();
     };
-  }, [account?.address]);
+  }, [account?.address, actionsKey, nodeWebSocketsAvailable]);
 
   useEffect(() => {
     if (!account) {

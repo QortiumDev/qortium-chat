@@ -24,6 +24,22 @@ export function canUseQortalAccountForHost(
   return hasQortalAccount && !accountRefreshPending && (host === 'hub' || canUseQortiumAccount);
 }
 
+export function shouldRecoverQortiumAccountFromSharedHomeIdentity(
+  host: BridgeHost,
+  bridgeReady: boolean,
+  qortalAccountAddress: string | null,
+  qortiumAccountAddress: string | null,
+  accountRefreshPending: boolean,
+) {
+  return (
+    host === 'home2' &&
+    bridgeReady &&
+    !!qortalAccountAddress &&
+    !qortiumAccountAddress &&
+    !accountRefreshPending
+  );
+}
+
 /** Loads identity first, then memberships for that exact Qortal address. */
 export async function loadQortalAccountSnapshot(
   actions: QdnAction[],

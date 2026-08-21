@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { canUseQortalAccountForHost, loadQortalAccountSnapshot } from './qortalAccountSession';
+import {
+  canUseQortalAccountForHost,
+  loadQortalAccountSnapshot,
+  shouldRecoverQortiumAccountFromSharedHomeIdentity,
+} from './qortalAccountSession';
 
 describe('loadQortalAccountSnapshot', () => {
   it('loads memberships for the newly resolved Qortal account with the same action catalogue', async () => {
@@ -38,5 +42,63 @@ describe('canUseQortalAccountForHost', () => {
     expect(canUseQortalAccountForHost('home2', true, false, false)).toBe(false);
     expect(canUseQortalAccountForHost('home2', true, false, true)).toBe(true);
     expect(canUseQortalAccountForHost('hub', true, true, true)).toBe(false);
+  });
+});
+
+describe('shouldRecoverQortiumAccountFromSharedHomeIdentity', () => {
+  it('recovers the missing Qortium half of a ready Home 2 shared identity', () => {
+    expect(shouldRecoverQortiumAccountFromSharedHomeIdentity(
+      'home2',
+      true,
+      'QortalAccount',
+      null,
+      false,
+    )).toBe(true);
+  });
+
+  it('waits for bridge and account refresh readiness', () => {
+    expect(shouldRecoverQortiumAccountFromSharedHomeIdentity(
+      'home2',
+      false,
+      'QortalAccount',
+      null,
+      false,
+    )).toBe(false);
+    expect(shouldRecoverQortiumAccountFromSharedHomeIdentity(
+      'home2',
+      true,
+      'QortalAccount',
+      null,
+      true,
+    )).toBe(false);
+  });
+
+  it('does not run without the shared Qortal identity or when Qortium is already loaded', () => {
+    expect(shouldRecoverQortiumAccountFromSharedHomeIdentity(
+      'home2',
+      true,
+      null,
+      null,
+      false,
+    )).toBe(false);
+    expect(shouldRecoverQortiumAccountFromSharedHomeIdentity(
+      'home2',
+      true,
+      'QortalAccount',
+      'QortiumAccount',
+      false,
+    )).toBe(false);
+  });
+
+  it('never synthesizes a Qortium account on Hub, gateway, or browser hosts', () => {
+    for (const host of ['hub', 'gateway', 'legacy-home', 'browser-dev'] as const) {
+      expect(shouldRecoverQortiumAccountFromSharedHomeIdentity(
+        host,
+        true,
+        'QortalAccount',
+        null,
+        false,
+      )).toBe(false);
+    }
   });
 });

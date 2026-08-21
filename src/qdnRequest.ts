@@ -34,6 +34,16 @@ export function buildNodeWebSocketUrl(path: string) {
   return url.toString();
 }
 
+export function canUseNodeWebSockets() {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+
+  const hostname = window.location?.hostname?.trim().toLowerCase() ?? '';
+
+  return hostname !== 'qdn.androidplatform.net' && !hostname.endsWith('.qdn.androidplatform.net');
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
