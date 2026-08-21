@@ -70,7 +70,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.5, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.7, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -135,8 +135,10 @@ history, messages, replies, edits, deletes, and emoji reactions (through the
 host's exact revision actions when advertised, otherwise the interoperable
 `chatReference` envelope), plus join/leave when the host advertises those
 actions, bounded discovery, and read-only previews for qualifying active open
-groups. Qortal direct messages and closed/private groups are the next
-tranches (see the roadmap); their controls stay hidden until implemented. In
+groups. Qortal direct messages, closed/private groups, private attachments,
+and app notifications shipped in the 2.0.x releases and are available per
+host tier — each gates on the host's advertised actions, and its controls
+stay hidden on hosts that cannot support it. In
 Qortal Hub specifically, direct messages are not offered at all — Hub
 provides no way for an app to decrypt DM history — and private groups,
 private attachments, and app notifications are likewise Home-only. Chat

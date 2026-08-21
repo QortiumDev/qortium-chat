@@ -141,12 +141,13 @@ changes without leaking another identity's transcript, drafts, or
 notifications; finish consistent empty/locked/missing-key/read-only/pending/
 ambiguous/retry states on desktop and mobile.
 
-### P7 — version 2.0.0, docs, dual-chain publication (in progress)
+### P7 — version 2.0.0, docs, dual-chain publication (complete)
 
 Version bump (2.0.0 = requires platform 2.0 under QAVS), final capability
 matrix and README limits, then publication of the identical built tree to
-Qortium QDN (existing `APP/Chat/Chat`) and Qortal QDN (identity to be decided
-at publish time; Hub's catalog lists default-identifier resources). The
+Qortium QDN (existing `APP/Chat/Chat`) and Qortal QDN under the name
+`xchat` as `APP/xchat/default` — a default-identifier resource so Hub's
+catalog lists it, with a `qortal_avatar` thumbnail published alongside. The
 transaction wrapping necessarily differs per chain; the published files do
 not. Publication only happens from merged `main` with explicit owner
 approval.
