@@ -105,6 +105,12 @@ describe('bridgeErrors', () => {
     expect(isDefiniteChatMutationRejection({ code: 'ACCOUNT_LOCKED' })).toBe(true);
     expect(isDefiniteChatMutationRejection({ code: 'ROUTE_UNAVAILABLE' })).toBe(true);
     expect(isDefiniteChatMutationRejection({ code: 'HOME_BRIDGE_ERROR', outcome: 'rejected' })).toBe(true);
+    expect(isDefiniteChatMutationRejection(
+      new Error('No private-group key is available. Request or rotate the key first.'),
+    )).toBe(true);
+    expect(isDefiniteChatMutationRejection(
+      new Error('No Qortal private-group key bundle is available to this account.'),
+    )).toBe(true);
   });
 
   it('keeps true unknown, reconciliation, generic, and transport failures non-retryable', () => {

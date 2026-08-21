@@ -206,8 +206,9 @@ export type ChatMessage = {
 export type ChatSendResult = {
   error?: string;
   errorType?: string;
-  outcome?: 'ambiguous';
+  outcome?: 'ambiguous' | 'not-submitted';
   signature: string;
+  stage?: 'key-announcement';
   timestamp: number;
 };
 
@@ -471,6 +472,8 @@ export type QortiumPrivateGroupChatState = {
   exists?: true;
   groupId: number;
   isOpen: false;
+  /** Account-relative Home 2 signal; absent on older hosts. */
+  keyAvailable?: boolean;
   maxMessagePlaintextBytes: number;
   maxV1Members?: number;
   memberCount: number;
@@ -624,6 +627,7 @@ export type PendingBridgeTransactionEntry = {
   createdAt: number;
   network: ChatNetwork;
   signature: string;
+  stage?: 'key-announcement';
   target: PendingBridgeTransactionTarget;
   timestamp: number;
 };

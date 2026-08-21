@@ -103,6 +103,16 @@ export function isDefiniteChatMutationRejection(error: unknown): boolean {
     return true;
   }
 
+  // Compatibility fallback for hosts/runtimes that preserve Home's exact
+  // pre-signing message but lose custom Error properties across the isolated
+  // app bridge. Home can only emit these messages before it has a group key,
+  // so no transaction bytes have been built or broadcast and retry remains
+  // safe after recovery.
+  const message = error instanceof Error ? error.message : '';
+  if (/No (?:Qortal )?private-group key (?:is available|bundle is available)/i.test(message)) {
+    return true;
+  }
+
   return !!details.code && DEFINITE_PRE_BROADCAST_CHAT_ERROR_CODES.has(details.code as BridgeErrorCode);
 }
 

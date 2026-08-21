@@ -1623,6 +1623,9 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
   const isExplicitFailure = record.accepted === false || nestedResult.accepted === false || !!errorType;
   const isDefinitelyPreBroadcast =
     errorType === 'VALIDATION_FAILED' || (canceled && reason === 'USER_CANCELLED');
+  const isAutomaticKeySetupOnly =
+    (record.stage === 'key-announcement' || nestedResult.stage === 'key-announcement') &&
+    (record.messageSubmitted === false || nestedResult.messageSubmitted === false);
 
   if (isExplicitFailure && isDefinitelyPreBroadcast) {
     throw new ChatSendRejectedError(detail.slice(0, 200));
@@ -1636,8 +1639,9 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
     return {
       error: detail.slice(0, 200),
       errorType: errorType || undefined,
-      outcome: 'ambiguous',
+      outcome: isAutomaticKeySetupOnly ? 'not-submitted' : 'ambiguous',
       signature,
+      ...(isAutomaticKeySetupOnly ? { stage: 'key-announcement' as const } : {}),
       timestamp,
     };
   }

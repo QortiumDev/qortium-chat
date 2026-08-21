@@ -1493,6 +1493,7 @@ samp,
   color: var(--qc-color-muted);
 }
 
+.group-row__id,
 .group-row__protocol {
   display: inline-flex;
   align-items: center;

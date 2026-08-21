@@ -878,6 +878,28 @@ describe('Core API path builders', () => {
     });
   });
 
+  it('marks an uncertain automatic key setup as a safe-to-retry message rejection', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      accepted: false,
+      error: 'Private-group key setup outcome is unknown. Your message was not submitted; retrying the message is safe.',
+      errorType: 'KEY_ANNOUNCEMENT_BROADCAST_OUTCOME_UNKNOWN',
+      messageSubmitted: false,
+      outcome: 'unknown',
+      signature: 'possibly-accepted-key-announcement',
+      stage: 'key-announcement',
+      timestamp: 1700000000002,
+    });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toEqual({
+      error: 'Private-group key setup outcome is unknown. Your message was not submitted; retrying the message is safe.',
+      errorType: 'KEY_ANNOUNCEMENT_BROADCAST_OUTCOME_UNKNOWN',
+      outcome: 'not-submitted',
+      signature: 'possibly-accepted-key-announcement',
+      stage: 'key-announcement',
+      timestamp: 1700000000002,
+    });
+  });
+
   it('allows retry for exact pre-broadcast validation and user-cancel results', async () => {
     qdnRequestMock
       .mockResolvedValueOnce({

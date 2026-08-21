@@ -267,6 +267,8 @@ try {
               catalogueCalls,
               directExpanded: directSections.map((section) => section.expanded),
               empty: empty.textContent.trim(),
+              generalChips: Array.from(row.querySelectorAll('.group-row__id, .group-row__protocol'))
+                .map((chip) => chip.textContent.trim()),
               generalMetadata: row.querySelector('.group-row__footer').textContent.trim(),
               notice: notice.textContent.trim(),
               networks,
@@ -328,6 +330,8 @@ try {
           ? {
               catalogueCalls,
               messageProbeIds,
+              chips: Array.from(rows[0].querySelectorAll('.group-row__id, .group-row__protocol'))
+                .map((chip) => chip.textContent.trim()),
               metadata: rows[0].querySelector('.group-row__footer')?.textContent.trim(),
               preview: rows[0].querySelector('.group-row__preview')?.textContent.trim(),
               title: rows[0].querySelector('.group-row__name')?.textContent.trim()
@@ -339,6 +343,10 @@ try {
   await evaluate(client, `document.querySelector('.group-discovery .group-row')?.click()`);
   await waitUntil('public preview conversation', 5_000, async () =>
     evaluate(client, `document.querySelector('.chat-pane__title')?.textContent.trim() === 'Public Lounge'`),
+  );
+  const publicGroupHeaderMetadata = await evaluate(
+    client,
+    `Array.from(document.querySelectorAll('.chat-pane__context span')).map((chip) => chip.textContent.trim()).join(' ')`,
   );
   await delay(150);
   const discoveryScreenshot = await client.send('Page.captureScreenshot', {
@@ -385,12 +393,14 @@ try {
     desktop.shellTitle !== 'Chat' ||
     !desktop.empty.includes('Say hello') ||
     desktop.generalMetadata.includes('id:0') ||
+    JSON.stringify(desktop.generalChips) !== JSON.stringify(['#0', 'CHAT']) ||
     !desktop.notice.includes('Share the selected account') ||
     discovery.catalogueCalls !== 1 ||
     JSON.stringify(discovery.messageProbeIds) !== JSON.stringify([7, 8]) ||
     discovery.title !== 'Public Lounge' ||
     discovery.preview !== 'A public preview' ||
-    !discovery.metadata.includes('CHAT') ||
+    JSON.stringify(discovery.chips) !== JSON.stringify(['#7', 'CHAT']) ||
+    !publicGroupHeaderMetadata.startsWith('#7 Qortium CHAT') ||
     !mobile.notice.includes('Share the selected account') ||
     mobile.title !== 'General Chat'
   ) {
@@ -402,6 +412,7 @@ try {
     desktopScreenshotPath,
     discovery,
     discoveryScreenshotPath,
+    publicGroupHeaderMetadata,
     mobile,
     mobileScreenshotPath,
   }, null, 2));

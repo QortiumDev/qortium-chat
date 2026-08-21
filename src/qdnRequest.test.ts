@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildNodeWebSocketUrl,
+  canUseNodeWebSockets,
   classifyBridgeHost,
   classifyBridgeTransport,
   getBridgeState,
@@ -104,5 +105,30 @@ describe('qdnRequest bridge adapter', () => {
     expect(buildNodeWebSocketUrl('/websockets/chat/messages?txGroupId=0')).toBe(
       'ws://127.0.0.1:24891/websockets/chat/messages?txGroupId=0',
     );
+  });
+
+  it('disables node websockets on Android WebView synthetic hosts', () => {
+    vi.stubGlobal('window', {
+      location: { hostname: 'app-hash.qdn.androidplatform.net' },
+      qdnRequest: vi.fn(),
+    });
+
+    expect(canUseNodeWebSockets()).toBe(false);
+  });
+
+  it('keeps node websockets enabled for desktop Home and local development', () => {
+    vi.stubGlobal('window', {
+      location: { hostname: 'localhost' },
+      qdnRequest: vi.fn(),
+    });
+
+    expect(canUseNodeWebSockets()).toBe(true);
+
+    vi.stubGlobal('window', {
+      location: { hostname: 'home.qortium.local' },
+      qdnRequest: vi.fn(),
+    });
+
+    expect(canUseNodeWebSockets()).toBe(true);
   });
 });

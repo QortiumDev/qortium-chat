@@ -48,4 +48,13 @@ describe('ChatPaneHeader', () => {
     expect(markup).toContain('class="chat-pane__title-unavailable"');
     expect(markup).toContain('aria-label="Private chat unavailable in this host"');
   });
+
+  it('shows the group id before the network and CHAT chips', () => {
+    const markup = renderToStaticMarkup(
+      <ChatPaneHeader backLabel="Back" groupId={4} network="qortium" onBack={() => {}} title="Private group" />,
+    );
+
+    expect(markup.indexOf('>#4</span>')).toBeLessThan(markup.indexOf('>Qortium</span>'));
+    expect(markup.indexOf('>Qortium</span>')).toBeLessThan(markup.indexOf('>CHAT</span>'));
+  });
 });

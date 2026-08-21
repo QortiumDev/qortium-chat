@@ -12,6 +12,7 @@ export function ChatPaneHeader({
   contextLabel,
   closedLabel,
   description,
+  groupId,
   isClosed = false,
   network,
   onBack,
@@ -27,6 +28,7 @@ export function ChatPaneHeader({
   contextLabel?: string | null;
   closedLabel?: string;
   description?: string | null;
+  groupId?: number | null;
   isClosed?: boolean;
   network?: ChatNetwork;
   onBack: () => void;
@@ -83,6 +85,7 @@ export function ChatPaneHeader({
           </h2>
           {network ? (
             <div className="chat-pane__context">
+              {typeof groupId === 'number' ? <span>#{groupId}</span> : null}
               <span>{network === 'qortal' ? 'Qortal' : 'Qortium'}</span>
               <span>CHAT</span>
               {contextLabel ? <span>{contextLabel}</span> : null}

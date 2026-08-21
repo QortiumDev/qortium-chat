@@ -85,6 +85,7 @@ export const GroupList = memo(function GroupList({
                 </span>
                 {visiblePreview ? <span className="group-row__preview">{visiblePreview}</span> : null}
                 <span className="group-row__footer">
+                  <span className="group-row__id">#{group.groupId}</span>
                   <span className="group-row__protocol">{protocol.toUpperCase()}</span>
                   {membership === 'preview' ? (
                     <span className="group-row__membership">{t('label.group.preview')}</span>
