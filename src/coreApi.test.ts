@@ -1009,6 +1009,29 @@ describe('Core API path builders', () => {
       maxBytes: 2097152,
       path: '/transactions/signature/sig',
     });
+    expect(qortalRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('routes a qortal transaction-status lookup through the Qortal bridge, never the Qortium one', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      body: '{"blockHeight":456}',
+      contentType: 'application/json',
+      data: { blockHeight: 456, signature: 'qortal-sig' },
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+
+    await expect(getTransactionStatus('qortal-sig', 'qortal')).resolves.toEqual({
+      blockHeight: 456,
+      signature: 'qortal-sig',
+    });
+    expect(qortalRequestMock).toHaveBeenCalledWith({
+      action: 'FETCH_NODE_API',
+      maxBytes: 2097152,
+      path: '/transactions/signature/qortal-sig',
+    });
+    expect(qdnRequestMock).not.toHaveBeenCalled();
   });
 
   it('leaves groups through the bridge action', async () => {

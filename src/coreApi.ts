@@ -511,8 +511,17 @@ export async function getGroupJoinRequests(groupId: number, actions?: QdnAction[
   return fetchNodeApiDataFor<GroupJoinRequest[]>(network, buildGroupJoinRequestsPath(groupId), 'Group join requests');
 }
 
-export async function getTransactionStatus(signature: string) {
-  return fetchNodeApiData<TransactionStatus>(buildTransactionStatusPath(signature), 'Transaction status');
+// `network` picks Qortium vs Qortal (default 'qortium' keeps every
+// pre-dual-chain call site byte-identical). Group joins/leaves/approvals
+// confirm into blocks on both chains (unlike CHAT transactions), so the same
+// /transactions/signature read is meaningful on either node — only the
+// FETCH_NODE_API dispatch target changes with the network.
+export async function getTransactionStatus(signature: string, network: ChatNetwork = 'qortium') {
+  return fetchNodeApiDataFor<TransactionStatus>(
+    network,
+    buildTransactionStatusPath(signature),
+    'Transaction status',
+  );
 }
 
 export async function getPendingGroupApprovals(txGroupId: number) {
