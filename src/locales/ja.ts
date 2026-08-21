@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "プライベートグループチャットの状態を読み込めません。",
   "button.privateGroup.publishKey": "グループキーを公開",
   "label.composer.privateGroupBytesRemaining": "{max}バイト中{remaining}バイト残り",
-  "hint.privateGroupKeyMissing": "このアカウントにはこのグループの秘密鍵がないため、送信は無効になっています。",
-  "hint.privateGroupKeyMissingAdmin": "グループ管理者に鍵をリクエストしてください。管理者はここで鍵を作成または更新できます。",
-  "status.privateGroupKey.requestedAdmin": "プライベートグループキーをリクエストしました。グループ管理者が鍵を中継または更新する必要があります。",
-  "status.privateGroupKey.rotating": "グループキーを作成中…",
-  "status.privateGroupKey.rotated": "プライベートグループキーを作成しました。メッセージを更新しました。",
-  "button.privateGroup.requestKey": "鍵をリクエスト",
-  "button.privateGroup.keyRequested": "鍵をリクエスト済み",
-  "button.privateGroup.rotateKey": "鍵を作成 / 更新",
 } as const;

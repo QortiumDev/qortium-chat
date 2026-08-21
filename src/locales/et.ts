@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Privaatrühma vestluse olekut ei õnnestunud laadida.",
   "button.privateGroup.publishKey": "Avalda rühma võti",
   "label.composer.privateGroupBytesRemaining": "{remaining}/{max} baiti jäänud",
-  "hint.privateGroupKeyMissing": "Sellel kontol puudub selle grupi privaatvõti, seega on saatmine keelatud.",
-  "hint.privateGroupKeyMissingAdmin": "Küsi võtit grupi administraatorilt. Administraator saab võtme siin luua või vahetada.",
-  "status.privateGroupKey.requestedAdmin": "Privaatgrupi võti on taotletud. Grupi administraator peab selle nüüd edastama või vahetama.",
-  "status.privateGroupKey.rotating": "Grupivõtme loomine…",
-  "status.privateGroupKey.rotated": "Privaatgrupi võti loodud. Sõnumid värskendatud.",
-  "button.privateGroup.requestKey": "Taotle võtit",
-  "button.privateGroup.keyRequested": "Võti taotletud",
-  "button.privateGroup.rotateKey": "Loo / vaheta võti",
 } as const;

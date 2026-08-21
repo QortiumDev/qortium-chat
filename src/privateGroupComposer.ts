@@ -5,11 +5,7 @@
 // fetch (P3-design.md: "never block message reads on state fetch failure"),
 // so an undefined cap here means "no client-side cap shown/enforced yet",
 // not zero.
-import {
-  isQortalPrivateGroupChatState,
-  isQortiumPrivateGroupChatState,
-  QORTAL_PRIVATE_GROUP_MAX_PLAINTEXT_BYTES,
-} from './coreApi';
+import { isQortiumPrivateGroupChatState, QORTAL_PRIVATE_GROUP_MAX_PLAINTEXT_BYTES } from './coreApi';
 import type { ChatNetwork, PrivateGroupChatState } from './types';
 
 export function getPrivateGroupComposerMaxPlaintextBytes(
@@ -21,25 +17,6 @@ export function getPrivateGroupComposerMaxPlaintextBytes(
   }
 
   return state && isQortiumPrivateGroupChatState(state) ? state.maxMessagePlaintextBytes : undefined;
-}
-
-// New Home 2 builds distinguish protocol support (`available`) from whether
-// this account can actually decrypt the current Qortium epoch
-// (`keyAvailable`). Older Home builds omit the latter, so undefined must keep
-// the legacy attempt-and-report behavior instead of disabling the composer.
-export function getPrivateGroupKeyAvailability(
-  network: ChatNetwork,
-  state: PrivateGroupChatState | null,
-): boolean | undefined {
-  if (!state) return undefined;
-  if (network === 'qortal') {
-    return isQortalPrivateGroupChatState(state) ? state.available : undefined;
-  }
-  return isQortiumPrivateGroupChatState(state) ? state.keyAvailable : undefined;
-}
-
-export function isPrivateGroupKeyActionOutcomeUnknown(outcome: Record<string, unknown>): boolean {
-  return outcome.outcome === 'unknown' || outcome.accepted === false;
 }
 
 // UTF-8 byte length of the drafted text, for the composer's remaining-bytes

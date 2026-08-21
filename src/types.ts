@@ -206,8 +206,9 @@ export type ChatMessage = {
 export type ChatSendResult = {
   error?: string;
   errorType?: string;
-  outcome?: 'ambiguous';
+  outcome?: 'ambiguous' | 'not-submitted';
   signature: string;
+  stage?: 'key-announcement';
   timestamp: number;
 };
 
@@ -626,6 +627,7 @@ export type PendingBridgeTransactionEntry = {
   createdAt: number;
   network: ChatNetwork;
   signature: string;
+  stage?: 'key-announcement';
   target: PendingBridgeTransactionTarget;
   timestamp: number;
 };

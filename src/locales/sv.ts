@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Det gick inte att läsa in den privata gruppchattens status.",
   "button.privateGroup.publishKey": "Publicera gruppnyckel",
   "label.composer.privateGroupBytesRemaining": "{remaining} av {max} byte kvar",
-  "hint.privateGroupKeyMissing": "Det här kontot saknar den privata nyckeln för gruppen, så det går inte att skicka.",
-  "hint.privateGroupKeyMissingAdmin": "Begär nyckeln från en gruppadministratör. En administratör kan skapa eller rotera den här.",
-  "status.privateGroupKey.requestedAdmin": "Privat gruppnyckel begärd. En gruppadministratör måste nu vidarebefordra eller rotera den.",
-  "status.privateGroupKey.rotating": "Skapar gruppnyckel…",
-  "status.privateGroupKey.rotated": "Privat gruppnyckel skapad. Meddelanden uppdaterade.",
-  "button.privateGroup.requestKey": "Begär nyckel",
-  "button.privateGroup.keyRequested": "Nyckel begärd",
-  "button.privateGroup.rotateKey": "Skapa / rotera nyckel",
 } as const;

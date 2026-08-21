@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Der Status des privaten Gruppenchats konnte nicht geladen werden.",
   "button.privateGroup.publishKey": "Gruppenschlüssel veröffentlichen",
   "label.composer.privateGroupBytesRemaining": "{remaining} von {max} Bytes verbleibend",
-  "hint.privateGroupKeyMissing": "Dieses Konto besitzt den privaten Schlüssel für diese Gruppe nicht, daher ist das Senden deaktiviert.",
-  "hint.privateGroupKeyMissingAdmin": "Fordern Sie den Schlüssel bei einem Gruppenadmin an. Ein Admin kann ihn hier erstellen oder rotieren.",
-  "status.privateGroupKey.requestedAdmin": "Privater Gruppenschlüssel angefordert. Ein Gruppenadmin muss ihn nun weiterleiten oder rotieren.",
-  "status.privateGroupKey.rotating": "Gruppenschlüssel wird erstellt…",
-  "status.privateGroupKey.rotated": "Privater Gruppenschlüssel erstellt. Nachrichten aktualisiert.",
-  "button.privateGroup.requestKey": "Schlüssel anfordern",
-  "button.privateGroup.keyRequested": "Schlüssel angefordert",
-  "button.privateGroup.rotateKey": "Schlüssel erstellen / rotieren",
 } as const;

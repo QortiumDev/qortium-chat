@@ -3752,13 +3752,6 @@ button.message__reply-preview:focus-visible,
   flex: 0 0 auto;
 }
 
-.composer--notice > .private-group-key-actions {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .error {
   color: var(--qc-color-error);
 }

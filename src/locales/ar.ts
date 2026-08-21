@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "تعذّر تحميل حالة دردشة المجموعة الخاصة.",
   "button.privateGroup.publishKey": "نشر مفتاح المجموعة",
   "label.composer.privateGroupBytesRemaining": "تبقّى {remaining} من {max} بايت",
-  "hint.privateGroupKeyMissing": "لا يملك هذا الحساب المفتاح الخاص لهذه المجموعة، لذلك تم تعطيل الإرسال.",
-  "hint.privateGroupKeyMissingAdmin": "اطلب المفتاح من مسؤول المجموعة. يمكن للمسؤول إنشاء المفتاح أو تدويره هنا.",
-  "status.privateGroupKey.requestedAdmin": "تم طلب مفتاح المجموعة الخاصة. يجب على مسؤول المجموعة الآن ترحيله أو تدويره.",
-  "status.privateGroupKey.rotating": "جارٍ إنشاء مفتاح المجموعة…",
-  "status.privateGroupKey.rotated": "تم إنشاء مفتاح المجموعة الخاصة. تم تحديث الرسائل.",
-  "button.privateGroup.requestKey": "طلب المفتاح",
-  "button.privateGroup.keyRequested": "تم طلب المفتاح",
-  "button.privateGroup.rotateKey": "إنشاء / تدوير المفتاح",
 } as const;

@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Не удалось загрузить состояние приватного группового чата.",
   "button.privateGroup.publishKey": "Опубликовать ключ группы",
   "label.composer.privateGroupBytesRemaining": "Осталось {remaining} из {max} байт",
-  "hint.privateGroupKeyMissing": "У этой учетной записи нет закрытого ключа группы, поэтому отправка отключена.",
-  "hint.privateGroupKeyMissingAdmin": "Запросите ключ у администратора группы. Администратор может создать или сменить его здесь.",
-  "status.privateGroupKey.requestedAdmin": "Ключ приватной группы запрошен. Администратор группы должен передать или сменить его.",
-  "status.privateGroupKey.rotating": "Создание ключа группы…",
-  "status.privateGroupKey.rotated": "Ключ приватной группы создан. Сообщения обновлены.",
-  "button.privateGroup.requestKey": "Запросить ключ",
-  "button.privateGroup.keyRequested": "Ключ запрошен",
-  "button.privateGroup.rotateKey": "Создать / сменить ключ",
 } as const;

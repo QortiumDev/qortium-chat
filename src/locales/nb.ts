@@ -352,12 +352,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Kan ikke laste inn status for privat gruppechat.",
   "button.privateGroup.publishKey": "Publiser gruppenøkkel",
   "label.composer.privateGroupBytesRemaining": "{remaining} av {max} byte gjenstår",
-  "hint.privateGroupKeyMissing": "Denne kontoen har ikke den private nøkkelen for denne gruppen, så sending er deaktivert.",
-  "hint.privateGroupKeyMissingAdmin": "Be en gruppeadministrator om nøkkelen. En administrator kan opprette eller rotere den her.",
-  "status.privateGroupKey.requestedAdmin": "Privat gruppenøkkel er forespurt. En gruppeadministrator må nå videresende eller rotere den.",
-  "status.privateGroupKey.rotating": "Oppretter gruppenøkkel…",
-  "status.privateGroupKey.rotated": "Privat gruppenøkkel opprettet. Meldinger oppdatert.",
-  "button.privateGroup.requestKey": "Be om nøkkel",
-  "button.privateGroup.keyRequested": "Nøkkel forespurt",
-  "button.privateGroup.rotateKey": "Opprett / roter nøkkel",
 } as const;

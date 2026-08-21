@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "לא ניתן לטעון את מצב הצ׳אט הקבוצתי הפרטי.",
   "button.privateGroup.publishKey": "פרסום מפתח קבוצה",
   "label.composer.privateGroupBytesRemaining": "{remaining} מתוך {max} בייטים נותרו",
-  "hint.privateGroupKeyMissing": "לחשבון הזה אין את המפתח הפרטי של הקבוצה, ולכן השליחה מושבתת.",
-  "hint.privateGroupKeyMissingAdmin": "יש לבקש את המפתח ממנהל הקבוצה. מנהל יכול ליצור או להחליף אותו כאן.",
-  "status.privateGroupKey.requestedAdmin": "מפתח הקבוצה הפרטית התבקש. מנהל קבוצה צריך כעת להעביר או להחליף אותו.",
-  "status.privateGroupKey.rotating": "יוצר מפתח קבוצה…",
-  "status.privateGroupKey.rotated": "מפתח הקבוצה הפרטית נוצר. ההודעות התרעננו.",
-  "button.privateGroup.requestKey": "בקשת מפתח",
-  "button.privateGroup.keyRequested": "המפתח התבקש",
-  "button.privateGroup.rotateKey": "יצירה / החלפת מפתח",
 } as const;

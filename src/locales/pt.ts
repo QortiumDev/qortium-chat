@@ -354,12 +354,4 @@ export const STRINGS = {
   "status.loadingError.privateGroupState": "Não foi possível carregar o estado do chat de grupo privado.",
   "button.privateGroup.publishKey": "Publicar chave do grupo",
   "label.composer.privateGroupBytesRemaining": "{remaining} de {max} bytes restantes",
-  "hint.privateGroupKeyMissing": "Esta conta não possui a chave privada deste grupo, portanto o envio está desativado.",
-  "hint.privateGroupKeyMissingAdmin": "Solicite a chave a um administrador do grupo. Um administrador pode criá-la ou rotacioná-la aqui.",
-  "status.privateGroupKey.requestedAdmin": "Chave do grupo privado solicitada. Um administrador do grupo deve agora retransmiti-la ou rotacioná-la.",
-  "status.privateGroupKey.rotating": "Criando chave do grupo…",
-  "status.privateGroupKey.rotated": "Chave do grupo privado criada. Mensagens atualizadas.",
-  "button.privateGroup.requestKey": "Solicitar chave",
-  "button.privateGroup.keyRequested": "Chave solicitada",
-  "button.privateGroup.rotateKey": "Criar / rotacionar chave",
 } as const;
