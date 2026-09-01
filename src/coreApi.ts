@@ -263,9 +263,37 @@ export type QdnResourceSearchResult = {
   updated?: number;
 };
 
+// A7-2/A7-3: registered-name suggestions for autocomplete fields.
+// /names/search?query=&prefix=true exists on BOTH cores (Qortium
+// NamesResource.java:289, Qortal :244) and rides the same FETCH_NODE_API
+// path as the resource search, so it works on every host.
+export type NameSearchResult = { name: string; owner?: string };
+
+export async function searchNames(
+  network: ChatNetwork,
+  query: string,
+  limit = 10,
+): Promise<NameSearchResult[]> {
+  const params = new URLSearchParams({
+    limit: String(Math.min(20, Math.max(1, Math.floor(limit)))),
+    prefix: 'true',
+    query,
+  });
+  const results = await fetchNodeApiDataFor<NameSearchResult[]>(
+    network,
+    `/names/search?${params.toString()}`,
+    'Name search',
+    65536,
+  );
+
+  return (Array.isArray(results) ? results : []).filter(
+    (entry) => !!entry && typeof entry.name === 'string' && !!entry.name,
+  );
+}
+
 export async function searchQdnResources(
   network: ChatNetwork,
-  input: { limit?: number; offset?: number; query: string; service?: string },
+  input: { limit?: number; name?: string; offset?: number; query: string; service?: string },
 ): Promise<QdnResourceSearchResult[]> {
   const limit = Math.min(50, Math.max(1, Math.floor(input.limit ?? 20)));
   const offset = Math.max(0, Math.floor(input.offset ?? 0));
@@ -278,6 +306,11 @@ export async function searchQdnResources(
 
   if (input.service) {
     params.set('service', input.service);
+  }
+
+  // A7-2: optional publisher filter (Core matches it as a name substring).
+  if (input.name) {
+    params.set('name', input.name);
   }
 
   const results = await fetchNodeApiDataFor<QdnResourceSearchResult[]>(

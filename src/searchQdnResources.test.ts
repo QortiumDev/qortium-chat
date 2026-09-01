@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { searchQdnResources } from './coreApi';
+import { searchNames, searchQdnResources } from './coreApi';
 import { qdnRequest } from './qdnRequest';
 import { qortalRequest } from './qortalRequest';
 
@@ -52,5 +52,35 @@ describe('searchQdnResources', () => {
     qdnRequestMock.mockResolvedValueOnce({ body: 'boom', ok: false, status: 500 });
 
     await expect(searchQdnResources('qortium', { query: 'q' })).rejects.toThrow();
+  });
+
+  it('passes the optional publisher name filter through', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ data: [], ok: true, status: 200 });
+
+    await searchQdnResources('qortium', { name: 'alice', query: 'cats' });
+    const request = qdnRequestMock.mock.calls[0][0] as { path: string };
+
+    expect(request.path).toBe('/arbitrary/resources/search?limit=20&offset=0&query=cats&reverse=true&name=alice');
+  });
+});
+
+describe('searchNames', () => {
+  beforeEach(() => {
+    qdnRequestMock.mockReset();
+    qortalRequestMock.mockReset();
+  });
+
+  it('queries /names/search with prefix matching on the selected network', async () => {
+    qortalRequestMock.mockResolvedValueOnce({
+      data: [{ name: 'alice', owner: 'Qa' }, { name: '' }, null],
+      ok: true,
+      status: 200,
+    });
+
+    await expect(searchNames('qortal', 'ali')).resolves.toEqual([{ name: 'alice', owner: 'Qa' }]);
+    const request = qortalRequestMock.mock.calls[0][0] as { action: string; path: string };
+
+    expect(request.action).toBe('FETCH_NODE_API');
+    expect(request.path).toBe('/names/search?limit=10&prefix=true&query=ali');
   });
 });
