@@ -2,18 +2,18 @@
 // account — and insert a link to it into the composer. Nothing is republished
 // and no bytes move; the message just carries the link, in the form the
 // conversation's network previews best (buildQdnResourceShareLink).
-import { useState, type SubmitEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { formatAttachmentSize } from './attachments';
 import { searchQdnResources, type QdnResourceSearchResult } from './coreApi';
 import { type TranslateFunction } from './i18n';
-import { buildQdnResourceShareLink } from './messageLinks';
+import { buildQdnResourceShareLink, fetchQdnImagePreview, getImageQdnResources } from './messageLinks';
+import { useNameSuggestions } from './nameSuggestions';
+import { isImagePreviewService, QDN_SERVICE_SUGGESTIONS } from './qdnServices';
 import { useModalDialog } from './useModalDialog';
 import { type ChatNetwork } from './types';
 
 const SEARCH_PAGE_SIZE = 20;
-
-// A small, chat-relevant slice of QDN's service list; '' searches every type.
-const SERVICE_FILTERS = ['', 'IMAGE', 'VIDEO', 'AUDIO', 'ATTACHMENT', 'DOCUMENT', 'WEBSITE', 'APP'] as const;
+const RESULT_PREVIEW_MAX = 10;
 
 type SearchState =
   | { kind: 'idle' }
@@ -34,8 +34,71 @@ export function LinkResourceDialog({
 }) {
   const cardRef = useModalDialog<HTMLElement>(onCancel);
   const [query, setQuery] = useState('');
+  const [publisher, setPublisher] = useState('');
   const [service, setService] = useState<string>('');
   const [state, setState] = useState<SearchState>({ kind: 'idle' });
+  // A7-4: lazy inline previews for image-service rows, keyed by share link.
+  const [previews, setPreviews] = useState<ReadonlyMap<string, string>>(new Map());
+  const publisherSuggestions = useNameSuggestions(network, publisher);
+
+  const results = state.kind === 'ready' ? state.results : null;
+
+  useEffect(() => {
+    if (!results) {
+      return;
+    }
+
+    let stale = false;
+
+    void (async () => {
+      let budget = RESULT_PREVIEW_MAX;
+
+      for (const result of results) {
+        if (budget <= 0 || stale) {
+          return;
+        }
+
+        if (!isImagePreviewService(result.service)) {
+          continue;
+        }
+
+        const link = buildQdnResourceShareLink(network, {
+          identifier: result.identifier ?? undefined,
+          name: result.name,
+          service: result.service,
+        });
+
+        if (previews.has(link)) {
+          continue;
+        }
+
+        budget -= 1;
+
+        // Reuse the message pipeline's parser so the preview fetch sees the
+        // exact same resource coordinate a recipient of the link would.
+        const [imageResource] = getImageQdnResources(link, network);
+
+        if (!imageResource) {
+          continue;
+        }
+
+        try {
+          const preview = await fetchQdnImagePreview(imageResource);
+
+          if (!stale) {
+            setPreviews((current) => new Map(current).set(link, preview.src));
+          }
+        } catch {
+          // No preview is fine — the row still shows its text description.
+        }
+      }
+    })();
+
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network, results]);
 
   async function runSearch(offset: number, previous: QdnResourceSearchResult[]) {
     setState(offset === 0 ? { kind: 'loading' } : { exhausted: false, kind: 'ready', results: previous });
@@ -43,9 +106,10 @@ export function LinkResourceDialog({
     try {
       const page = await searchQdnResources(network, {
         limit: SEARCH_PAGE_SIZE,
+        name: publisher.trim() || undefined,
         offset,
         query: query.trim(),
-        service: service || undefined,
+        service: service.trim().toUpperCase() || undefined,
       });
 
       setState({
@@ -61,7 +125,7 @@ export function LinkResourceDialog({
   function handleSubmit(event: SubmitEvent) {
     event.preventDefault();
 
-    if (query.trim()) {
+    if (query.trim() || publisher.trim()) {
       void runSearch(0, []);
     }
   }
@@ -106,18 +170,35 @@ export function LinkResourceDialog({
             type="search"
             value={query}
           />
-          <select
-            aria-label={t('label.linkResource.service')}
-            onChange={(event) => setService(event.target.value)}
-            value={service}
-          >
-            {SERVICE_FILTERS.map((filter) => (
-              <option key={filter || 'any'} value={filter}>
-                {filter || t('label.linkResource.service.any')}
-              </option>
+          <input
+            aria-label={t('label.linkResource.publisher')}
+            list="link-resource-publishers"
+            onChange={(event) => setPublisher(event.target.value)}
+            placeholder={t('label.linkResource.publisher')}
+            value={publisher}
+          />
+          <datalist id="link-resource-publishers">
+            {publisherSuggestions.map((name) => (
+              <option key={name} value={name} />
             ))}
-          </select>
-          <button className="button" disabled={!query.trim() || state.kind === 'loading'} type="submit">
+          </datalist>
+          <input
+            aria-label={t('label.linkResource.service')}
+            list="link-resource-services"
+            onChange={(event) => setService(event.target.value)}
+            placeholder={t('label.linkResource.service.any')}
+            value={service}
+          />
+          <datalist id="link-resource-services">
+            {QDN_SERVICE_SUGGESTIONS.map((entry) => (
+              <option key={entry} value={entry} />
+            ))}
+          </datalist>
+          <button
+            className="button"
+            disabled={(!query.trim() && !publisher.trim()) || state.kind === 'loading'}
+            type="submit"
+          >
             {t('button.search')}
           </button>
         </form>
@@ -132,6 +213,18 @@ export function LinkResourceDialog({
           <ul className="link-resource__results">
             {state.results.map((result, index) => (
               <li className="link-resource__result" key={`${result.service}/${result.name}/${result.identifier ?? ''}/${index}`}>
+                {(() => {
+                  const link = buildQdnResourceShareLink(network, {
+                    identifier: result.identifier ?? undefined,
+                    name: result.name,
+                    service: result.service,
+                  });
+                  const src = previews.get(link);
+
+                  return src ? (
+                    <img alt="" className="link-resource__result-preview" loading="lazy" src={src} />
+                  ) : null;
+                })()}
                 <div className="link-resource__result-text">
                   <span className="link-resource__result-name">{result.name}</span>
                   <span className="muted">

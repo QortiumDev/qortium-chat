@@ -177,6 +177,7 @@ import { ChatComposer, type ComposerAttachment } from './ChatComposer';
 import { LinkResourceDialog } from './LinkResourceDialog';
 import { buildQdnResourceShareLink } from './messageLinks';
 import { resolveAttachmentCapability } from './attachmentCapabilities';
+import { useNameSuggestions } from './nameSuggestions';
 import { ChatPaneHeader } from './ChatPaneHeader';
 import { ConversationNetworkSection } from './ConversationRail';
 import { LoadingRows } from './LoadingRows';
@@ -3184,6 +3185,14 @@ export default function App() {
   // wrapper's same-origin fetch, which no advertised action reflects).
   const selectedChatAttachBridge = selectedChatAttachNetwork === 'qortal' ? qortalBridge.value : bridge.value;
   const canLinkResource = canComposeMessage && canFetchNodeApi(selectedChatAttachBridge);
+  // A7-3: registered-name suggestions for the new-direct-chat inputs.
+  const qortiumDirectNameSuggestions = useNameSuggestions('qortium', directAddress);
+  const qortalDirectNameSuggestions = useNameSuggestions('qortal', qortalDirectAddress);
+  // A7-5 fold-in: say WHY attaching is unavailable instead of one catch-all.
+  const attachUnavailableTitle =
+    isSelectedChatOpenGroup && !selectedChatAttachAccountName && attachmentCapability.publicSource === null
+      ? t('action.attachNeedsName')
+      : t('action.attachUnavailable');
   const canStageLocalFile = canAttach && attachmentCapability.canStageLocalFile;
   // P3 item 3: for a closed group, the notice must still show when the
   // private family is entirely unadvertised (canSendGroupChat, the generic
@@ -10416,6 +10425,7 @@ export default function App() {
                 <input
                   aria-label={t('placeholder.directNameOrAddress')}
                   disabled={!canOpenDirectChat || directLookupPending}
+                  list="direct-name-suggestions-qortium"
                   onChange={(event) => {
                     setDirectAddress(event.target.value);
                     setDirectLookupError('');
@@ -10424,6 +10434,11 @@ export default function App() {
                   ref={directSearchInputRef}
                   value={directAddress}
                 />
+                <datalist id="direct-name-suggestions-qortium">
+                  {qortiumDirectNameSuggestions.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
                 <button
                   className="button"
                   disabled={!canOpenDirectChat || !directAddress.trim() || directLookupPending}
@@ -10629,6 +10644,7 @@ export default function App() {
                 {!isQortalDirectCollapsed && isQortalDirectFormVisible ? (
                   <form className="search" onSubmit={handleOpenQortalDirectChat}>
                     <input
+                      list="direct-name-suggestions-qortal"
                       aria-label={t('placeholder.directNameOrAddress')}
                       disabled={!canOpenQortalDirectChat || qortalDirectLookupPending}
                       onChange={(event) => {
@@ -10639,6 +10655,11 @@ export default function App() {
                       ref={qortalDirectSearchInputRef}
                       value={qortalDirectAddress}
                     />
+                    <datalist id="direct-name-suggestions-qortal">
+                      {qortalDirectNameSuggestions.map((name) => (
+                        <option key={name} value={name} />
+                      ))}
+                    </datalist>
                     <button
                       className="button"
                       disabled={!canOpenQortalDirectChat || !qortalDirectAddress.trim() || qortalDirectLookupPending}
@@ -11107,7 +11128,7 @@ export default function App() {
           ) : (
             <ChatComposer
               attachLabel={t('label.composer.attach')}
-              attachTitle={canAttach ? t('label.composer.attach') : t('action.attachUnavailable')}
+              attachTitle={canAttach ? t('label.composer.attach') : attachUnavailableTitle}
               attachment={stagedAttachment}
               attachmentError={attachmentError}
               attachmentInputRef={attachmentInputRef}

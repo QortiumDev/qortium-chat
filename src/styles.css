@@ -4891,3 +4891,11 @@ button.message__reply-preview:focus-visible,
   font-size: 0.85em;
   overflow-wrap: anywhere;
 }
+
+.link-resource__result-preview {
+  border-radius: 6px;
+  flex: 0 0 auto;
+  height: 44px;
+  object-fit: cover;
+  width: 44px;
+}
