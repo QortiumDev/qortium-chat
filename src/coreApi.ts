@@ -1000,7 +1000,7 @@ export async function getDirectMessages(
 
 // Bytes path (attachments-matrix A1): publishes an open-group attachment
 // from base64 the app prepared itself (attachments.ts prepareLocalAttachment).
-// `base64` + `filename` is the inline-source contract Home ≤1.8 reads
+// `base64` + `filename` is the inline-source contract every Home 1.x reads
 // (`data64` || `base64`), Home 2 Android still reads, and Qortal Hub reads
 // (`data64` || `base64` || `file`). Home 2 desktop rejects every inline field
 // outright — callers gate on attachmentCapabilities.hostAcceptsInlinePublishBytes

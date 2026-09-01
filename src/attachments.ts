@@ -2,12 +2,12 @@
 //
 // Two staging shapes exist, chosen per host by attachmentCapabilities.ts:
 //
-// - StagedSourceAttachment (P4b, Home 2 / Home 1.8): attaching opens Home's
+// - StagedSourceAttachment (P4b, Home 2 / Home 1.3+): attaching opens Home's
 //   native picker (SELECT_QDN_PUBLISH_SOURCE), which hands back an opaque,
 //   short-lived sourceToken plus fileName/size/mimeType for display only. The
 //   token is redeemed at send time by publishQdnResource (open groups) or
 //   publishChatAttachment (private conversations). The app never sees bytes.
-// - StagedLocalAttachment (attachments-matrix A1, Home ≤1.8 / Home 2 Android /
+// - StagedLocalAttachment (attachments-matrix A1, Home 1.x / Home 2 Android /
 //   Qortal Hub): the app reads a browser File itself — from the paperclip's
 //   <input type="file">, a clipboard paste, or a drag-drop — compresses images
 //   to WebP (Hub's parameters: max width 1200, quality 0.6), base64-encodes,

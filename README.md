@@ -136,8 +136,8 @@ host's exact revision actions when advertised, otherwise the interoperable
 `chatReference` envelope), plus join/leave when the host advertises those
 actions, bounded discovery, and read-only previews for qualifying active open
 groups. Public-group attachments work on every host that can publish to QDN: through
-Home's native picker where it is offered (Home 1.8+, Home 2), otherwise by
-reading the file in the app and publishing it inline (Home ≤1.7, Qortal Hub);
+Home's native picker where it is offered (Home 1.3+, Home 2), otherwise by
+reading the file in the app and publishing it inline (older Home 1.x, Qortal Hub);
 pasting or dropping a file into the composer stages it wherever the host
 accepts inline bytes (everywhere except Home 2 desktop, which needs a Home
 change first — see `docs/CHAT_ATTACHMENTS.md`). Qortal direct messages,

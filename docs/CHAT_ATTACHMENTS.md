@@ -105,8 +105,8 @@ version string):
 
 | Host | Open-group paperclip | Paste / drag-drop | Private conversations |
 | --- | --- | --- | --- |
-| Home ≤1.7.1 | bytes (`<input type="file">`) | stages the file (bytes) | — |
-| Home 1.8.0 | picker (token) | stages the file (bytes) | — |
+| Home 1.x ≤1.2 (no picker yet) | bytes (`<input type="file">`) | stages the file (bytes) | — |
+| Home 1.x ≥1.3 (picker since home#100) | picker (token) | stages the file (bytes) | — |
 | Home 2 desktop | picker (token) | notice → use the attach button | picker + `PUBLISH_CHAT_ATTACHMENT` |
 | Home 2 Android | picker (token) | stages the file (bytes) | — (not dispatched to apps) |
 | Qortal Hub | bytes | stages the file (bytes) | — |
@@ -119,7 +119,7 @@ version string):
   also strips metadata — Hub's own parameters), base64-encodes it, and calls
   `publishQdnResourceBytes`, which sends the pre-P4 inline shape
   `{ action: 'PUBLISH_QDN_RESOURCE', base64, filename, identifier, name, service }`.
-  Home ≤1.8 reads `data64 || base64`; Hub reads `data64 || base64 || file`.
+  Every Home 1.x reads `data64 || base64`; Hub reads `data64 || base64 || file`.
   The host shows its own approval prompt and signs. Hosts return different
   shapes (Home: `{accepted, resource, result}`; Hub: the node's transaction
   response), so the only contract relied on is resolved = published,
@@ -129,7 +129,7 @@ version string):
 also the only host that advertises `PUBLISH_CHAT_ATTACHMENT`, so that action
 is used as the "refuses inline bytes" marker (`hostAcceptsInlinePublishBytes`).
 No probe request is made. When both the picker and inline bytes are accepted
-(Home 1.8.0), the paperclip prefers the picker (Home sees the real file and
+(Home 1.3–1.8), the paperclip prefers the picker (Home sees the real file and
 the app never holds bytes) while paste/drop use the bytes path.
 
 Paste/drop can only ever stage on the bytes path — a token-only host gives the

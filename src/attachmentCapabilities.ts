@@ -5,8 +5,8 @@
 // advertised action list — never from a host name or version string:
 //
 // | Host                       | SELECT_QDN_PUBLISH_SOURCE | PUBLISH_QDN_RESOURCE inline bytes | PUBLISH_CHAT_ATTACHMENT |
-// | Home ≤1.7.1                | no                        | yes (`base64` + `filename`)       | no                      |
-// | Home 1.8.0                 | yes                       | yes                               | no                      |
+// | Home 1.x ≤1.2              | no                        | yes (`base64` + `filename`)       | no                      |
+// | Home 1.x ≥1.3 (…1.8)       | yes                       | yes                               | no                      |
 // | Home 2 desktop             | yes                       | NO — denylisted, throws           | yes                     |
 // | Home 2 Android             | yes                       | yes                               | (not dispatched)        |
 // | Qortal Hub                 | no                        | yes (`data64`/`base64`/`file`)    | no                      |
@@ -47,7 +47,7 @@ function has(actions: readonly QdnAction[] | undefined, action: string) {
 
 /**
  * Whether PUBLISH_QDN_RESOURCE on this host accepts the inline
- * `base64` + `filename` source (Home ≤1.8.0, Home 2 Android, Qortal Hub) or
+ * `base64` + `filename` source (every Home 1.x, Home 2 Android, Qortal Hub) or
  * only a Home-issued sourceToken (Home 2 desktop).
  *
  * Heuristic (tracker decision D1): Home 2 is the only host that refuses
@@ -74,7 +74,7 @@ export function resolveAttachmentCapability(input: {
   const { actions } = input;
   const acceptsBytes = hostAcceptsInlinePublishBytes(actions);
 
-  // The picker is preferred when both exist (Home 1.8.0): Home shows its own
+  // The picker is preferred when both exist (Home 1.3–1.8): Home shows its own
   // approval prompt with the real file and never needs the app to hold bytes.
   // The bytes path still serves paste/drop on that host.
   const publicSource: AttachmentSource | null =
