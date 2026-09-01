@@ -19,6 +19,20 @@ export function getNetworkBridgeState(network: ChatNetwork): Promise<BridgeState
 
 /** Synchronous bridge-global check. Qortal's Home 1.7 fallback is catalogued
  * asynchronously by getQortalBridgeState before the section is shown. */
+// attachments-matrix A3: whether Chat can reach the Core REST API for this
+// bridge — either the host advertises FETCH_NODE_API (every Home; the
+// browser-dev and gateway fallbacks also list it) or it is a host whose
+// wrapper serves the fetch without a bridge action (Qortal Hub: same-origin;
+// gateway: window.location.origin). Real Hub's SHOW_ACTIONS does NOT include
+// FETCH_NODE_API, so an action check alone wrongly excludes it.
+export function canFetchNodeApi(bridge: Pick<BridgeState, 'actions' | 'host' | 'transport'>): boolean {
+  if (bridge.host === 'hub' || bridge.transport === 'gateway') {
+    return true;
+  }
+
+  return bridge.actions.some((action) => action.toUpperCase() === 'FETCH_NODE_API');
+}
+
 export function hasNetworkBridge(network: ChatNetwork): boolean {
   return network === 'qortal' ? hasQortalHomeBridge() : hasHomeBridge();
 }

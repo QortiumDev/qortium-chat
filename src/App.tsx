@@ -71,7 +71,7 @@ import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch
 import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
 import { PrivateActiveChatsRequestCoordinator } from './privateActiveChatsRequest';
 import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
-import { getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
+import { canFetchNodeApi, getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
 import {
   getBridgeErrorCode,
   isDefiniteChatMutationRejection,
@@ -3152,9 +3152,11 @@ export default function App() {
   const attachSource = attachmentCapability.publicSource ?? attachmentCapability.privateSource;
   const canAttach = canComposeMessage && composeContext?.kind !== 'edit' && attachSource !== null;
   // A3: linking an existing resource is plain text insertion plus a node-API
-  // search — it needs no publish capability, only FETCH_NODE_API on the
-  // conversation's network (every Home, Hub via same-origin fallback, gateway).
-  const canLinkResource = canComposeMessage && hasAction(selectedChatAttachActions, 'FETCH_NODE_API');
+  // search — it needs no publish capability, only Core API reach on the
+  // conversation's network (every Home; Hub and the gateway through the
+  // wrapper's same-origin fetch, which no advertised action reflects).
+  const selectedChatAttachBridge = selectedChatAttachNetwork === 'qortal' ? qortalBridge.value : bridge.value;
+  const canLinkResource = canComposeMessage && canFetchNodeApi(selectedChatAttachBridge);
   const canStageLocalFile = canAttach && attachmentCapability.canStageLocalFile;
   // P3 item 3: for a closed group, the notice must still show when the
   // private family is entirely unadvertised (canSendGroupChat, the generic
