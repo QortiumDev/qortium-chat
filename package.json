@@ -13,6 +13,7 @@
     "smoke:mobile-density": "node scripts/smoke-mobile-density.mjs",
     "smoke:new-user": "node scripts/smoke-new-user.mjs",
     "smoke:gateway": "node scripts/smoke-gateway-readonly.mjs",
+    "smoke:hub-attachments": "node scripts/smoke-hub-attachments.mjs",
     "smoke:hub-private": "node scripts/smoke-hub-private-unavailable.mjs",
     "smoke:scroll": "node scripts/smoke-scroll-behavior.mjs",
     "test": "vitest run",

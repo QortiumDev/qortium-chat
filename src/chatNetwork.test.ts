@@ -19,7 +19,7 @@ vi.mock('./qortalRequest', () => ({
   qortalRequest: qortalRequestMock,
 }));
 
-import { bridgeRequest, getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
+import { bridgeRequest, canFetchNodeApi, getMessageNetworkIdentity, getNetworkBridgeState, hasNetworkBridge } from './chatNetwork';
 
 describe('chatNetwork dispatcher (Chat 2.0 slice 2)', () => {
   beforeEach(() => {
@@ -78,3 +78,20 @@ describe('chatNetwork dispatcher (Chat 2.0 slice 2)', () => {
     );
   });
 });
+
+describe('canFetchNodeApi', () => {
+  const base = { actions: [] as string[], host: 'home2' as const, transport: 'home' as const };
+
+  it('accepts hosts advertising FETCH_NODE_API', () => {
+    expect(canFetchNodeApi({ ...base, actions: ['FETCH_NODE_API'] })).toBe(true);
+    expect(canFetchNodeApi({ ...base, actions: ['fetch_node_api'] })).toBe(true);
+    expect(canFetchNodeApi(base)).toBe(false);
+  });
+
+  it("accepts Qortal Hub and the gateway, whose fetch rides the wrapper's same-origin fallback", () => {
+    // Real Hub's SHOW_ACTIONS has no FETCH_NODE_API entry.
+    expect(canFetchNodeApi({ actions: [], host: 'hub', transport: 'home' })).toBe(true);
+    expect(canFetchNodeApi({ actions: [], host: 'gateway', transport: 'gateway' })).toBe(true);
+  });
+});
+
