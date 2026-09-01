@@ -8,10 +8,14 @@ import {
   useState,
 } from 'react';
 import {
+  ATTACHMENT_FILE_MAX_BYTES,
+  type AttachmentService,
   buildAttachmentIdentifier,
   buildAttachmentLink,
   getAttachmentMaxBytes,
+  getAttachmentServiceFromFile,
   getAttachmentServiceFromMime,
+  prepareLocalAttachment,
   getFirstTransferFile,
   isSourceAttachmentExpired,
   QDN_PUBLISH_SOURCE_MAX_BYTES,
@@ -53,6 +57,7 @@ import {
   leaveGroup,
   joinGroup,
   publishChatAttachment,
+  publishQdnResourceBytes,
   publishQdnResource,
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
@@ -168,6 +173,7 @@ import { AccountInfoDialog, ConfirmDeleteMessageDialog, GroupApprovalDialog } fr
 import { AppShell } from './AppShell';
 import { DirectList, GroupList } from './chatLists';
 import { ChatComposer, type ComposerAttachment } from './ChatComposer';
+import { resolveAttachmentCapability } from './attachmentCapabilities';
 import { ChatPaneHeader } from './ChatPaneHeader';
 import { ConversationNetworkSection } from './ConversationRail';
 import { LoadingRows } from './LoadingRows';
@@ -1565,6 +1571,9 @@ export default function App() {
   // (private conversations) — see attachFile/handleSendMessage.
   const [stagedAttachment, setStagedAttachment] = useState<ComposerAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState('');
+  // Hidden <input type="file"> inside ChatComposer, clicked by attachFile on
+  // the bytes path (hosts without Home's native picker).
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [isDraggingAttachment, setDraggingAttachment] = useState(false);
   // dragenter/dragleave fire per child element; a counter tells actual exits
   // from nested re-entries so the drop overlay does not flicker.
@@ -3127,19 +3136,19 @@ export default function App() {
         : qortiumDirectCapabilityStatus
       : null;
   const selectedPrivateGroupFeatureUnavailable = selectedPrivateGroupCapabilityStatus === 'unavailable';
-  const canAttachPublicResource =
-    isSelectedChatOpenGroup &&
-    !!selectedChatAttachAccountName &&
-    hasAction(selectedChatAttachActions, 'PUBLISH_QDN_RESOURCE') &&
-    hasAction(selectedChatAttachActions, 'SELECT_QDN_PUBLISH_SOURCE');
-  const canAttachPrivateResource =
-    isSelectedChatPrivate &&
-    hasAction(selectedChatAttachActions, 'PUBLISH_CHAT_ATTACHMENT') &&
-    hasAction(selectedChatAttachActions, 'SELECT_QDN_PUBLISH_SOURCE');
-  const canAttach =
-    canComposeMessage &&
-    composeContext?.kind !== 'edit' &&
-    (canAttachPublicResource || canAttachPrivateResource);
+  // attachments-matrix A1: which source the paperclip uses (Home's native
+  // picker vs. a local File the app reads itself) is feature-detected per
+  // host in attachmentCapabilities.ts — see its table. Only the bytes path can
+  // stage a pasted or dropped file.
+  const attachmentCapability = resolveAttachmentCapability({
+    actions: selectedChatAttachActions,
+    hasPublisherName: !!selectedChatAttachAccountName,
+    isOpenGroup: isSelectedChatOpenGroup,
+    isPrivateConversation: isSelectedChatPrivate,
+  });
+  const attachSource = attachmentCapability.publicSource ?? attachmentCapability.privateSource;
+  const canAttach = canComposeMessage && composeContext?.kind !== 'edit' && attachSource !== null;
+  const canStageLocalFile = canAttach && attachmentCapability.canStageLocalFile;
   // P3 item 3: for a closed group, the notice must still show when the
   // private family is entirely unadvertised (canSendGroupChat, the generic
   // action, is irrelevant there) — only an OPEN group's notice still gates on
@@ -6407,7 +6416,7 @@ export default function App() {
       // review/schemas-publish-attachments.md § 1: a source token expires 30
       // minutes after selection. Check before spending a round trip on a
       // token Home will reject anyway.
-      if (staged && isSourceAttachmentExpired(staged, Date.now())) {
+      if (staged && staged.kind === 'source' && isSourceAttachmentExpired(staged, Date.now())) {
         setStagedAttachment(null);
         setAttachmentError(t('status.attachment.reselect'));
         return;
@@ -6432,31 +6441,55 @@ export default function App() {
               return;
             }
 
-            const service = getAttachmentServiceFromMime(staged.mimeType);
             const identifier = buildAttachmentIdentifier(chat.group.groupId, Date.now());
+            let service: AttachmentService;
 
-            const outcome = await publishQdnResource(
-              attachNetwork,
-              { identifier, name: publisherName, service, sourceToken: staged.sourceToken },
-              attachActions,
-            );
+            if (staged.kind === 'local') {
+              // Bytes path (attachments-matrix A1): the host shows its own
+              // approval prompt and signs; a rejection throws.
+              service = staged.service;
 
-            if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
-              return;
-            }
+              await publishQdnResourceBytes(
+                attachNetwork,
+                {
+                  dataBase64: staged.dataBase64,
+                  fileName: staged.fileName,
+                  identifier,
+                  name: publisherName,
+                  service,
+                },
+                attachActions,
+              );
 
-            if (outcome.accepted !== true) {
-              // BROADCAST_UNKNOWN: Home's own pending-transaction journal
-              // already records the signature: reconciliation is the
-              // existing P1 GET_PENDING_BRIDGE_TRANSACTIONS wiring's job, not
-              // this call's. Do not send the chat message referencing a link
-              // that may not exist.
-              setWriteError(t('status.attachment.publishAmbiguous'));
-              return;
+              if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
+                return;
+              }
+            } else {
+              service = getAttachmentServiceFromMime(staged.mimeType);
+
+              const outcome = await publishQdnResource(
+                attachNetwork,
+                { identifier, name: publisherName, service, sourceToken: staged.sourceToken },
+                attachActions,
+              );
+
+              if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
+                return;
+              }
+
+              if (outcome.accepted !== true) {
+                // BROADCAST_UNKNOWN: Home's own pending-transaction journal
+                // already records the signature: reconciliation is the
+                // existing P1 GET_PENDING_BRIDGE_TRANSACTIONS wiring's job, not
+                // this call's. Do not send the chat message referencing a link
+                // that may not exist.
+                setWriteError(t('status.attachment.publishAmbiguous'));
+                return;
+              }
             }
 
             publishedLink = buildAttachmentLink(service, publisherName, identifier);
-          } else if (isPrivateConversation) {
+          } else if (isPrivateConversation && staged.kind === 'source') {
             const conversation: PrivateAttachmentConversation =
               chat.kind === 'direct'
                 ? { kind: 'direct', otherAddress: chat.direct.address }
@@ -6760,14 +6793,20 @@ export default function App() {
     }
   }
 
-  // Opens Home's native file picker (SELECT_QDN_PUBLISH_SOURCE) and stages
-  // the returned source token for the next send. The app never sees file
-  // bytes — only fileName/size/mimeType for display — so there is nothing
-  // left to compress, encode, or read locally; Home enforces the 1 byte–100
-  // MiB source cap itself. Replaces any previously staged file (one
-  // attachment per message).
+  // Paperclip. Picker hosts: opens Home's native file picker
+  // (SELECT_QDN_PUBLISH_SOURCE) and stages the returned source token for the
+  // next send — the app never sees file bytes, only fileName/size/mimeType
+  // for display, and Home enforces the 1 byte–100 MiB source cap itself.
+  // Bytes hosts: opens the composer's hidden <input type="file">, whose
+  // selection lands in stageLocalFile. Replaces any previously staged file
+  // (one attachment per message).
   function attachFile() {
-    if (!canAttach || stagedAttachment?.phase === 'selecting') {
+    if (!canAttach || stagedAttachment?.phase === 'selecting' || stagedAttachment?.phase === 'processing') {
+      return;
+    }
+
+    if (attachSource === 'bytes') {
+      attachmentInputRef.current?.click();
       return;
     }
 
@@ -6809,6 +6848,7 @@ export default function App() {
 
         setStagedAttachment({
           fileName: selection.fileName,
+          kind: 'source',
           mimeType: selection.mimeType,
           phase: 'ready',
           selectedAt: Date.now(),
@@ -6822,6 +6862,59 @@ export default function App() {
         }
 
         setAttachmentError(getBridgeErrorMessage(error, t('status.attachment.error'), t));
+        setStagedAttachment(null);
+      });
+  }
+
+  // Bytes path: stage a local File for the next send — route to
+  // IMAGE/ATTACHMENT, compress images, base64-encode, size-check. Fed by the
+  // paperclip's hidden input, clipboard paste, and drag-drop. Replaces any
+  // previously staged file (one attachment per message).
+  function stageLocalFile(file: File) {
+    if (!canStageLocalFile || stagedAttachment?.phase === 'processing' || stagedAttachment?.phase === 'selecting') {
+      return;
+    }
+
+    setAttachmentError('');
+
+    // Fail a hopeless file fast: non-image files publish as-is, so a raw size
+    // over the cap can never succeed (images may still shrink below their cap
+    // during compression, so they are checked after preparing).
+    if (getAttachmentServiceFromFile(file) === 'ATTACHMENT' && file.size > ATTACHMENT_FILE_MAX_BYTES) {
+      setAttachmentError(
+        t('status.attachment.tooLarge', { max: String(Math.round(ATTACHMENT_FILE_MAX_BYTES / 1024 / 1024)) }),
+      );
+      return;
+    }
+
+    const chatKey = selectedChatKeyRef.current;
+
+    setStagedAttachment({ fileName: file.name || 'attachment', phase: 'processing' });
+
+    void prepareLocalAttachment(file)
+      .then((prepared) => {
+        // Attachments are per-conversation; drop a result that finished
+        // preparing after the user moved to another chat.
+        if (selectedChatKeyRef.current !== chatKey) {
+          return;
+        }
+
+        const maxBytes = getAttachmentMaxBytes(prepared.service);
+
+        if (prepared.size > maxBytes) {
+          setAttachmentError(t('status.attachment.tooLarge', { max: String(Math.round(maxBytes / 1024 / 1024)) }));
+          setStagedAttachment(null);
+          return;
+        }
+
+        setStagedAttachment({ phase: 'ready', ...prepared });
+      })
+      .catch(() => {
+        if (selectedChatKeyRef.current !== chatKey) {
+          return;
+        }
+
+        setAttachmentError(t('status.attachment.error'));
         setStagedAttachment(null);
       });
   }
@@ -6866,11 +6959,11 @@ export default function App() {
     }
   }
 
-  // Home's picker is now the only source of publishable bytes (review/
-  // schemas-publish-attachments.md § 2 "Rejected source fields" — inline
-  // base64 is rejected outright), so a browser drag-drop can no longer stage
-  // anything; point the user at the attach button instead of silently
-  // ignoring the drop.
+  // A dropped file is staged directly on the bytes path. On a token-only
+  // host (Home 2 desktop rejects inline bytes outright — review/
+  // schemas-publish-attachments.md § 2) the app has no way to hand the bytes
+  // to Home's picker, so point the user at the attach button instead of
+  // silently ignoring the drop.
   function handleAttachmentDrop(event: DragEvent<HTMLElement>) {
     if (!isFileDrag(event)) {
       return;
@@ -6884,6 +6977,13 @@ export default function App() {
       return;
     }
 
+    const file = canStageLocalFile ? getFirstTransferFile(event.dataTransfer) : null;
+
+    if (file) {
+      stageLocalFile(file);
+      return;
+    }
+
     setAttachmentError(t('status.attachment.usePicker'));
   }
 
@@ -6892,12 +6992,19 @@ export default function App() {
 
     // Only intercept when the clipboard carries a file (e.g. a screenshot or
     // file copied from the desktop); plain text pastes flow through
-    // untouched. Same rationale as handleAttachmentDrop above: there is no
-    // bytes-to-Home path any more, so this can only point at the picker.
-    if (file && canAttach) {
-      event.preventDefault();
-      setAttachmentError(t('status.attachment.usePicker'));
+    // untouched. Same split as handleAttachmentDrop above.
+    if (!file || !canAttach) {
+      return;
     }
+
+    event.preventDefault();
+
+    if (canStageLocalFile) {
+      stageLocalFile(file);
+      return;
+    }
+
+    setAttachmentError(t('status.attachment.usePicker'));
   }
 
   // Insert an emoji at the composer caret (falling back to the end), keeping
@@ -10627,7 +10734,7 @@ export default function App() {
         >
           {isDraggingAttachment ? (
             <div aria-hidden="true" className="chat-pane__drop-overlay">
-              <span>{t('label.composer.dropFile')}</span>
+              <span>{t(canStageLocalFile ? 'label.composer.dropFileHere' : 'label.composer.dropFile')}</span>
             </div>
           ) : null}
           <ChatPaneHeader
@@ -10936,6 +11043,7 @@ export default function App() {
               attachTitle={canAttach ? t('label.composer.attach') : t('action.attachUnavailable')}
               attachment={stagedAttachment}
               attachmentError={attachmentError}
+              attachmentInputRef={attachmentInputRef}
               canAttach={canAttach}
               canCompose={canComposeMessage}
               canSubmit={canSubmitMessage}
@@ -10966,6 +11074,7 @@ export default function App() {
               messageLabel={t('label.common.message')}
               messagePlaceholder={t('placeholder.message')}
               onAttachClick={attachFile}
+              onAttachmentSelected={stageLocalFile}
               onCancelContext={cancelComposeContext}
               onClearAttachment={clearStagedAttachment}
               onDraftChange={setDraft}
@@ -10973,7 +11082,8 @@ export default function App() {
               onPaste={handleComposerPaste}
               onSubmit={(event) => void handleSendMessage(event)}
               onToggleEmoji={() => setComposerEmojiOpen((current) => !current)}
-              selectingLabel={t('status.attachment.processing')}
+              processingLabel={t('status.attachment.processing')}
+              selectingLabel={t('status.attachment.selecting')}
               // P3 item 2a: a closed group's visible byte counter, reflecting
               // the per-chain plaintext cap; null for every other chat (open
               // group/direct), same as before this cap existed.

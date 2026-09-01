@@ -1,19 +1,23 @@
-// Outbound chat attachments (P4b). Home 2 rejects inline base64 uploads
-// entirely (review/schemas-publish-attachments.md § 2) — the app never reads
-// file bytes any more. Attaching a file opens Home's native picker
-// (SELECT_QDN_PUBLISH_SOURCE), which hands back an opaque, short-lived
-// sourceToken plus fileName/size/mimeType for display only. That token is
-// staged here and redeemed at send time by publishQdnResource (open groups)
-// or publishChatAttachment (private conversations) — see coreApi.ts's P4a
-// wrappers and App.tsx's handleSendMessage.
+// Outbound chat attachments.
 //
-// Consequence: there is no local Blob/File to compress, preview, or read, so
-// the browser-File staging machinery this file used to hold (prepareAttachment,
-// image compression, base64 encoding) has no consumer any more and is gone.
-// Drag-drop and clipboard-paste can still detect that a file was offered
-// (getFirstTransferFile), but can no longer stage it — the app has no way to
-// hand those bytes to Home, so callers show a notice pointing at the attach
-// button instead.
+// Two staging shapes exist, chosen per host by attachmentCapabilities.ts:
+//
+// - StagedSourceAttachment (P4b, Home 2 / Home 1.3+): attaching opens Home's
+//   native picker (SELECT_QDN_PUBLISH_SOURCE), which hands back an opaque,
+//   short-lived sourceToken plus fileName/size/mimeType for display only. The
+//   token is redeemed at send time by publishQdnResource (open groups) or
+//   publishChatAttachment (private conversations). The app never sees bytes.
+// - StagedLocalAttachment (attachments-matrix A1, Home 1.x / Home 2 Android /
+//   Qortal Hub): the app reads a browser File itself — from the paperclip's
+//   <input type="file">, a clipboard paste, or a drag-drop — compresses images
+//   to WebP (Hub's parameters: max width 1200, quality 0.6), base64-encodes,
+//   and publishes inline through publishQdnResourceBytes. This is the pre-P4
+//   flow kept as the fallback for every host that still accepts inline bytes,
+//   and the only way paste/drop can stage anything. Open groups only.
+//
+// Either way the message carries a qdn:// link: the inbound pipeline already
+// inline-previews IMAGE links and offers viewer/save for ATTACHMENT links, and
+// older clients degrade to a clickable link.
 
 export const ATTACHMENT_FILE_MAX_BYTES = 25 * 1024 * 1024;
 export const ATTACHMENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
@@ -30,6 +34,9 @@ export const QDN_PUBLISH_SOURCE_MAX_BYTES = 100 * 1024 * 1024;
 // it, so the "select the file again" notice can appear immediately.
 export const SOURCE_TOKEN_EXPIRY_MS = 30 * 60 * 1000;
 
+const IMAGE_COMPRESSION_MAX_WIDTH = 1200;
+const IMAGE_COMPRESSION_QUALITY = 0.6;
+
 export type AttachmentService = 'ATTACHMENT' | 'IMAGE';
 
 // A file selected through Home's native picker and staged for the next send.
@@ -37,11 +44,26 @@ export type AttachmentService = 'ATTACHMENT' | 'IMAGE';
 // used only for the client-side staleness check above.
 export type StagedSourceAttachment = {
   fileName: string;
+  kind: 'source';
   mimeType: string | null;
   selectedAt: number;
   size: number;
   sourceToken: string;
 };
+
+// A browser File the app prepared itself (bytes path — see module doc).
+// `size` is the prepared payload's size (after any image compression), which
+// is what the per-service cap is checked against.
+export type StagedLocalAttachment = {
+  dataBase64: string;
+  fileName: string;
+  kind: 'local';
+  mimeType: string | null;
+  service: AttachmentService;
+  size: number;
+};
+
+export type StagedAttachment = StagedLocalAttachment | StagedSourceAttachment;
 
 type TransferFileItem = {
   getAsFile(): File | null;
@@ -60,8 +82,8 @@ type TransferFileSource = {
  * deliberately ignores text/HTML clipboard entries so ordinary text paste
  * remains the textarea's job.
  *
- * Still used to *detect* that a drop/paste offered a file — the app cannot
- * read its bytes any more (see module doc), so callers only use this to
+ * On a bytes-capable host the returned File is staged directly
+ * (prepareLocalAttachment); on a token-only host callers only use it to
  * decide whether to show the "use the attach button" notice.
  */
 export function getFirstTransferFile(source: TransferFileSource | null | undefined): File | null {
@@ -95,6 +117,10 @@ export function getAttachmentServiceFromMime(mimeType: string | null): Attachmen
   return !!mimeType && mimeType.startsWith('image/') && mimeType !== 'image/svg+xml' ? 'IMAGE' : 'ATTACHMENT';
 }
 
+export function getAttachmentServiceFromFile(file: Pick<File, 'type'>): AttachmentService {
+  return getAttachmentServiceFromMime(file.type || null);
+}
+
 export function getAttachmentMaxBytes(service: AttachmentService) {
   return service === 'IMAGE' ? ATTACHMENT_IMAGE_MAX_BYTES : ATTACHMENT_FILE_MAX_BYTES;
 }
@@ -124,6 +150,93 @@ export function formatAttachmentSize(bytes: number) {
   }
 
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileToBase64(payload: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      const separator = dataUrl.indexOf(',');
+
+      if (separator === -1) {
+        reject(new Error('Unable to read the file.'));
+        return;
+      }
+
+      resolve(dataUrl.slice(separator + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Unable to read the file.'));
+    reader.readAsDataURL(payload);
+  });
+}
+
+// Best-effort canvas re-encode to WebP (this also drops EXIF/metadata, as
+// Hub's own chat-image pipeline does). Returns null whenever the original
+// bytes should be published instead: GIFs (a canvas would freeze the
+// animation), undecodable images, environments without WebP encoding, or a
+// "compressed" result that came out larger than the source.
+async function compressImage(file: File): Promise<Blob | null> {
+  if (file.type === 'image/gif') {
+    return null;
+  }
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, IMAGE_COMPRESSION_MAX_WIDTH / bitmap.width);
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      return null;
+    }
+
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/webp', IMAGE_COMPRESSION_QUALITY),
+    );
+
+    return blob && blob.type === 'image/webp' && blob.size < file.size ? blob : null;
+  } catch {
+    return null;
+  }
+}
+
+// Bytes path: route to IMAGE/ATTACHMENT, compress images, base64-encode.
+// The caller checks the returned `size` against getAttachmentMaxBytes.
+export async function prepareLocalAttachment(file: File): Promise<StagedLocalAttachment> {
+  const service = getAttachmentServiceFromFile(file);
+  let payload: Blob = file;
+  let fileName = file.name || 'attachment';
+  let mimeType: string | null = file.type || null;
+
+  if (service === 'IMAGE') {
+    const compressed = await compressImage(file);
+
+    if (compressed) {
+      payload = compressed;
+      fileName = `${fileName.replace(/\.[^.]+$/, '') || 'image'}.webp`;
+      mimeType = 'image/webp';
+    }
+  }
+
+  return {
+    dataBase64: await fileToBase64(payload),
+    fileName,
+    kind: 'local',
+    mimeType,
+    service,
+    size: payload.size,
+  };
 }
 
 // True once `now` is past the token's 30-minute Home-side expiry. Pure and

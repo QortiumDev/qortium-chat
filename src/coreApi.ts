@@ -998,27 +998,61 @@ export async function getDirectMessages(
   throw new Error('Direct private chat reads require Qortium Home direct chat support.');
 }
 
-// @deprecated Home 2 rejects the legacy inline-base64 publish shape this
-// function built — `base64`/`filename`/every other inline/path/mime source
-// field is on PUBLISH_QDN_RESOURCE's reject list (review/schemas-publish-
-// attachments.md item 2: "The legacy inline-base64 form is rejected."). The
-// only accepted source is now a Home-issued sourceToken: call
-// selectQdnPublishSource to open Home's native picker, then publishQdnResource
-// with the returned token. This shim's signature is kept only because
-// App.tsx's attachment call site (src/App.tsx:5780) has not been migrated
-// yet — that migration is chunk P4b, which App.tsx is explicitly out of
-// scope for here. Calling this always throws.
-export async function publishQdnAttachment(_request: {
-  dataBase64: string;
-  filename: string;
-  identifier: string;
-  name: string;
-  service: 'ATTACHMENT' | 'IMAGE';
-}): Promise<never> {
-  throw new Error(
-    'publishQdnAttachment no longer works: Home 2 rejects inline base64 uploads. Select a file with ' +
-      'selectQdnPublishSource, then publish its sourceToken with publishQdnResource.',
-  );
+// Bytes path (attachments-matrix A1): publishes an open-group attachment
+// from base64 the app prepared itself (attachments.ts prepareLocalAttachment).
+// `base64` + `filename` is the inline-source contract every Home 1.x reads
+// (`data64` || `base64`), Home 2 Android still reads, and Qortal Hub reads
+// (`data64` || `base64` || `file`). Home 2 desktop rejects every inline field
+// outright — callers gate on attachmentCapabilities.hostAcceptsInlinePublishBytes
+// and fall back to selectQdnPublishSource + publishQdnResource there.
+//
+// The host shows its own publish-approval prompt, builds the ARBITRARY
+// transaction, and signs; the app never touches key material. Hosts differ in
+// what they return (Home 1.x: `{accepted, resource, result}`; Hub: the node's
+// transaction response), so the only contract relied on here is
+// "resolved = published, rejected = not" — plus Home's explicit
+// `accepted: false` shape, which is turned into an error.
+export async function publishQdnResourceBytes(
+  network: ChatNetwork,
+  request: {
+    dataBase64: string;
+    fileName: string;
+    identifier: string;
+    name: string;
+    service: 'ATTACHMENT' | 'IMAGE';
+  },
+  actions?: QdnAction[],
+): Promise<void> {
+  if (!hasBridgeAction(actions, 'PUBLISH_QDN_RESOURCE')) {
+    throw new Error('Publishing a QDN resource requires a newer Qortium Home bridge.');
+  }
+
+  if (!request.dataBase64) {
+    throw new Error('There is no file data to publish.');
+  }
+
+  if (!request.name) {
+    throw new Error('A resource name is required.');
+  }
+
+  assertNotDotSegment('Resource name', request.name);
+  assertNotDotSegment('Resource identifier', request.identifier);
+  assertQdnPublishTextField('Resource identifier', request.identifier, QDN_PUBLISH_IDENTIFIER_MAX_BYTES);
+
+  const raw = await bridgeRequest<unknown>(network, {
+    action: 'PUBLISH_QDN_RESOURCE',
+    base64: request.dataBase64,
+    filename: request.fileName,
+    identifier: request.identifier,
+    name: request.name,
+    service: request.service,
+  });
+
+  const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+
+  if (record && record.accepted === false) {
+    throw new Error(typeof record.error === 'string' && record.error ? record.error : 'QDN resource publish was rejected.');
+  }
 }
 
 // -------- P4a: publish source token flow --------

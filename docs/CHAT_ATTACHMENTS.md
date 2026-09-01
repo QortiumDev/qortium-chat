@@ -94,3 +94,49 @@ mistaken for one of Chat's own attachments.
 
 Public `qdn://` links keep rendering exactly as before, including the
 existing "Public resource" label inside encrypted conversations.
+
+## Attachment sources per host (attachments-matrix A1/A2, 2026-09)
+
+The P4 picker flow above assumed every host offers Home's native picker and
+refuses inline bytes. Only Home 2 desktop does both. Chat therefore
+feature-detects an **attachment source** per conversation from the host's
+advertised actions (`src/attachmentCapabilities.ts` — never a host name or
+version string):
+
+| Host | Open-group paperclip | Paste / drag-drop | Private conversations |
+| --- | --- | --- | --- |
+| Home 1.x ≤1.2 (no picker yet) | bytes (`<input type="file">`) | stages the file (bytes) | — |
+| Home 1.x ≥1.3 (picker since home#100) | picker (token) | stages the file (bytes) | — |
+| Home 2 desktop | picker (token) | notice → use the attach button | picker + `PUBLISH_CHAT_ATTACHMENT` |
+| Home 2 Android | picker (token) | stages the file (bytes) | — (not dispatched to apps) |
+| Qortal Hub | bytes | stages the file (bytes) | — |
+| Gateway / browser | — | — | — |
+
+- **picker**: `SELECT_QDN_PUBLISH_SOURCE` → `sourceToken` → `publishQdnResource`
+  / `publishChatAttachment` (the P4 flow, unchanged).
+- **bytes**: the app reads the `File` itself (`prepareLocalAttachment`:
+  WebP re-encode at max width 1200 / quality 0.6 for non-GIF images, which
+  also strips metadata — Hub's own parameters), base64-encodes it, and calls
+  `publishQdnResourceBytes`, which sends the pre-P4 inline shape
+  `{ action: 'PUBLISH_QDN_RESOURCE', base64, filename, identifier, name, service }`.
+  Every Home 1.x reads `data64 || base64`; Hub reads `data64 || base64 || file`.
+  The host shows its own approval prompt and signs. Hosts return different
+  shapes (Home: `{accepted, resource, result}`; Hub: the node's transaction
+  response), so the only contract relied on is resolved = published,
+  rejected/`accepted: false` = not.
+
+**Token-only detection.** Home 2 desktop denylists every inline field and is
+also the only host that advertises `PUBLISH_CHAT_ATTACHMENT`, so that action
+is used as the "refuses inline bytes" marker (`hostAcceptsInlinePublishBytes`).
+No probe request is made. When both the picker and inline bytes are accepted
+(Home 1.3–1.8), the paperclip prefers the picker (Home sees the real file and
+the app never holds bytes) while paste/drop use the bytes path.
+
+Paste/drop can only ever stage on the bytes path — a token-only host gives the
+app no way to hand bytes to its picker. Enabling that on Home 2 desktop needs
+a Home-side blob-intake action (tracked as Phase B1 in
+`~/AGENTS/projects/qortium-chat-v2/attachments-matrix/TRACKER.md`).
+
+The bytes path is open groups only: private conversations need Home's
+encrypted `PUBLISH_CHAT_ATTACHMENT`, and no host without it has an
+equivalent.

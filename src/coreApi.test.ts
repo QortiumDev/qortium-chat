@@ -60,7 +60,7 @@ import {
   openChatAttachmentViewer,
   openQdnResourceViewer,
   publishChatAttachment,
-  publishQdnAttachment,
+  publishQdnResourceBytes,
   publishQdnResource,
   requestPrivateGroupChatKey,
   RESOLVE_IDENTITIES_LIMIT,
@@ -2574,19 +2574,63 @@ describe('Core API path builders', () => {
       });
     });
 
-    describe('publishQdnAttachment (deprecated shim)', () => {
-      it('always throws, explaining the token flow, and never calls the bridge', async () => {
-        await expect(
-          publishQdnAttachment({
-            dataBase64: 'ZGF0YQ==',
-            filename: 'a.png',
-            identifier: 'ident',
-            name: 'publisher',
-            service: 'IMAGE',
-          }),
-        ).rejects.toThrow('Select a file with selectQdnPublishSource, then publish its sourceToken');
+    describe('publishQdnResourceBytes (inline bytes fallback)', () => {
+      const request = {
+        dataBase64: 'ZGF0YQ==',
+        fileName: 'a.png',
+        identifier: 'ident-1',
+        name: 'publisher',
+        service: 'IMAGE' as const,
+      };
+
+      it('throws a clear error when PUBLISH_QDN_RESOURCE is not advertised', async () => {
+        await expect(publishQdnResourceBytes('qortium', request, [])).rejects.toThrow(
+          'Publishing a QDN resource requires a newer Qortium Home bridge.',
+        );
         expect(qdnRequestMock).not.toHaveBeenCalled();
+      });
+
+      it('sends the pre-P4 inline `base64` + `filename` shape on the selected network', async () => {
+        qdnRequestMock.mockResolvedValueOnce({ accepted: true, action: 'PUBLISH_QDN_RESOURCE' });
+
+        await expect(publishQdnResourceBytes('qortium', request, ['PUBLISH_QDN_RESOURCE'])).resolves.toBeUndefined();
+        expect(qdnRequestMock).toHaveBeenCalledWith({
+          action: 'PUBLISH_QDN_RESOURCE',
+          base64: 'ZGF0YQ==',
+          filename: 'a.png',
+          identifier: 'ident-1',
+          name: 'publisher',
+          service: 'IMAGE',
+        });
         expect(qortalRequestMock).not.toHaveBeenCalled();
+
+        // Qortal Hub returns the node's transaction response rather than
+        // Home's {accepted} envelope — any resolved value counts as published.
+        qortalRequestMock.mockResolvedValueOnce({ signature: 'sig', type: 'ARBITRARY' });
+
+        await expect(publishQdnResourceBytes('qortal', request, ['PUBLISH_QDN_RESOURCE'])).resolves.toBeUndefined();
+        expect(qortalRequestMock).toHaveBeenCalledWith(expect.objectContaining({ action: 'PUBLISH_QDN_RESOURCE', base64: 'ZGF0YQ==' }));
+      });
+
+      it("turns Home's explicit {accepted: false} into an error", async () => {
+        qdnRequestMock.mockResolvedValueOnce({ accepted: false, error: 'Publish rejected by user.' });
+
+        await expect(publishQdnResourceBytes('qortium', request, ['PUBLISH_QDN_RESOURCE'])).rejects.toThrow(
+          'Publish rejected by user.',
+        );
+      });
+
+      it('validates identifier length and dot segments before any bridge call', async () => {
+        await expect(
+          publishQdnResourceBytes('qortium', { ...request, identifier: '..' }, ['PUBLISH_QDN_RESOURCE']),
+        ).rejects.toThrow('cannot be "." or ".."');
+        await expect(
+          publishQdnResourceBytes('qortium', { ...request, identifier: 'x'.repeat(65) }, ['PUBLISH_QDN_RESOURCE']),
+        ).rejects.toThrow('at most 64 UTF-8 bytes');
+        await expect(
+          publishQdnResourceBytes('qortium', { ...request, dataBase64: '' }, ['PUBLISH_QDN_RESOURCE']),
+        ).rejects.toThrow('no file data');
+        expect(qdnRequestMock).not.toHaveBeenCalled();
       });
     });
 

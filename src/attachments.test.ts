@@ -8,6 +8,7 @@ import {
   buildAttachmentLink,
   formatAttachmentSize,
   getAttachmentMaxBytes,
+  getAttachmentServiceFromFile,
   getAttachmentServiceFromMime,
   getFirstTransferFile,
   isSourceAttachmentExpired,
@@ -15,6 +16,12 @@ import {
 } from './attachments';
 
 describe('attachment helpers', () => {
+  it('routes a local File by its type the same way as a picker mimeType', () => {
+    expect(getAttachmentServiceFromFile({ type: 'image/png' })).toBe('IMAGE');
+    expect(getAttachmentServiceFromFile({ type: 'image/svg+xml' })).toBe('ATTACHMENT');
+    expect(getAttachmentServiceFromFile({ type: '' })).toBe('ATTACHMENT');
+  });
+
   it('prefers a direct clipboard file and falls back to a file-kind clipboard item', () => {
     const direct = { name: 'direct.png' } as File;
     const fallback = { name: 'clipboard.png' } as File;
