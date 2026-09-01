@@ -173,6 +173,8 @@ import { AccountInfoDialog, ConfirmDeleteMessageDialog, GroupApprovalDialog } fr
 import { AppShell } from './AppShell';
 import { DirectList, GroupList } from './chatLists';
 import { ChatComposer, type ComposerAttachment } from './ChatComposer';
+import { LinkResourceDialog } from './LinkResourceDialog';
+import { buildQdnResourceShareLink } from './messageLinks';
 import { resolveAttachmentCapability } from './attachmentCapabilities';
 import { ChatPaneHeader } from './ChatPaneHeader';
 import { ConversationNetworkSection } from './ConversationRail';
@@ -1565,6 +1567,7 @@ export default function App() {
   const accountRefreshPendingRef = useRef(false);
   const accountRefreshGenerationRef = useRef(0);
   const [isComposerEmojiOpen, setComposerEmojiOpen] = useState(false);
+  const [isLinkResourceOpen, setLinkResourceOpen] = useState(false);
   // One attachment per message: staged via Home's native picker
   // (SELECT_QDN_PUBLISH_SOURCE) as an opaque source token, then redeemed on
   // Send by publishQdnResource (open groups) or publishChatAttachment
@@ -3148,6 +3151,10 @@ export default function App() {
   });
   const attachSource = attachmentCapability.publicSource ?? attachmentCapability.privateSource;
   const canAttach = canComposeMessage && composeContext?.kind !== 'edit' && attachSource !== null;
+  // A3: linking an existing resource is plain text insertion plus a node-API
+  // search — it needs no publish capability, only FETCH_NODE_API on the
+  // conversation's network (every Home, Hub via same-origin fallback, gateway).
+  const canLinkResource = canComposeMessage && hasAction(selectedChatAttachActions, 'FETCH_NODE_API');
   const canStageLocalFile = canAttach && attachmentCapability.canStageLocalFile;
   // P3 item 3: for a closed group, the notice must still show when the
   // private family is entirely unadvertised (canSendGroupChat, the generic
@@ -6488,7 +6495,12 @@ export default function App() {
               }
             }
 
-            publishedLink = buildAttachmentLink(service, publisherName, identifier);
+            // A4: in a Qortal conversation, emit Hub's use-embed link so real
+            // Hub clients render the attachment inline; Chat parses both forms.
+            publishedLink =
+              attachNetwork === 'qortal'
+                ? buildQdnResourceShareLink('qortal', { identifier, name: publisherName, service })
+                : buildAttachmentLink(service, publisherName, identifier);
           } else if (isPrivateConversation && staged.kind === 'source') {
             const conversation: PrivateAttachmentConversation =
               chat.kind === 'direct'
@@ -7007,24 +7019,39 @@ export default function App() {
     setAttachmentError(t('status.attachment.usePicker'));
   }
 
-  // Insert an emoji at the composer caret (falling back to the end), keeping
-  // focus and caret position so picking several emojis in a row flows.
-  function insertComposerEmoji(emoji: string) {
+  // Insert text at the composer caret (falling back to the end), keeping
+  // focus and caret position so successive insertions flow.
+  function insertComposerText(text: string) {
     const composer = composerRef.current;
     const start = composer?.selectionStart ?? draft.length;
     const end = composer?.selectionEnd ?? draft.length;
 
-    setDraft((current) => `${current.slice(0, start)}${emoji}${current.slice(end)}`);
+    setDraft((current) => `${current.slice(0, start)}${text}${current.slice(end)}`);
     requestAnimationFrame(() => {
       const element = composerRef.current;
 
       if (element) {
-        const caret = start + emoji.length;
+        const caret = start + text.length;
 
         element.focus();
         element.setSelectionRange(caret, caret);
       }
     });
+  }
+
+  function insertComposerEmoji(emoji: string) {
+    insertComposerText(emoji);
+  }
+
+  // A3: a picked resource arrives as a ready-made share link; pad it so it
+  // never glues onto surrounding draft text (the link scanner stops at spaces).
+  function insertResourceLink(link: string) {
+    const composer = composerRef.current;
+    const start = composer?.selectionStart ?? draft.length;
+    const needsLeadingSpace = start > 0 && !/\s/.test(draft.slice(start - 1, start));
+
+    insertComposerText(`${needsLeadingSpace ? ' ' : ''}${link} `);
+    setLinkResourceOpen(false);
   }
 
   // Stash the outgoing chat's unsent composer text under its chat key. An edit
@@ -8434,6 +8461,7 @@ export default function App() {
   // UI: drop them when the chat changes (Escape dismisses the panel too).
   useEffect(() => {
     setComposerEmojiOpen(false);
+    setLinkResourceOpen(false);
     setStagedAttachment(null);
     setAttachmentError('');
     attachmentDragDepthRef.current = 0;
@@ -10223,6 +10251,14 @@ export default function App() {
           t={t}
         />
       ) : null}
+      {isLinkResourceOpen ? (
+        <LinkResourceDialog
+          network={selectedChatAttachNetwork}
+          onCancel={() => setLinkResourceOpen(false)}
+          onInsert={insertResourceLink}
+          t={t}
+        />
+      ) : null}
       {deleteTarget ? (
         <ConfirmDeleteMessageDialog
           onCancel={() => setDeleteTarget(null)}
@@ -11045,6 +11081,7 @@ export default function App() {
               attachmentError={attachmentError}
               attachmentInputRef={attachmentInputRef}
               canAttach={canAttach}
+              canLinkResource={canLinkResource}
               canCompose={canComposeMessage}
               canSubmit={canSubmitMessage}
               cancelLabel={t('button.cancel')}
@@ -11075,6 +11112,7 @@ export default function App() {
               messagePlaceholder={t('placeholder.message')}
               onAttachClick={attachFile}
               onAttachmentSelected={stageLocalFile}
+              onLinkResourceClick={() => setLinkResourceOpen(true)}
               onCancelContext={cancelComposeContext}
               onClearAttachment={clearStagedAttachment}
               onDraftChange={setDraft}
@@ -11082,6 +11120,7 @@ export default function App() {
               onPaste={handleComposerPaste}
               onSubmit={(event) => void handleSendMessage(event)}
               onToggleEmoji={() => setComposerEmojiOpen((current) => !current)}
+              linkResourceLabel={t('label.composer.linkResource')}
               processingLabel={t('status.attachment.processing')}
               selectingLabel={t('status.attachment.selecting')}
               // P3 item 2a: a closed group's visible byte counter, reflecting

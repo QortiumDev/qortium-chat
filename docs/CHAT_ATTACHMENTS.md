@@ -140,3 +140,25 @@ a Home-side blob-intake action (tracked as Phase B1 in
 The bytes path is open groups only: private conversations need Home's
 encrypted `PUBLISH_CHAT_ATTACHMENT`, and no host without it has an
 equivalent.
+
+## Linking existing resources (attachments-matrix A3/A4, 2026-09)
+
+The composer's 🔗 button searches Core's `/arbitrary/resources/search` (via
+`FETCH_NODE_API`, which every host serves — Home directly, Hub and the gateway
+through Chat's same-origin fallback) across ALL publishers and inserts a link;
+nothing is republished. `buildQdnResourceShareLink` picks the form the
+conversation's network previews best:
+
+- Qortium: `qdn://SERVICE/name/identifier` (percent-encoded segments).
+- Qortal: Hub's `qortal://use-embed/{IMAGE|VIDEO|ATTACHMENT}?name=…&service=…&identifier=…`
+  so real Hub clients render an inline embed. Hub neither URL-encodes nor
+  decodes these query values, so the form is used only when every value is
+  `[A-Za-z0-9._-]`; otherwise the plain `qortal://SERVICE/name?identifier=…`
+  link is emitted (previewed by Chat, linkified by Hub).
+
+Chat's `parseQdnResource` now also parses incoming `use-embed` links (both the
+ones Chat emits and real Hub group-image embeds), so they preview like any
+other QDN link. Open-group ATTACHMENT publishes in Qortal conversations emit
+the use-embed form too — the previous `qdn://SERVICE/name/identifier` form was
+mis-parsed in Qortal conversations, where an identifier only rides
+`?identifier=` (the third segment was read as an app path).

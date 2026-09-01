@@ -4844,3 +4844,50 @@ button.message__reply-preview:focus-visible,
     transform: none;
   }
 }
+
+/* Link-a-published-resource dialog (attachments-matrix A3). */
+.link-resource__search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.link-resource__search input[type='search'] {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.link-resource__results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0 0 12px;
+  max-height: min(320px, 45dvh);
+  overflow-y: auto;
+  padding: 0;
+}
+
+.link-resource__result {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.link-resource__result-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.link-resource__result-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.link-resource__result-text .muted {
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}

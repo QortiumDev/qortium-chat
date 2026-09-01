@@ -175,6 +175,14 @@ function parseQdnResource(qdnUrl: string, conversationNetwork: ChatNetwork): Qdn
   const parts = basePart.replace(/^\/+/, '').split('/');
   const network = getAddressNetwork(qdnUrl, conversationNetwork);
   const firstSegment = decodeSegment(parts.shift() ?? '').trim();
+
+  // Qortal Hub's inline-embed grammar (attachments-matrix A4):
+  // qortal://use-embed/TYPE?name=…&service=…&identifier=…&mimeType=…. Hub is
+  // the only emitter, always with the qortal:// scheme.
+  if (/^qortal:\/\//i.test(qdnUrl) && firstSegment.toUpperCase() === 'USE-EMBED') {
+    return parseQortalHubEmbed(qdnUrl, parts, queryString);
+  }
+
   let service = firstSegment.toUpperCase();
   let name = decodeSegment(parts.shift() ?? '').trim();
 
@@ -243,6 +251,116 @@ function parseQdnResource(qdnUrl: string, conversationNetwork: ChatNetwork): Qdn
     qdnUrl,
     service,
   };
+}
+
+// Hub's embed parser neither URL-encodes nor decodes query values
+// (Embeds/embed-utils.ts splits on & and = and only strips HTML tags), so this
+// parser reads them raw too — a value Hub would misread is never emitted by
+// buildQdnResourceShareLink. POLL embeds carry no QDN coordinate and parse to
+// null. The embed TYPE (IMAGE/VIDEO/ATTACHMENT) is Hub's renderer hint; the
+// QDN coordinate lives entirely in the query's service/name/identifier.
+function parseQortalHubEmbed(qdnUrl: string, parts: string[], queryString: string): QdnResourceBase<string> | null {
+  const embedType = (parts[0] ?? '').trim().toUpperCase();
+
+  if (!['ATTACHMENT', 'IMAGE', 'VIDEO'].includes(embedType)) {
+    return null;
+  }
+
+  const params = new Map<string, string>();
+
+  for (const pair of queryString.split('&')) {
+    const separator = pair.indexOf('=');
+
+    if (separator > 0) {
+      params.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+    }
+  }
+
+  const service = (params.get('service') ?? '').toUpperCase();
+  const name = params.get('name') ?? '';
+  let identifier = params.get('identifier') ?? '';
+
+  if (identifier.toLowerCase() === 'default') {
+    identifier = '';
+  }
+
+  if (
+    !/^[A-Z0-9_]{1,64}$/.test(service) ||
+    !name ||
+    name.length > 255 ||
+    isDotSegment(name) ||
+    /[/\\\u0000-\u001f]/.test(name) ||
+    identifier.length > 64 ||
+    isDotSegment(identifier) ||
+    /[/\\\u0000-\u001f]/.test(identifier)
+  ) {
+    return null;
+  }
+
+  return {
+    identifier: identifier || undefined,
+    name,
+    network: 'qortal',
+    path: '',
+    qdnUrl,
+    service,
+  };
+}
+
+// Characters that survive Hub's no-decode query parsing AND the LINK_PATTERN
+// scanner above (no whitespace, quotes, or angle brackets).
+const HUB_EMBED_SAFE_VALUE = /^[A-Za-z0-9._-]+$/;
+
+function getHubEmbedType(service: string): 'ATTACHMENT' | 'IMAGE' | 'VIDEO' {
+  if (isImageQdnService(service)) {
+    return 'IMAGE';
+  }
+
+  return service === 'VIDEO' ? 'VIDEO' : 'ATTACHMENT';
+}
+
+// Builds the link Chat inserts for an existing/just-published QDN resource
+// (attachments-matrix A3/A4), in the form the CONVERSATION's network previews
+// best:
+//
+// - qortium: Chat's own qdn://SERVICE/name/identifier (percent-encoded
+//   segments; the parser above decodes them).
+// - qortal: Hub's use-embed grammar, so real Hub clients render an inline
+//   embed instead of a bare link — but only when every value is safe under
+//   Hub's no-decode parsing; otherwise (a name with spaces, say) fall back to
+//   the plain Qortal link form qortal://SERVICE/name?identifier=…, which every
+//   client at least linkifies and Chat fully previews.
+export function buildQdnResourceShareLink(
+  network: ChatNetwork,
+  resource: { identifier?: string; mimeType?: string; name: string; service: string },
+): string {
+  const service = resource.service.toUpperCase();
+  const identifier = resource.identifier ?? '';
+
+  if (network !== 'qortal') {
+    const encodedName = encodeURIComponent(resource.name);
+
+    return identifier
+      ? `qdn://${service}/${encodedName}/${encodeURIComponent(identifier)}`
+      : `qdn://${service}/${encodedName}`;
+  }
+
+  const values = [resource.name, ...(identifier ? [identifier] : []), ...(resource.mimeType ? [resource.mimeType] : [])];
+
+  if (values.every((value) => HUB_EMBED_SAFE_VALUE.test(value))) {
+    const query = [
+      `name=${resource.name}`,
+      `service=${service}`,
+      ...(identifier ? [`identifier=${identifier}`] : []),
+      ...(resource.mimeType ? [`mimeType=${resource.mimeType}`] : []),
+    ].join('&');
+
+    return `qortal://use-embed/${getHubEmbedType(service)}?${query}`;
+  }
+
+  return identifier
+    ? `qortal://${service}/${encodeURIComponent(resource.name)}?identifier=${encodeURIComponent(identifier)}`
+    : `qortal://${service}/${encodeURIComponent(resource.name)}`;
 }
 
 function parseQdnImageResource(qdnUrl: string, conversationNetwork: ChatNetwork): QdnImageResource | null {
