@@ -7,8 +7,8 @@
 // | Host                       | SELECT_QDN_PUBLISH_SOURCE | PUBLISH_QDN_RESOURCE inline bytes | PUBLISH_CHAT_ATTACHMENT |
 // | Home 1.x ≤1.2              | no                        | yes (`base64` + `filename`)       | no                      |
 // | Home 1.x ≥1.3 (…1.8)       | yes                       | yes                               | no                      |
-// | Home 2 desktop             | yes                       | NO — denylisted, throws           | yes                     |
-// | Home 2 Android             | yes                       | yes                               | (not dispatched)        |
+// | Home 2 desktop + Android   | yes                       | NO — denylisted, throws           | yes                     |
+// | Home 2.2+ (home#495)       | yes (+STAGE_QDN_PUBLISH_SOURCE for app-held bytes)            | yes                     |
 // | Qortal Hub                 | no                        | yes (`data64`/`base64`/`file`)    | no                      |
 // | Gateway / plain browser    | no                        | no                                | no                      |
 //
@@ -30,9 +30,17 @@ import type { QdnAction } from './types';
 
 export type AttachmentSource = 'bytes' | 'picker';
 
+/** How a pasted/dropped local File gets to the host (B3):
+ *  'inline' — the app publishes base64 directly (Home 1.x, Hub);
+ *  'stage'  — the app stages bytes via STAGE_QDN_PUBLISH_SOURCE and redeems
+ *             the returned sourceToken like a picker selection (Home 2.2+). */
+export type LocalFileMode = 'inline' | 'stage';
+
 export type AttachmentCapability = {
-  /** Paste/drag-drop can stage a local File (only ever true on the bytes path). */
+  /** Paste/drag-drop can stage a local File. */
   canStageLocalFile: boolean;
+  /** How a local File reaches the host, when canStageLocalFile is true. */
+  localFileMode: LocalFileMode | null;
   /** Source the paperclip uses for a private conversation, or null when unavailable. */
   privateSource: 'picker' | null;
   /** Source the paperclip uses for an open group, or null when unavailable. */
@@ -64,6 +72,12 @@ export function hostOffersPublishPicker(actions: readonly QdnAction[] | undefine
   return has(actions, 'PUBLISH_QDN_RESOURCE') && has(actions, 'SELECT_QDN_PUBLISH_SOURCE');
 }
 
+/** Home ships STAGE_QDN_PUBLISH_SOURCE (home#495): the app hands over bytes
+ *  it already holds and receives an ordinary publish sourceToken back. */
+export function hostStagesAppBytes(actions: readonly QdnAction[] | undefined): boolean {
+  return has(actions, 'STAGE_QDN_PUBLISH_SOURCE');
+}
+
 export function resolveAttachmentCapability(input: {
   actions: readonly QdnAction[] | undefined;
   /** The sender has a registered name on this network (open-group publishes need one). */
@@ -73,6 +87,7 @@ export function resolveAttachmentCapability(input: {
 }): AttachmentCapability {
   const { actions } = input;
   const acceptsBytes = hostAcceptsInlinePublishBytes(actions);
+  const stagesBytes = hostStagesAppBytes(actions);
 
   // The picker is preferred when both exist (Home 1.3–1.8): Home shows its own
   // approval prompt with the real file and never needs the app to hold bytes.
@@ -93,8 +108,21 @@ export function resolveAttachmentCapability(input: {
       ? 'picker'
       : null;
 
+  // Staged bytes ride the normal token pipeline, so they serve BOTH the
+  // public paperclip path and private conversations (PUBLISH_CHAT_ATTACHMENT
+  // redeems the same token). Inline bytes remain public-only.
+  const localFileMode: LocalFileMode | null =
+    publicSource !== null || privateSource !== null
+      ? stagesBytes
+        ? 'stage'
+        : acceptsBytes && publicSource !== null
+          ? 'inline'
+          : null
+      : null;
+
   return {
-    canStageLocalFile: input.isOpenGroup && input.hasPublisherName && acceptsBytes,
+    canStageLocalFile: localFileMode !== null,
+    localFileMode,
     privateSource,
     publicSource,
   };

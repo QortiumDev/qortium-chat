@@ -1132,6 +1132,38 @@ export async function publishQdnResourceBytes(
   }
 }
 
+// B3 (home#495): stage bytes the app already holds (paste/drop) as a normal
+// publish source. Returns the same selection shape SELECT_QDN_PUBLISH_SOURCE
+// does; the token is redeemed by publishQdnResource / publishChatAttachment
+// unchanged, and the host still shows its full approval prompt at publish
+// time. 25 MiB host-side cap.
+export async function stageQdnPublishBlob(
+  network: ChatNetwork,
+  blob: { dataBase64: string; fileName: string; mimeType: string | null },
+  actions?: QdnAction[],
+): Promise<QdnPublishSourceSelection> {
+  if (!hasBridgeAction(actions, 'STAGE_QDN_PUBLISH_SOURCE')) {
+    throw new Error('Staging pasted or dropped bytes requires a newer Qortium Home bridge.');
+  }
+
+  const raw = await bridgeRequest<Record<string, unknown>>(network, {
+    action: 'STAGE_QDN_PUBLISH_SOURCE',
+    bytesBase64: blob.dataBase64,
+    fileName: blob.fileName,
+    ...(blob.mimeType ? { mimeType: blob.mimeType } : {}),
+  });
+  const fileName = typeof raw?.fileName === 'string' ? raw.fileName : '';
+  const size = typeof raw?.size === 'number' ? raw.size : NaN;
+  const sourceToken = typeof raw?.sourceToken === 'string' ? raw.sourceToken : '';
+  const mimeType = typeof raw?.mimeType === 'string' ? raw.mimeType : null;
+
+  if (!fileName || !sourceToken || !Number.isFinite(size)) {
+    throw new Error('Staging the file returned an incomplete result.');
+  }
+
+  return { canceled: false, fileName, kind: 'file', mimeType, size, sourceToken };
+}
+
 // -------- P4a: publish source token flow --------
 //
 // review/schemas-publish-attachments.md §§ 1-2.

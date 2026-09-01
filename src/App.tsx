@@ -59,6 +59,7 @@ import {
   getAccountNames,
   publishChatAttachment,
   publishQdnResourceBytes,
+  stageQdnPublishBlob,
   publishQdnResource,
   requestPrivateGroupChatKey,
   resolvePrivateGroupChatKeyRequests,
@@ -6939,11 +6940,14 @@ export default function App() {
     }
 
     const chatKey = selectedChatKeyRef.current;
+    const mode = attachmentCapability.localFileMode;
+    const network = selectedChatAttachNetwork;
+    const attachActions = selectedChatAttachActions;
 
     setStagedAttachment({ fileName: file.name || 'attachment', phase: 'processing' });
 
     void prepareLocalAttachment(file)
-      .then((prepared) => {
+      .then(async (prepared) => {
         // Attachments are per-conversation; drop a result that finished
         // preparing after the user moved to another chat.
         if (selectedChatKeyRef.current !== chatKey) {
@@ -6958,14 +6962,46 @@ export default function App() {
           return;
         }
 
+        if (mode === 'stage') {
+          // B3 (home#495): hand the prepared bytes to the host and stage the
+          // returned sourceToken exactly like a picker selection — this is
+          // what makes paste/drop work on token-only hosts, including for
+          // private conversations (PUBLISH_CHAT_ATTACHMENT redeems it).
+          const selection = await stageQdnPublishBlob(
+            network,
+            { dataBase64: prepared.dataBase64, fileName: prepared.fileName, mimeType: prepared.mimeType },
+            attachActions,
+          );
+
+          if (selectedChatKeyRef.current !== chatKey) {
+            return;
+          }
+
+          if (selection.canceled) {
+            setStagedAttachment(null);
+            return;
+          }
+
+          setStagedAttachment({
+            fileName: selection.fileName,
+            kind: 'source',
+            mimeType: selection.mimeType ?? prepared.mimeType,
+            phase: 'ready',
+            selectedAt: Date.now(),
+            size: selection.size,
+            sourceToken: selection.sourceToken,
+          });
+          return;
+        }
+
         setStagedAttachment({ phase: 'ready', ...prepared });
       })
-      .catch(() => {
+      .catch((error) => {
         if (selectedChatKeyRef.current !== chatKey) {
           return;
         }
 
-        setAttachmentError(t('status.attachment.error'));
+        setAttachmentError(getBridgeErrorMessage(error, t('status.attachment.error'), t));
         setStagedAttachment(null);
       });
   }

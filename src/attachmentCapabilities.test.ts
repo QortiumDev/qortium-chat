@@ -12,6 +12,7 @@ import {
 const HOME_1_2 = ['PUBLISH_QDN_RESOURCE', 'SEND_CHAT_MESSAGE'];
 const HOME_1 = ['PUBLISH_QDN_RESOURCE', 'SELECT_QDN_PUBLISH_SOURCE', 'SEND_CHAT_MESSAGE'];
 const HOME_2 = ['PUBLISH_QDN_RESOURCE', 'SELECT_QDN_PUBLISH_SOURCE', 'PUBLISH_CHAT_ATTACHMENT', 'SEND_CHAT_MESSAGE'];
+const HOME_2_2 = [...HOME_2, 'STAGE_QDN_PUBLISH_SOURCE'];
 const HUB = ['PUBLISH_QDN_RESOURCE', 'PUBLISH_MULTIPLE_QDN_RESOURCES', 'SAVE_FILE', 'SEND_CHAT_MESSAGE'];
 const GATEWAY = ['FETCH_NODE_API', 'LIST_GROUPS', 'SEARCH_CHAT_MESSAGES'];
 
@@ -39,6 +40,7 @@ describe('resolveAttachmentCapability — open groups', () => {
     for (const actions of [HOME_1_2, HUB]) {
       expect(resolveAttachmentCapability({ actions, ...openGroup })).toEqual({
         canStageLocalFile: true,
+        localFileMode: 'inline',
         privateSource: null,
         publicSource: 'bytes',
       });
@@ -48,6 +50,7 @@ describe('resolveAttachmentCapability — open groups', () => {
   it('Home 1.3–1.8: picker for the paperclip, bytes for paste/drop', () => {
     expect(resolveAttachmentCapability({ actions: HOME_1, ...openGroup })).toEqual({
       canStageLocalFile: true,
+      localFileMode: 'inline',
       privateSource: null,
       publicSource: 'picker',
     });
@@ -56,6 +59,7 @@ describe('resolveAttachmentCapability — open groups', () => {
   it('Home 2 desktop: picker only — paste/drop cannot stage bytes', () => {
     expect(resolveAttachmentCapability({ actions: HOME_2, ...openGroup })).toEqual({
       canStageLocalFile: false,
+      localFileMode: null,
       privateSource: null,
       publicSource: 'picker',
     });
@@ -64,6 +68,7 @@ describe('resolveAttachmentCapability — open groups', () => {
   it('gateway / plain browser: nothing', () => {
     expect(resolveAttachmentCapability({ actions: GATEWAY, ...openGroup })).toEqual({
       canStageLocalFile: false,
+      localFileMode: null,
       privateSource: null,
       publicSource: null,
     });
@@ -73,6 +78,7 @@ describe('resolveAttachmentCapability — open groups', () => {
     for (const actions of [HOME_1_2, HOME_1, HOME_2, HUB]) {
       expect(resolveAttachmentCapability({ actions, ...openGroup, hasPublisherName: false })).toEqual({
         canStageLocalFile: false,
+        localFileMode: null,
         privateSource: null,
         publicSource: null,
       });
@@ -84,6 +90,7 @@ describe('resolveAttachmentCapability — private conversations', () => {
   it('only Home 2 offers private attachments, and only through the picker', () => {
     expect(resolveAttachmentCapability({ actions: HOME_2, ...privateChat })).toEqual({
       canStageLocalFile: false,
+      localFileMode: null,
       privateSource: 'picker',
       publicSource: null,
     });
@@ -91,6 +98,7 @@ describe('resolveAttachmentCapability — private conversations', () => {
     for (const actions of [HOME_1_2, HOME_1, HUB, GATEWAY]) {
       expect(resolveAttachmentCapability({ actions, ...privateChat })).toEqual({
         canStageLocalFile: false,
+        localFileMode: null,
         privateSource: null,
         publicSource: null,
       });
@@ -99,5 +107,32 @@ describe('resolveAttachmentCapability — private conversations', () => {
 
   it('never enables the bytes path for a private conversation, even on a bytes-capable host', () => {
     expect(resolveAttachmentCapability({ actions: HUB, ...privateChat }).canStageLocalFile).toBe(false);
+  });
+
+});
+
+describe('resolveAttachmentCapability — staged app bytes (B3, Home 2.2+)', () => {
+  it('open groups: paste/drop stages through the host and the paperclip keeps the picker', () => {
+    expect(resolveAttachmentCapability({ actions: HOME_2_2, ...openGroup })).toEqual({
+      canStageLocalFile: true,
+      localFileMode: 'stage',
+      privateSource: null,
+      publicSource: 'picker',
+    });
+  });
+
+  it('private conversations: staged bytes redeem through PUBLISH_CHAT_ATTACHMENT', () => {
+    expect(resolveAttachmentCapability({ actions: HOME_2_2, ...privateChat })).toEqual({
+      canStageLocalFile: true,
+      localFileMode: 'stage',
+      privateSource: 'picker',
+      publicSource: null,
+    });
+  });
+
+  it('staging without any publish capability enables nothing', () => {
+    expect(
+      resolveAttachmentCapability({ actions: ['STAGE_QDN_PUBLISH_SOURCE'], ...openGroup }).canStageLocalFile,
+    ).toBe(false);
   });
 });

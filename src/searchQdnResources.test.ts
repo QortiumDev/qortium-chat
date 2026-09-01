@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { searchNames, searchQdnResources } from './coreApi';
+import { searchNames, searchQdnResources, stageQdnPublishBlob } from './coreApi';
 import { qdnRequest } from './qdnRequest';
 import { qortalRequest } from './qortalRequest';
 
@@ -82,5 +82,50 @@ describe('searchNames', () => {
 
     expect(request.action).toBe('FETCH_NODE_API');
     expect(request.path).toBe('/names/search?limit=10&prefix=true&query=ali');
+  });
+});
+
+describe('stageQdnPublishBlob', () => {
+  beforeEach(() => {
+    qdnRequestMock.mockReset();
+    qortalRequestMock.mockReset();
+  });
+
+  it('requires the host to advertise STAGE_QDN_PUBLISH_SOURCE', async () => {
+    await expect(
+      stageQdnPublishBlob('qortium', { dataBase64: 'AAAA', fileName: 'a.png', mimeType: 'image/png' }, []),
+    ).rejects.toThrow('newer Qortium Home bridge');
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('stages bytes and returns the picker-shaped selection', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      canceled: false,
+      fileName: 'a.png',
+      kind: 'blob',
+      mimeType: 'image/png',
+      size: 3,
+      sourceToken: 'token-9',
+    });
+
+    await expect(
+      stageQdnPublishBlob('qortium', { dataBase64: 'AAAA', fileName: 'a.png', mimeType: 'image/png' }, [
+        'STAGE_QDN_PUBLISH_SOURCE',
+      ]),
+    ).resolves.toEqual({ canceled: false, fileName: 'a.png', kind: 'file', mimeType: 'image/png', size: 3, sourceToken: 'token-9' });
+    expect(qdnRequestMock).toHaveBeenCalledWith({
+      action: 'STAGE_QDN_PUBLISH_SOURCE',
+      bytesBase64: 'AAAA',
+      fileName: 'a.png',
+      mimeType: 'image/png',
+    });
+  });
+
+  it('rejects an incomplete staging result', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ canceled: false, fileName: 'a.png', size: 3 });
+
+    await expect(
+      stageQdnPublishBlob('qortium', { dataBase64: 'AAAA', fileName: 'a.png', mimeType: null }, ['STAGE_QDN_PUBLISH_SOURCE']),
+    ).rejects.toThrow('incomplete');
   });
 });
