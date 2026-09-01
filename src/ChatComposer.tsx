@@ -33,6 +33,7 @@ export function ChatComposer({
   attachmentError,
   attachmentInputRef,
   canAttach,
+  canLinkResource,
   canCompose,
   canSubmit,
   cancelLabel,
@@ -45,6 +46,7 @@ export function ChatComposer({
   messagePlaceholder,
   onAttachClick,
   onAttachmentSelected,
+  onLinkResourceClick,
   onCancelContext,
   onClearAttachment,
   onDraftChange,
@@ -55,6 +57,7 @@ export function ChatComposer({
   selectingLabel,
   remainingBytesLabel,
   remainingBytesOverLimit,
+  linkResourceLabel,
   processingLabel,
   removeAttachmentLabel,
   searchLabel,
@@ -72,6 +75,8 @@ export function ChatComposer({
   /** Hidden <input type="file"> the bytes path opens; App clicks it from onAttachClick. */
   attachmentInputRef: RefObject<HTMLInputElement | null>;
   canAttach: boolean;
+  /** Insert a link to an already-published QDN resource (A3) — no publish. */
+  canLinkResource: boolean;
   canCompose: boolean;
   canSubmit: boolean;
   cancelLabel: string;
@@ -85,6 +90,7 @@ export function ChatComposer({
   onAttachClick: () => void;
   /** A local File chosen through the hidden input (bytes path only). */
   onAttachmentSelected: (file: File) => void;
+  onLinkResourceClick: () => void;
   onCancelContext: () => void;
   onClearAttachment: () => void;
   onDraftChange: (value: string) => void;
@@ -104,6 +110,7 @@ export function ChatComposer({
    * App.tsx's canSubmitMessage) disables submit. */
   remainingBytesOverLimit?: boolean;
   /** Shown in the composer chip while a local file is being read/compressed. */
+  linkResourceLabel: string;
   processingLabel: string;
   removeAttachmentLabel: string;
   searchLabel: string;
@@ -223,6 +230,18 @@ export function ChatComposer({
             type="button"
           >
             <span aria-hidden="true">📎</span>
+          </button>
+        ) : null}
+        {showAttachment ? (
+          <button
+            aria-label={linkResourceLabel}
+            className="icon-button composer__link-resource"
+            disabled={!canLinkResource || sendPending}
+            onClick={onLinkResourceClick}
+            title={linkResourceLabel}
+            type="button"
+          >
+            <span aria-hidden="true">🔗</span>
           </button>
         ) : null}
         <button

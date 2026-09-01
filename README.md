@@ -140,7 +140,10 @@ Home's native picker where it is offered (Home 1.3+, Home 2), otherwise by
 reading the file in the app and publishing it inline (older Home 1.x, Qortal Hub);
 pasting or dropping a file into the composer stages it wherever the host
 accepts inline bytes (everywhere except Home 2 desktop, which needs a Home
-change first — see `docs/CHAT_ATTACHMENTS.md`). Qortal direct messages,
+change first — see `docs/CHAT_ATTACHMENTS.md`). The composer can also link any
+resource already published to QDN — by any account — instead of republishing
+it, emitting Qortal Hub's `use-embed` form in Qortal conversations so Hub
+renders it inline. Qortal direct messages,
 closed/private groups, private attachments,
 and app notifications shipped in the 2.0.x releases and are available per
 host tier — each gates on the host's advertised actions, and its controls

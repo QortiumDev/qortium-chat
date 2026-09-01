@@ -248,6 +248,50 @@ export async function fetchNodeApiData<T>(path: string, label: string, maxBytes 
   return fetchNodeApiDataFor<T>('qortium', path, label, maxBytes);
 }
 
+// attachments-matrix A3: search resources ANY account has published, via the
+// Core REST API (/arbitrary/resources/search) rather than a bridge action —
+// SEARCH_QDN_RESOURCES has no router case in Qortal Hub, while FETCH_NODE_API
+// works on every host (Home advertises it; Chat's Qortal adapter falls back to
+// a same-origin fetch on Hub and the gateway). Both chains' Cores accept
+// query/service/limit/offset/reverse on this endpoint.
+export type QdnResourceSearchResult = {
+  created?: number;
+  identifier?: string | null;
+  name: string;
+  service: string;
+  size?: number;
+  updated?: number;
+};
+
+export async function searchQdnResources(
+  network: ChatNetwork,
+  input: { limit?: number; offset?: number; query: string; service?: string },
+): Promise<QdnResourceSearchResult[]> {
+  const limit = Math.min(50, Math.max(1, Math.floor(input.limit ?? 20)));
+  const offset = Math.max(0, Math.floor(input.offset ?? 0));
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    query: input.query,
+    reverse: 'true',
+  });
+
+  if (input.service) {
+    params.set('service', input.service);
+  }
+
+  const results = await fetchNodeApiDataFor<QdnResourceSearchResult[]>(
+    network,
+    `/arbitrary/resources/search?${params.toString()}`,
+    'QDN resource search',
+    262144,
+  );
+
+  return (Array.isArray(results) ? results : []).filter(
+    (entry) => !!entry && typeof entry.name === 'string' && !!entry.name && typeof entry.service === 'string',
+  );
+}
+
 export async function getNodeStatus() {
   return qdnRequest<NodeStatus>({ action: 'GET_NODE_STATUS' });
 }
