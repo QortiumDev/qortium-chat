@@ -56,6 +56,7 @@ import {
   isQortiumPrivateGroupChatState,
   leaveGroup,
   joinGroup,
+  getAccountNames,
   publishChatAttachment,
   publishQdnResourceBytes,
   publishQdnResource,
@@ -661,6 +662,32 @@ function normalizeSelectedAccount(account: QdnSelectedAccount): QdnSelectedAccou
     ...account,
     isUnlocked: account.isUnlocked === true,
   };
+}
+
+// Home resolves the selected account's registered name from the node at
+// request time and silently returns name:null when that lookup transiently
+// fails (qortium-home electron/accounts.ts getPrimaryName/getFirstOwnedName
+// swallow errors). Open-group attachments gate on the name, so accepting a
+// nameless account would disable the paperclip for the rest of the session
+// even though the name exists on chain (observed live 2026-09-01 with a
+// registered account). Re-resolve from the chain before accepting null; any
+// failure here keeps Home's answer.
+async function withRegisteredNameFallback(
+  account: QdnSelectedAccount,
+  actions: QdnAction[],
+): Promise<QdnSelectedAccount> {
+  if (normalizeRegisteredName(account.name)) {
+    return account;
+  }
+
+  try {
+    const names = await getAccountNames(account.address, actions);
+    const name = names?.map((entry) => normalizeRegisteredName(entry?.name)).find(Boolean) ?? null;
+
+    return name ? { ...account, name } : account;
+  } catch {
+    return account;
+  }
 }
 
 
@@ -5115,8 +5142,9 @@ export default function App() {
     accountUnlockTransitionsRef.current.add(unlockTransition);
 
     try {
-      const selectedAccount = normalizeSelectedAccount(
-        await qdnRequest<QdnSelectedAccount>({ action: 'UNLOCK_SELECTED_ACCOUNT' }),
+      const selectedAccount = await withRegisteredNameFallback(
+        normalizeSelectedAccount(await qdnRequest<QdnSelectedAccount>({ action: 'UNLOCK_SELECTED_ACCOUNT' })),
+        actions,
       );
 
       if (
@@ -7482,8 +7510,9 @@ export default function App() {
     setGroups({ phase: 'loading', value: generalOnly });
 
     try {
-      const selectedAccount = normalizeSelectedAccount(
-        await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' }),
+      const selectedAccount = await withRegisteredNameFallback(
+        normalizeSelectedAccount(await qdnRequest<QdnSelectedAccount>({ action: 'GET_SELECTED_ACCOUNT' })),
+        actionList,
       );
 
       if (!qortiumAccountRefreshGuardRef.current.isLatest(requestId)) {
