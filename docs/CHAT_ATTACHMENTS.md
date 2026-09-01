@@ -107,8 +107,8 @@ version string):
 | --- | --- | --- | --- |
 | Home 1.x ≤1.2 (no picker yet) | bytes (`<input type="file">`) | stages the file (bytes) | — |
 | Home 1.x ≥1.3 (picker since home#100) | picker (token) | stages the file (bytes) | — |
-| Home 2 desktop | picker (token) | notice → use the attach button | picker + `PUBLISH_CHAT_ATTACHMENT` |
-| Home 2 Android | picker (token) | stages the file (bytes) | — (not dispatched to apps) |
+| Home 2 (pre-STAGE) desktop + Android | picker (token) | notice → use the attach button | picker + `PUBLISH_CHAT_ATTACHMENT` |
+| Home 2 with `STAGE_QDN_PUBLISH_SOURCE` (home#495) | picker (token) | stages via the host → sourceToken | picker + staged paste/drop |
 | Qortal Hub | bytes | stages the file (bytes) | — |
 | Gateway / browser | — | — | — |
 
@@ -132,10 +132,18 @@ No probe request is made. When both the picker and inline bytes are accepted
 (Home 1.3–1.8), the paperclip prefers the picker (Home sees the real file and
 the app never holds bytes) while paste/drop use the bytes path.
 
-Paste/drop can only ever stage on the bytes path — a token-only host gives the
-app no way to hand bytes to its picker. Enabling that on Home 2 desktop needs
-a Home-side blob-intake action (tracked as Phase B1 in
-`~/AGENTS/projects/qortium-chat-v2/attachments-matrix/TRACKER.md`).
+Correction (2026-09-01, B2 audit): Home 2 ANDROID also refuses inline publish
+bytes — its app tabs dispatch through HomeV2LiveApp, not src/platform.ts, and
+use the same token-only contracts as desktop. The ladder already treated it
+as token-only via the `PUBLISH_CHAT_ATTACHMENT` marker, so behavior was
+always right; earlier revisions of this doc claimed otherwise.
+
+On token-only hosts, paste/drop stages through `STAGE_QDN_PUBLISH_SOURCE`
+(home#495) when advertised: the app sends `{bytesBase64, fileName, mimeType?}`
+(≤25 MiB), receives a normal sourceToken selection, and redeems it through
+the existing publish actions — including `PUBLISH_CHAT_ATTACHMENT`, which
+makes private-chat paste/drop work too. Hosts with neither inline bytes nor
+the stage action keep the "use the attach button" notice.
 
 The bytes path is open groups only: private conversations need Home's
 encrypted `PUBLISH_CHAT_ATTACHMENT`, and no host without it has an
