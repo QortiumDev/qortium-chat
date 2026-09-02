@@ -1,4 +1,5 @@
 import { isRtlLanguage, normalizeLanguage as normalizeSupportedLanguage, type SupportedLanguage } from './i18n';
+import { type ChatNetwork } from './types';
 
 export const TEXT_SIZE_VALUES = ['extra-small', 'small', 'medium', 'large', 'extra-large', 'huge'] as const;
 export const ACCENT_OPTIONS = ['clay', 'green', 'blue', 'orange', 'purple', 'red', 'teal', 'cyan', 'pink', 'yellow'] as const;
@@ -187,4 +188,21 @@ export function getDisplaySettingsUpdateFromMessage(
     default:
       return null;
   }
+}
+
+// Network tint (2026-09-01): Classic's neutral palette follows the network of
+// the OPEN conversation — green for Qortium, blue for Qortal (see the
+// `[data-network]` blocks in styles.css). Nothing open, or a selection that
+// predates the network field, means Qortium: the app's home network, and the
+// look Classic always had.
+export function resolveNetworkTint(selected: { network?: ChatNetwork } | null | undefined): ChatNetwork {
+  return selected?.network === 'qortal' ? 'qortal' : 'qortium';
+}
+
+export function applyNetworkTint(network: ChatNetwork) {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  document.documentElement.dataset.network = network;
 }

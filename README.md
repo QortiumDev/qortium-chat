@@ -70,7 +70,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.10, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.11, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -92,7 +92,8 @@ Qortium and Qortal groups load, both public-group send paths open Home approval
 prompts, Qortal Hub v3 text/replies render correctly, and Qortium direct/private
 flows retain their existing behavior. Also confirm that Home display settings
 update theme, text size, accent, UI style (Classic, Modern, or Fun), and
-language in the app.
+language in the app, and that Classic tints its surfaces green while a Qortium
+conversation is open and blue while a Qortal one is open.
 
 For a publish pass, confirm the local Core is fully synchronized before running
 `npm run qdn:publish`. The expected identified render URL is

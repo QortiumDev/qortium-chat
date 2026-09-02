@@ -154,7 +154,13 @@ import {
 } from './qdnRequest';
 import { isHomeV2AppTab } from './hostContext';
 import { createTranslator, normalizeLanguage, type TranslateFunction } from './i18n';
-import { applyDisplaySettings, getDisplaySettingsUpdateFromMessage, getInitialDisplaySettings } from './displaySettings';
+import {
+  applyDisplaySettings,
+  applyNetworkTint,
+  getDisplaySettingsUpdateFromMessage,
+  getInitialDisplaySettings,
+  resolveNetworkTint,
+} from './displaySettings';
 import {
   getInitialDeepLinkTarget,
   isPlausibleQortiumAddress,
@@ -9394,6 +9400,15 @@ export default function App() {
   useEffect(() => {
     applyDisplaySettings(displaySettings);
   }, [displaySettings]);
+
+  // Classic re-tints its neutrals to the open conversation's network (green
+  // Qortium / blue Qortal). Keyed on the resolved primitive, not selectedChat,
+  // so re-selecting a conversation on the same network never touches the DOM.
+  const networkTint = resolveNetworkTint(selectedChat);
+
+  useEffect(() => {
+    applyNetworkTint(networkTint);
+  }, [networkTint]);
 
   // Persist the sidebar section expand/collapse choice so it survives a restart.
   useEffect(() => {
