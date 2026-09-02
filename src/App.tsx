@@ -3242,6 +3242,15 @@ export default function App() {
   // member" (state.isMember false even though the general join succeeded).
   const isQortalClosedGroupSendUnsupportedByHost =
     isSelectedQortalGroup && selectedChat.group.isOpen !== true && !canSendQortalPrivateGroupChat;
+  // Mirrors the `hint.privateGroupNotMember` branch below: general join is
+  // confirmed, only the private membership (key bundle) is pending — the
+  // join-approval hint does not apply there either.
+  const isQortalPrivateMembershipPending =
+    isSelectedQortalGroup &&
+    selectedChat.group.isOpen !== true &&
+    canSendQortalPrivateGroupChat &&
+    qortalMemberGroups.phase === 'ready' &&
+    isConfirmedJoinedQortalGroup;
   const qortalGroupComposerNotice =
     isSelectedQortalGroup && selectedChat.group.isOpen !== true
       ? !canSendQortalPrivateGroupChat
@@ -3342,9 +3351,11 @@ export default function App() {
       ? qortalAccountError || qortalAccountRequiredLabel
       : !isQortalAccountUnlocked
         ? accountLockedLabel
-        : qortalBridge.value.isHomeBridge
+        : qortalBridge.value.host === 'legacy-home'
           ? t('action.directSendRequiresHome2')
-          : t('action.directSendUnavailableBrowser');
+          : qortalBridge.value.isHomeBridge
+            ? t('action.directSendUnavailable')
+            : t('action.directSendUnavailableBrowser');
   const qortiumPrivateGroupUnavailableLabel = t('action.closedGroupHistoryUnsupported');
   const qortalPrivateGroupUnavailableLabel =
     qortalPrivateGroupCapabilityStatus === 'unavailable' && isQortalHub
@@ -11181,6 +11192,7 @@ export default function App() {
                 <p>{qortalGroupComposerNotice}</p>
                 {shouldShowGroupApprovalHint({
                   privateFeatureUnavailable: selectedPrivateGroupFeatureUnavailable,
+                  privateMembershipPending: isQortalPrivateMembershipPending,
                   sendUnsupportedByHost: isQortalClosedGroupSendUnsupportedByHost,
                 }) ? (
                   <p>{t('hint.groupApprovalDelay')}</p>

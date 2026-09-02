@@ -10,6 +10,12 @@ describe('shouldShowGroupApprovalHint', () => {
     expect(shouldShowGroupApprovalHint({ privateFeatureUnavailable: false, sendUnsupportedByHost: true })).toBe(false);
   });
 
+  it('hides it when the general join is confirmed and only private membership is pending', () => {
+    expect(
+      shouldShowGroupApprovalHint({ privateFeatureUnavailable: false, privateMembershipPending: true, sendUnsupportedByHost: false }),
+    ).toBe(false);
+  });
+
   it('hides it when the private family is entirely unavailable', () => {
     expect(shouldShowGroupApprovalHint({ privateFeatureUnavailable: true, sendUnsupportedByHost: false })).toBe(false);
     expect(shouldShowGroupApprovalHint({ privateFeatureUnavailable: true, sendUnsupportedByHost: true })).toBe(false);

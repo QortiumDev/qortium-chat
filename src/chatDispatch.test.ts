@@ -285,3 +285,50 @@ describe('dispatchChatSendEntry — Home 1.x legacy private-group route', () => 
     expect(qdnRequestMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ chatReference: 'ref-1', groupId: 7 }));
   });
 });
+
+describe('dispatchChatSendEntry — Home 1.x legacy direct route', () => {
+  beforeEach(() => {
+    qdnRequestMock.mockReset();
+    qortalRequestMock.mockReset();
+    qdnRequestMock.mockResolvedValue({ signature: 'sig-1', timestamp: 1000 });
+    qortalRequestMock.mockResolvedValue({ signature: 'sig-1', timestamp: 1000 });
+  });
+
+  const directEntry = {
+    content: undefined,
+    contentState: undefined,
+    kind: 'message' as const,
+    target: { address: 'Qpeer', kind: 'direct' as const },
+    text: 'hello direct',
+  };
+
+  it('sends a Qortium DM through SEND_CHAT_MESSAGE + recipientAddress on the Home 1.x signature', async () => {
+    await dispatchChatSendEntry(directEntry, HOME_1X_TRUSTED_NODE_ACTIONS);
+
+    expect(actionsCalledWith(qdnRequestMock)).toEqual(['SEND_CHAT_MESSAGE']);
+    expect(qdnRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'SEND_CHAT_MESSAGE', message: 'hello direct', recipientAddress: 'Qpeer' }),
+    );
+  });
+
+  it('never routes a Qortal DM through the generic Qortium envelope when the exact action is absent', async () => {
+    await expect(
+      dispatchChatSendEntry(
+        { ...directEntry, target: { ...directEntry.target, network: 'qortal' as const } },
+        HOME_1X_TRUSTED_NODE_ACTIONS,
+      ),
+    ).rejects.toThrow(/qortal direct chat sends require/i);
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+    expect(qortalRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a closed group on the SHOW_ACTIONS-failure fallback (LOCAL_READ_ACTIONS) — no private reads, no generic send', async () => {
+    await expect(
+      dispatchChatSendEntry(
+        { ...directEntry, target: { groupId: 7, isPrivate: true, kind: 'group' as const }, text: 'x' },
+        ['FETCH_NODE_API', 'GET_NODE_STATUS', 'IS_USING_PUBLIC_NODE', 'SHOW_ACTIONS', 'WHICH_UI'],
+      ),
+    ).rejects.toThrow(/private group chat sends require/i);
+    expect(qdnRequestMock).not.toHaveBeenCalled();
+  });
+});

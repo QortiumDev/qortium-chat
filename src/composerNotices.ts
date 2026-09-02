@@ -6,10 +6,13 @@
 // the HOST (the private send action is missing), or the group's own admin is
 // told to wait for an admin — the exact report from a Home 1.x user. It is
 // also suppressed when the private family is entirely unavailable (existing
-// behavior).
+// behavior) and when the general join is already confirmed and only the
+// private membership (key bundle) is pending — that is resolved by key
+// reconciliation, not by an admin approving a join request.
 export function shouldShowGroupApprovalHint(input: {
   privateFeatureUnavailable: boolean;
+  privateMembershipPending?: boolean;
   sendUnsupportedByHost: boolean;
 }) {
-  return !input.privateFeatureUnavailable && !input.sendUnsupportedByHost;
+  return !input.privateFeatureUnavailable && !input.sendUnsupportedByHost && !input.privateMembershipPending;
 }
