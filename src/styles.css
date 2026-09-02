@@ -474,6 +474,119 @@
   --qc-gradient-primary-active: linear-gradient(180deg, #e9ba55 0%, #edbf53 100%);
 }
 
+/* Network tint (owner request, 2026-09-01). Classic's NEUTRAL surfaces carry
+   the hue of the network whose conversation is open — green for Qortium,
+   blue for Qortal — so a Qortal chat never reads as a Qortium one. The
+   attribute is written by applyNetworkTint from App's selected conversation
+   (group or direct); 'qortium' is the fallback with nothing open. Only
+   neutral tokens live here: the accent (clay or the user's choice) and the
+   semantic greens (transaction-confirmed, online dot, section titles) are
+   untouched, and Modern / Fun own their own neutrals so they are excluded
+   via [data-ui='classic']. Every selector also targets .app-shell--home-v2,
+   because the Home 2 app-tab shell (P5c) otherwise overrides these same
+   tokens with its warm clay set and would hide the tint entirely. The dark
+   Qortium palette is the base :root[data-theme='dark'] set above (the P5
+   green-tinted greys), so it only needs restating inside that shell. */
+:root[data-theme='light'][data-ui='classic'][data-network='qortium'],
+:root[data-theme='light'][data-ui='classic'][data-network='qortium'] .app-shell--home-v2 {
+  --qc-color-page-bg: #eef5ef;
+  --qc-color-frame-bg: #e0eae2;
+  --qc-color-frame-surface: #e9f1ea;
+  --qc-color-surface: #fbfdfb;
+  --qc-color-surface-alt: #e9f1eb;
+  --qc-color-surface-raised: #ffffff;
+  --qc-color-control-bg: #e3ede5;
+  --qc-color-control-hover: #d8e6db;
+  --qc-color-control-selected: #dcebdf;
+  --qc-color-input-bg: #fbfdfb;
+  --qc-color-message-bg: #fbfdfb;
+  --qc-color-border: #bfd0c3;
+  --qc-color-border-strong: #97ad9c;
+  --qc-color-border-subtle: #d3e1d6;
+  --qc-color-text: #162019;
+  --qc-color-text-secondary: #405546;
+  --qc-color-text-soft: #405546;
+  --qc-color-muted: #627a69;
+  --qc-color-text-faint: #627a68;
+  --qc-color-chip-bg: #e8f2ea;
+}
+
+:root[data-theme='light'][data-ui='classic'][data-network='qortal'],
+:root[data-theme='light'][data-ui='classic'][data-network='qortal'] .app-shell--home-v2 {
+  --qc-color-page-bg: #edf2f9;
+  --qc-color-frame-bg: #dfe6f0;
+  --qc-color-frame-surface: #e8eef6;
+  --qc-color-surface: #fbfcfe;
+  --qc-color-surface-alt: #e9eff7;
+  --qc-color-surface-raised: #ffffff;
+  --qc-color-control-bg: #e3eaf4;
+  --qc-color-control-hover: #d8e2ef;
+  --qc-color-control-selected: #dce7f5;
+  --qc-color-input-bg: #fbfcfe;
+  --qc-color-message-bg: #fbfcfe;
+  --qc-color-border: #bfcbdb;
+  --qc-color-border-strong: #97a8bf;
+  --qc-color-border-subtle: #d3dde9;
+  --qc-color-text: #16202d;
+  --qc-color-text-secondary: #405063;
+  --qc-color-text-soft: #405063;
+  --qc-color-muted: #62728a;
+  --qc-color-text-faint: #62718a;
+  --qc-color-chip-bg: #e8eff8;
+}
+
+:root[data-theme='dark'][data-ui='classic'][data-network='qortium'] .app-shell--home-v2 {
+  --qc-color-page-bg: #0e1111;
+  --qc-color-frame-bg: #0b0e0e;
+  --qc-color-frame-surface: #101414;
+  --qc-color-surface: #161d1d;
+  --qc-color-surface-alt: #1b2424;
+  --qc-color-surface-raised: #1f2929;
+  --qc-color-control-bg: #243030;
+  --qc-color-control-hover: #2c3939;
+  --qc-color-control-selected: #213831;
+  --qc-color-input-bg: #141c18;
+  --qc-color-message-bg: #171f1b;
+  --qc-color-border: #364444;
+  --qc-color-border-strong: #5a6b6b;
+  --qc-color-border-subtle: #263333;
+  --qc-color-text-secondary: #cbd5d5;
+  --qc-color-text-soft: #cbd5d5;
+  --qc-color-muted: #a9b6b6;
+  --qc-color-text-faint: #8b9a9a;
+  --qc-color-chip-bg: #1d2823;
+}
+
+:root[data-theme='dark'][data-ui='classic'][data-network='qortal'],
+:root[data-theme='dark'][data-ui='classic'][data-network='qortal'] .app-shell--home-v2 {
+  --qc-color-page-bg: #0d1014;
+  --qc-color-frame-bg: #0b0d11;
+  --qc-color-frame-surface: #10131a;
+  --qc-color-surface: #161b23;
+  --qc-color-surface-alt: #1a212b;
+  --qc-color-surface-raised: #1f2731;
+  --qc-color-control-bg: #232d3b;
+  --qc-color-control-hover: #2b3747;
+  --qc-color-control-selected: #223347;
+  --qc-color-input-bg: #131a22;
+  --qc-color-message-bg: #171d26;
+  --qc-color-border: #34414f;
+  --qc-color-border-strong: #586a7d;
+  --qc-color-border-subtle: #253040;
+  --qc-color-text-secondary: #cbd3dd;
+  --qc-color-text-soft: #cbd3dd;
+  --qc-color-muted: #a8b3c2;
+  --qc-color-text-faint: #8a97a8;
+  --qc-color-chip-bg: #1c2431;
+}
+
+/* Switching between a Qortium and a Qortal conversation re-tints the whole
+   frame; fade the large chrome surfaces so it reads as a change of room
+   rather than a flash. Rows/messages keep their own control transitions. */
+:root[data-ui='classic'] :is(.app-shell, .topbar, .sidebar, .panel, .chat-pane, .composer, .members-drawer) {
+  transition: background-color 220ms ease, border-color 220ms ease;
+}
+
 :root[data-text-size='extra-small'] {
   --qc-text-scale: 0.88;
 }

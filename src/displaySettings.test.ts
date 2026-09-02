@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applyDisplaySettings,
+  applyNetworkTint,
   getDisplaySettingsUpdateFromMessage,
   getInitialDisplaySettings,
   normalizeAccent,
@@ -8,6 +9,7 @@ import {
   normalizeTextSize,
   normalizeTheme,
   normalizeUiStyle,
+  resolveNetworkTint,
   type QdnDisplaySettings,
 } from './displaySettings';
 
@@ -211,5 +213,34 @@ describe('display settings helpers', () => {
     expect(root.dir).toBe('rtl');
     expect(root.lang).toBe('ar');
     expect(root.style.colorScheme).toBe('dark');
+  });
+});
+
+describe('network tint', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves the open conversation network, defaulting to qortium', () => {
+    expect(resolveNetworkTint({ network: 'qortal' })).toBe('qortal');
+    expect(resolveNetworkTint({ network: 'qortium' })).toBe('qortium');
+    // Selections that predate the network field, and nothing selected, are
+    // Qortium — the look Classic always had.
+    expect(resolveNetworkTint({})).toBe('qortium');
+    expect(resolveNetworkTint(null)).toBe('qortium');
+    expect(resolveNetworkTint(undefined)).toBe('qortium');
+  });
+
+  it('writes data-network on the document root and survives a missing document', () => {
+    const root = { dataset: {} as Record<string, string> };
+
+    vi.stubGlobal('document', { documentElement: root });
+    applyNetworkTint('qortal');
+    expect(root.dataset.network).toBe('qortal');
+    applyNetworkTint('qortium');
+    expect(root.dataset.network).toBe('qortium');
+
+    vi.stubGlobal('document', undefined);
+    expect(() => applyNetworkTint('qortal')).not.toThrow();
   });
 });
