@@ -13,6 +13,13 @@
 // before any bridge call when their exact action is not advertised
 // (coreApi.ts), so a closed group can reach the wire only through the exact
 // private action, by construction.
+//
+// One host-specific exception, decided by action signature (legacyHome.ts):
+// on the Qortium bridge of a Home 1.x host on a trusted node, a closed group
+// rides the generic envelope exactly as Chat 1.x did, because Home 1.x itself
+// routes a closed groupId to Core's private-group send (encrypted host-side)
+// and never advertises the exact action. Hub, gateway, browser-dev and Home 2
+// never match that signature, so the invariant above still holds for them.
 import {
   sendChatDelete,
   sendChatEdit,
@@ -27,7 +34,9 @@ import {
   sendPrivateGroupChatMessage,
   sendPrivateGroupChatReaction,
 } from './coreApi';
+import { hasLegacyHomePrivateGroupSend } from './legacyHome';
 import { hasAction } from './qdnRequest';
+import type { ChatNetwork } from './types';
 import type { PendingRevision, PendingSend } from './pendingSends';
 import type { QdnAction } from './types';
 
@@ -36,6 +45,10 @@ import type { QdnAction } from './types';
 // there is no exact-action alternative for a brand-new public message, only
 // for revisions. A closed-group target instead always rides
 // SEND_PRIVATE_GROUP_CHAT_MESSAGE/REACTION — see the module doc above.
+function usesLegacyHomePrivateGroupRoute(network: ChatNetwork, networkActions: QdnAction[]) {
+  return network === 'qortium' && hasLegacyHomePrivateGroupSend(networkActions);
+}
+
 export function dispatchChatSendEntry(
   entry: Pick<PendingSend, 'chatReference' | 'content' | 'contentState' | 'kind' | 'target' | 'text'>,
   networkActions: QdnAction[],
@@ -43,7 +56,7 @@ export function dispatchChatSendEntry(
 ) {
   const network = entry.target.network ?? 'qortium';
 
-  if (entry.target.kind === 'group' && entry.target.isPrivate) {
+  if (entry.target.kind === 'group' && entry.target.isPrivate && !usesLegacyHomePrivateGroupRoute(network, networkActions)) {
     if (
       entry.kind === 'reaction' &&
       entry.chatReference &&
@@ -117,7 +130,7 @@ export function dispatchChatRevisionEntry(
 ) {
   const network = entry.target.network ?? 'qortium';
 
-  if (entry.target.kind === 'group' && entry.target.isPrivate) {
+  if (entry.target.kind === 'group' && entry.target.isPrivate && !usesLegacyHomePrivateGroupRoute(network, networkActions)) {
     return entry.kind === 'edit'
       ? sendPrivateGroupChatEdit(
           network,

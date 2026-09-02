@@ -7,7 +7,14 @@ injected classic bridge — with a compatibility adapter retained for the older
 Qortal-prefixed `window.qdnRequest` actions of Home 1.7. Every feature gates
 on the host's advertised actions (`SHOW_ACTIONS`) and structured runtime
 errors, so the same build degrades cleanly on hosts with a smaller action
-surface. The app follows Home's display settings, including the Classic,
+surface. One deliberate exception keeps Home 1.x (1.7–1.8) users able to
+post: when a Qortium host advertises the private-chat read actions and the
+generic `SEND_CHAT_MESSAGE` but not Home 2's exact private send actions —
+the signature of Home 1.x on a local or trusted node, where Home itself
+routes a closed group or a direct recipient through Core's encrypted private
+send — closed-group messages and direct messages ride the generic action as
+Chat 1.x did. On a public node Home 1.x hides those reads, so nothing is
+sent unencrypted anywhere (`src/legacyHome.ts`). The app follows Home's display settings, including the Classic,
 Modern, and Fun UI styles.
 
 The bell beside the selected account opens separate choices for direct chat
@@ -70,7 +77,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.11, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.12, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
