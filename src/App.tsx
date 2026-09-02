@@ -258,6 +258,8 @@ import {
   selectConversationSystemMessages,
 } from './trackedTransactions';
 import { getDirectSectionDefaultCollapse, getPrivateChatCapabilityStatus } from './sidebarSections';
+import { shouldShowGroupApprovalHint } from './composerNotices';
+import { hasLegacyHomeDirectSend, hasLegacyHomePrivateGroupSend } from './legacyHome';
 import {
   mergePersistedDirect,
   initializeQortalUiStorage,
@@ -2768,11 +2770,18 @@ export default function App() {
   // checks) — see chatDispatch.ts and canPostInSelectedGroup/
   // canPostInSelectedQortalGroup below, which gate the composer on this
   // instead of canSendGroupChat whenever the selected group is closed.
-  const canSendPrivateGroupChat = hasAction(actions, 'SEND_PRIVATE_GROUP_CHAT_MESSAGE');
+  // Home 1.x exception: a Home 1.x host on a trusted node routes the generic
+  // send to Core's private-group send itself (legacyHome.ts); chatDispatch.ts
+  // takes the generic envelope for a closed group only on that signature.
+  const canSendPrivateGroupChat =
+    hasAction(actions, 'SEND_PRIVATE_GROUP_CHAT_MESSAGE') || hasLegacyHomePrivateGroupSend(actions);
   const canReadPrivateDirectChat = hasAction(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES');
   const canLoadPrivateDirectChats = hasAction(actions, 'GET_PRIVATE_DIRECT_ACTIVE_CHATS');
   const canRequestUnlock = hasAction(actions, 'UNLOCK_SELECTED_ACCOUNT');
-  const canSendDirectChat = hasAction(actions, 'SEND_DIRECT_CHAT_MESSAGE');
+  // Same Home 1.x exception for direct chats: sendDirectChatMessage already
+  // falls back to SEND_CHAT_MESSAGE + recipientAddress, which Home 1.x
+  // encrypts host-side on a trusted node (legacyHome.ts).
+  const canSendDirectChat = hasAction(actions, 'SEND_DIRECT_CHAT_MESSAGE') || hasLegacyHomeDirectSend(actions);
   const isQortalHub = qortalBridge.value.host === 'hub';
   const isQortalOnlyHost = qortalOnlyRuntime || isQortalHub;
   const isAccountUnlocked = account?.isUnlocked === true;
@@ -3210,8 +3219,10 @@ export default function App() {
     isRegularSelectedGroup &&
     !canPostInSelectedGroup &&
     (selectedGroup?.isOpen === false || canSendGroupChat);
+  const isClosedGroupSendUnsupportedByHost =
+    isRegularSelectedGroup && selectedGroup?.isOpen === false && !canSendPrivateGroupChat;
   const groupComposerNotice =
-    isRegularSelectedGroup && selectedGroup?.isOpen === false && !canSendPrivateGroupChat
+    isClosedGroupSendUnsupportedByHost
       ? t('action.closedGroupSendUnsupported')
       : memberGroups.phase === 'error'
         ? t('hint.groupMembershipUnavailable')
@@ -3229,6 +3240,8 @@ export default function App() {
   // unsupported — distinguish "private family unavailable" (a real gap),
   // "not yet joined" (general membership), and "not yet a confirmed private
   // member" (state.isMember false even though the general join succeeded).
+  const isQortalClosedGroupSendUnsupportedByHost =
+    isSelectedQortalGroup && selectedChat.group.isOpen !== true && !canSendQortalPrivateGroupChat;
   const qortalGroupComposerNotice =
     isSelectedQortalGroup && selectedChat.group.isOpen !== true
       ? !canSendQortalPrivateGroupChat
@@ -3301,9 +3314,10 @@ export default function App() {
         : bridge.value.isHomeBridge
           ? t('action.directSendUnavailable')
           : t('action.directSendUnavailableBrowser');
-  // Qortal counterparts of the direct-chat notice labels above, reusing the
-  // same network-neutral wording ("Open in Qortium Home to...") — text stays
-  // shared, only the gating (qortalAccount, qortalBridge) is chain-specific.
+  // Qortal counterparts of the direct-chat notice labels above. Read labels
+  // share the network-neutral wording; the send label differs because the
+  // cause differs — Qortal DMs need Home 2's exact action (Home 1.x never
+  // had a Qortal direct path), while Qortium DMs on Home need a trusted node.
   const qortalDirectAccessUnavailableLabel = qortalDirectCapabilityStatus === 'unavailable' && isQortalHub
     ? qortalHubPrivateChatUnavailableLabel
     : !qortalAccount
@@ -3329,7 +3343,7 @@ export default function App() {
       : !isQortalAccountUnlocked
         ? accountLockedLabel
         : qortalBridge.value.isHomeBridge
-          ? t('action.directSendUnavailable')
+          ? t('action.directSendRequiresHome2')
           : t('action.directSendUnavailableBrowser');
   const qortiumPrivateGroupUnavailableLabel = t('action.closedGroupHistoryUnsupported');
   const qortalPrivateGroupUnavailableLabel =
@@ -11152,7 +11166,12 @@ export default function App() {
             <div aria-live="polite" className="composer composer--notice">
               <div>
                 <p>{groupComposerNotice}</p>
-                {!selectedPrivateGroupFeatureUnavailable ? <p>{t('hint.groupApprovalDelay')}</p> : null}
+                {shouldShowGroupApprovalHint({
+                  privateFeatureUnavailable: selectedPrivateGroupFeatureUnavailable,
+                  sendUnsupportedByHost: isClosedGroupSendUnsupportedByHost,
+                }) ? (
+                  <p>{t('hint.groupApprovalDelay')}</p>
+                ) : null}
               </div>
               {isSelectedGroupMembershipConfirmed ? renderJoinGroupButton() : null}
             </div>
@@ -11160,7 +11179,12 @@ export default function App() {
             <div aria-live="polite" className="composer composer--notice">
               <div>
                 <p>{qortalGroupComposerNotice}</p>
-                {!selectedPrivateGroupFeatureUnavailable ? <p>{t('hint.groupApprovalDelay')}</p> : null}
+                {shouldShowGroupApprovalHint({
+                  privateFeatureUnavailable: selectedPrivateGroupFeatureUnavailable,
+                  sendUnsupportedByHost: isQortalClosedGroupSendUnsupportedByHost,
+                }) ? (
+                  <p>{t('hint.groupApprovalDelay')}</p>
+                ) : null}
               </div>
               {qortalMemberGroups.phase === 'ready' ? renderJoinGroupButton() : null}
             </div>
