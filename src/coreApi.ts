@@ -2195,6 +2195,17 @@ export async function sendDirectChatMessage(
     );
   }
 
+  // The generic fallback below is the Qortium-bridge (qdnRequest) envelope —
+  // Home 1.x encrypts it host-side (legacyHome.ts). A Qortal direct target
+  // has no equivalent: Home 1.x never had a Qortal direct path and Hub's
+  // generic send would not address a recipient, so refuse rather than route
+  // a Qortal DM through the Qortium bridge. (Revision envelopes reach this
+  // function through the 3-arg legacy call with the default network and are
+  // composer-gated on the exact family — see chatDispatch.ts.)
+  if (network === 'qortal') {
+    throw new Error('Qortal direct chat sends require Qortium Home 2 direct chat support.');
+  }
+
   assertDirectMessageByteLimit(message);
 
   const request = {
