@@ -45,3 +45,16 @@ export function hasLegacyHomeDirectSend(actions: readonly QdnAction[] | undefine
     has(actions, 'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES')
   );
 }
+
+// Home 1.x refuses a protected QDN action before signing anything when its
+// managed Core is stopped and no saved API key exists (electron/qdn.ts
+// getQdnChatContext at v1.8.0). That refusal is a definite non-send: the
+// pending entry can be marked rejected (retryable) instead of "outcome
+// unknown".
+const LEGACY_HOME_PRE_BROADCAST_REFUSALS = [
+  /Start Qortium Core from Home, or save the local node API key/i,
+];
+
+export function isLegacyHomePreBroadcastRefusal(message: string) {
+  return LEGACY_HOME_PRE_BROADCAST_REFUSALS.some((pattern) => pattern.test(message));
+}

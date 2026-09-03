@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasLegacyHomeDirectSend, hasLegacyHomePrivateGroupSend } from './legacyHome';
+import { hasLegacyHomeDirectSend, hasLegacyHomePrivateGroupSend, isLegacyHomePreBroadcastRefusal } from './legacyHome';
 
 // Home 1.8.0 SHOW_ACTIONS on a local node (electron/qdn-app-actions.ts at v1.8.0).
 const HOME_1X_LOCAL = [
@@ -43,5 +43,20 @@ describe('legacy Home private-send detection', () => {
 
   it('is case-insensitive like hasAction', () => {
     expect(hasLegacyHomePrivateGroupSend(HOME_1X_LOCAL.map((action) => action.toLowerCase()))).toBe(true);
+  });
+});
+
+describe('isLegacyHomePreBroadcastRefusal', () => {
+  it('recognises Home 1.x\'s Core-offline refusal, which happens before anything is signed', () => {
+    expect(
+      isLegacyHomePreBroadcastRefusal(
+        'Start Qortium Core from Home, or save the local node API key before using protected QDN workflows.',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match other errors', () => {
+    expect(isLegacyHomePreBroadcastRefusal('Chat send did not return a transaction signature.')).toBe(false);
+    expect(isLegacyHomePreBroadcastRefusal('')).toBe(false);
   });
 });

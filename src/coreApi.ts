@@ -1753,10 +1753,15 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
     (typeof nestedResult.errorType === 'string' && nestedResult.errorType) ||
     '';
 
+  // `messageSignature` is Core's field name in the private-send responses
+  // (DirectPrivateChatSendResponse / PrivateGroupChatSendResponse) that Home
+  // 1.x passes through untouched under `result`.
   const signature =
     (typeof record.signature === 'string' && record.signature) ||
     (typeof record.transactionSignature === 'string' && record.transactionSignature) ||
     (typeof nestedResult.signature === 'string' && nestedResult.signature) ||
+    (typeof record.messageSignature === 'string' && record.messageSignature) ||
+    (typeof nestedResult.messageSignature === 'string' && nestedResult.messageSignature) ||
     '';
   const timestamp =
     (typeof record.timestamp === 'number' && record.timestamp) ||
@@ -1784,7 +1789,22 @@ function normalizeChatSendResult(value: unknown): ChatSendResult {
   }
 
   if (!signature) {
-    throw new Error(isExplicitFailure ? detail.slice(0, 200) : 'Chat send did not return a transaction signature.');
+    if (isExplicitFailure) {
+      throw new Error(detail.slice(0, 200));
+    }
+
+    // Home 1.x's public-group send answers `{accepted: true, result: true}`:
+    // Core's /transactions/process API-v1 body is the bare `true`, and Home
+    // 1.x never forwards the signature it computed. The host has explicitly
+    // said the broadcast was accepted, so this is a successful send whose
+    // signature the app must recover from the feed — not an unknown outcome
+    // (pendingSends.ts resolvePendingSendUnsigned). Only a reply that neither
+    // carries a signature nor claims acceptance is genuinely unknown.
+    if (record.accepted === true || nestedResult.accepted === true) {
+      return { outcome: 'accepted-unsigned', signature: '', timestamp };
+    }
+
+    throw new Error('Chat send did not return a transaction signature.');
   }
 
   if (isExplicitFailure) {

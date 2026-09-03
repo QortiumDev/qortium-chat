@@ -206,7 +206,7 @@ export type ChatMessage = {
 export type ChatSendResult = {
   error?: string;
   errorType?: string;
-  outcome?: 'ambiguous' | 'not-submitted';
+  outcome?: 'accepted-unsigned' | 'ambiguous' | 'not-submitted';
   signature: string;
   stage?: 'key-announcement';
   timestamp: number;

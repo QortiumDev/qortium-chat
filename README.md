@@ -14,7 +14,10 @@ the signature of Home 1.x on a local or trusted node, where Home itself
 routes a closed group or a direct recipient through Core's encrypted private
 send — closed-group messages and direct messages ride the generic action as
 Chat 1.x did. On a public node Home 1.x hides those reads, so nothing is
-sent unencrypted anywhere (`src/legacyHome.ts`). The app follows Home's display settings, including the Classic,
+sent unencrypted anywhere (`src/legacyHome.ts`). Home 1.x also answers a
+public-group send with `{accepted: true, result: true}` and no signature;
+Chat treats that as a successful broadcast and reconciles the local echo by
+content once the message appears, rather than reporting an unknown outcome. The app follows Home's display settings, including the Classic,
 Modern, and Fun UI styles.
 
 The bell beside the selected account opens separate choices for direct chat
@@ -77,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.12, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.13, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the

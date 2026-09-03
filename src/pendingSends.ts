@@ -240,6 +240,53 @@ export function resolvePendingSend(
   };
 }
 
+/** The bridge accepted the broadcast but returned no signature (Home 1.x's
+ * `{accepted: true, result: true}` public-group reply). The echo stays
+ * visible and duplicate-blocking as 'broadcast', and reconciles by content —
+ * matchesConfirmedEcho — instead of by signature; expirePendingSends drops it
+ * silently rather than flagging an expiry the host already ruled out. */
+export function resolvePendingSendUnsigned(pending: PendingSend, timestamp: number = Date.now()): PendingSend {
+  return {
+    ...pending,
+    delivery: { phase: 'broadcast', updatedAt: timestamp },
+    resolvedSignature: null,
+  };
+}
+
+export function isUnsignedBroadcast(entry: Pick<PendingSend, 'delivery' | 'resolvedSignature'>) {
+  return entry.delivery.phase === 'broadcast' && !entry.resolvedSignature;
+}
+
+// Clock skew allowance between the optimistic timestamp (this device) and the
+// transaction timestamp the host stamped.
+const UNSIGNED_ECHO_TIMESTAMP_SLACK_MS = 5 * 60_000;
+
+/** A confirmed row is the unsigned echo's real message when it comes from the
+ * same sender, to the same target, carrying byte-identical payload, and is not
+ * older than the send itself (minus skew). `data` on both sides is the BASE64
+ * form of the exact envelope text the app sent. */
+export function matchesConfirmedEcho(entry: PendingSend, message: ChatMessage) {
+  if (!isUnsignedBroadcast(entry) || !message.signature) {
+    return false;
+  }
+
+  if (message.sender !== entry.message.sender || message.data !== entry.message.data) {
+    return false;
+  }
+
+  if ((message.chatReference ?? null) !== (entry.chatReference ?? null)) {
+    return false;
+  }
+
+  if (message.timestamp < entry.message.timestamp - UNSIGNED_ECHO_TIMESTAMP_SLACK_MS) {
+    return false;
+  }
+
+  return entry.target.kind === 'group'
+    ? message.txGroupId === entry.target.groupId
+    : (message.recipient ?? null) === entry.target.address;
+}
+
 export function failPendingSend(pending: PendingSend, error: string, timestamp: number = Date.now()): PendingSend {
   return {
     ...pending,
@@ -337,22 +384,31 @@ export function expirePendingSends(
   error: string,
 ): PendingSend[] {
   let changed = false;
-  const next = pending.map((entry) => {
+  const next = pending.flatMap((entry) => {
     if (
       entry.delivery.phase !== 'broadcast' ||
       now - entry.delivery.updatedAt < timeoutMs
     ) {
-      return entry;
+      return [entry];
     }
 
     changed = true;
-    return {
+
+    // The host accepted this one; only the signature was missing. Once the
+    // duplicate-blocking window has passed, drop the echo silently — the real
+    // message is (or will be) in the transcript, and "expired" would be a
+    // false alarm the host already contradicted.
+    if (isUnsignedBroadcast(entry)) {
+      return [];
+    }
+
+    return [{
       ...entry,
       delivery: { phase: 'expired' as const, updatedAt: now },
       error,
       message: { ...entry.message, sendState: 'failed' as const },
       status: 'failed' as const,
-    };
+    }];
   });
 
   return changed ? next : pending;
@@ -365,21 +421,28 @@ export function expirePendingRevisions(
   error: string,
 ): PendingRevision[] {
   let changed = false;
-  const next = pending.map((entry) => {
+  const next = pending.flatMap((entry) => {
     if (
       entry.delivery.phase !== 'broadcast' ||
       now - entry.delivery.updatedAt < timeoutMs
     ) {
-      return entry;
+      return [entry];
     }
 
     changed = true;
-    return {
+
+    // Same as expirePendingSends: an accepted-but-unsigned revision is not
+    // an expiry the user needs to hear about.
+    if (isUnsignedBroadcast(entry)) {
+      return [];
+    }
+
+    return [{
       ...entry,
       delivery: { phase: 'expired' as const, updatedAt: now },
       error,
       status: 'failed' as const,
-    };
+    }];
   });
 
   return changed ? next : pending;
@@ -421,6 +484,10 @@ export function mergeOptimisticMessages(confirmed: ChatMessage[], pending: Pendi
       return false;
     }
 
+    if (isUnsignedBroadcast(entry) && confirmed.some((message) => matchesConfirmedEcho(entry, message))) {
+      return false;
+    }
+
     return !(entry.kind === 'reaction' && entry.status === 'failed');
   });
 
@@ -432,9 +499,24 @@ export function mergeOptimisticMessages(confirmed: ChatMessage[], pending: Pendi
 }
 
 /** State-side cleanup companion to mergeOptimisticMessages: drops pending entries that are now confirmed, from whichever chat (and network) they belong to. `confirmedSignatures` holds (network, signature) identities built with getPendingSignatureIdentity — this runs over the FULL in-memory pending list (every chat, every network), so a bare signature here really could collide across two independent chains; each entry is checked against its own target's network. Returns the same array when nothing changed, so callers can skip a re-render (same convention as retainChatMessagesWhenEqual). */
-export function prunePendingSends(pending: PendingSend[], confirmedSignatures: ReadonlySet<string>): PendingSend[] {
+export function prunePendingSends(
+  pending: PendingSend[],
+  confirmedSignatures: ReadonlySet<string>,
+  confirmedEchoes?: { network: ChatNetwork; messages: readonly ChatMessage[] },
+): PendingSend[] {
   const next = pending.filter((entry) => {
     if (!entry.resolvedSignature) {
+      // Unsigned broadcasts reconcile by content against the transcript of
+      // the chain they were sent on (see matchesConfirmedEcho).
+      if (
+        confirmedEchoes &&
+        isUnsignedBroadcast(entry) &&
+        getTargetNetwork(entry.target) === confirmedEchoes.network &&
+        confirmedEchoes.messages.some((message) => matchesConfirmedEcho(entry, message))
+      ) {
+        return false;
+      }
+
       return true;
     }
 
@@ -526,12 +608,52 @@ export function retryPendingRevision(pending: PendingRevision, timestamp: number
   };
 }
 
+/** Unsigned counterpart of resolvePendingRevision — see resolvePendingSendUnsigned. */
+export function resolvePendingRevisionUnsigned(pending: PendingRevision, timestamp: number = Date.now()): PendingRevision {
+  return {
+    ...pending,
+    delivery: { phase: 'broadcast', updatedAt: timestamp },
+    resolvedSignature: null,
+  };
+}
+
+/** A revision's real transaction is a CHAT row from the same sender carrying
+ * the same envelope text and the same chatReference (the tx-level reference
+ * every edit/delete envelope carries). */
+export function matchesConfirmedRevision(entry: PendingRevision, message: ChatMessage) {
+  if (!isUnsignedBroadcast(entry) || !message.signature) {
+    return false;
+  }
+
+  if (message.sender !== entry.accountAddress || message.data !== encodeBase64(entry.text)) {
+    return false;
+  }
+
+  if ((message.chatReference ?? null) !== entry.chatReference) {
+    return false;
+  }
+
+  return entry.target.kind === 'group'
+    ? message.txGroupId === entry.target.groupId
+    : (message.recipient ?? null) === entry.target.address;
+}
+
 export function prunePendingRevisions(
   pending: PendingRevision[],
   confirmedSignatures: ReadonlySet<string>,
+  confirmedEchoes?: { network: ChatNetwork; messages: readonly ChatMessage[] },
 ): PendingRevision[] {
   const next = pending.filter((entry) => {
     if (!entry.resolvedSignature) {
+      if (
+        confirmedEchoes &&
+        isUnsignedBroadcast(entry) &&
+        getTargetNetwork(entry.target) === confirmedEchoes.network &&
+        confirmedEchoes.messages.some((message) => matchesConfirmedRevision(entry, message))
+      ) {
+        return false;
+      }
+
       return true;
     }
 
