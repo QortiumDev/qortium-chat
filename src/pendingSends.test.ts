@@ -22,6 +22,10 @@ import {
   resolvePendingRevisionAmbiguously,
   resolvePendingSend,
   resolvePendingSendAmbiguously,
+  resolvePendingSendUnsigned,
+  resolvePendingRevisionUnsigned,
+  isUnsignedBroadcast,
+  matchesConfirmedEcho,
   retryPendingRevision,
   retryPendingSend,
   type PendingRevision,
@@ -505,5 +509,97 @@ describe('pending revisions (edit/delete side channel)', () => {
 
     expect(index.get('sig-a')).toBe(edit);
     expect(index.has('sig-b')).toBe(false);
+  });
+});
+
+// Home 1.x answers a public-group send with `{accepted: true, result: true}`
+// and no signature (coreApi.ts normalizeChatSendResult → 'accepted-unsigned').
+// The echo must behave like a broadcast (visible, duplicate-blocking, not
+// retryable), reconcile by content, and never surface as an expiry.
+describe('unsigned broadcasts (Home 1.x accepted-without-signature)', () => {
+  const HELLO_B64 = 'aGVsbG8=';
+
+  function unsigned(overrides: Partial<PendingSend> = {}) {
+    return resolvePendingSendUnsigned(pendingMessage(overrides), 150);
+  }
+
+  it('resolvePendingSendUnsigned keeps the entry sending as an unsigned broadcast', () => {
+    const entry = unsigned();
+
+    expect(entry.delivery).toEqual({ phase: 'broadcast', updatedAt: 150 });
+    expect(entry.resolvedSignature).toBeNull();
+    expect(entry.status).toBe('sending');
+    expect(isUnsignedBroadcast(entry)).toBe(true);
+    expect(canRetryPendingDelivery(entry.delivery)).toBe(false);
+    expect(hasActiveDuplicateSend([entry], entry)).toBe(true);
+  });
+
+  it('matches its confirmed row by sender + payload + target + reference, not older than the send', () => {
+    const entry = unsigned();
+    const real = confirmedMessage({ data: HELLO_B64, signature: 'real', timestamp: 160 });
+
+    expect(matchesConfirmedEcho(entry, real)).toBe(true);
+    expect(matchesConfirmedEcho(entry, { ...real, sender: 'Qother' })).toBe(false);
+    expect(matchesConfirmedEcho(entry, { ...real, data: 'b3RoZXI=' })).toBe(false);
+    expect(matchesConfirmedEcho(entry, { ...real, txGroupId: 8 })).toBe(false);
+    expect(matchesConfirmedEcho(entry, { ...real, chatReference: 'ref' })).toBe(false);
+    expect(matchesConfirmedEcho(entry, { ...real, timestamp: 100 - 6 * 60_000 })).toBe(false);
+    // A signed broadcast never content-matches — it reconciles by signature.
+    expect(matchesConfirmedEcho(resolvePendingSend(pendingMessage(), { signature: 's' }), real)).toBe(false);
+  });
+
+  it('mergeOptimisticMessages hides the unsigned echo once its real row is in the transcript', () => {
+    const entry = unsigned();
+    const real = confirmedMessage({ data: HELLO_B64, signature: 'real', timestamp: 160 });
+
+    expect(mergeOptimisticMessages([real], [entry])).toEqual([real]);
+    expect(mergeOptimisticMessages([confirmedMessage({ signature: 'unrelated' })], [entry])).toHaveLength(2);
+  });
+
+  it('prunePendingSends drops the unsigned echo by content on its own network only', () => {
+    const entry = unsigned();
+    const real = confirmedMessage({ data: HELLO_B64, signature: 'real', timestamp: 160 });
+
+    expect(prunePendingSends([entry], new Set(), { messages: [real], network: 'qortium' })).toEqual([]);
+    expect(prunePendingSends([entry], new Set(), { messages: [real], network: 'qortal' })).toEqual([entry]);
+    expect(prunePendingSends([entry], new Set())).toEqual([entry]);
+  });
+
+  it('expirePendingSends drops an unsigned broadcast silently instead of flagging an expiry', () => {
+    const entry = unsigned();
+    const signed = resolvePendingSend(pendingMessage({ localId: 'pending-2' }), { signature: 'sig' }, 150);
+
+    const next = expirePendingSends([entry, signed], 150 + 120_000, 120_000, 'expired');
+
+    expect(next).toHaveLength(1);
+    expect(next[0].localId).toBe('pending-2');
+    expect(next[0].delivery.phase).toBe('expired');
+    // Not yet timed out: untouched, same reference.
+    const early = [unsigned()];
+    expect(expirePendingSends(early, 150 + 1000, 120_000, 'expired')).toBe(early);
+  });
+
+  it('unsigned revisions reconcile by envelope text + chatReference and expire silently', () => {
+    const revision = resolvePendingRevisionUnsigned(
+      createPendingRevision({
+        accountAddress: 'Qsender',
+        chatKey: 'group:7',
+        chatReference: 'orig-sig',
+        kind: 'edit',
+        localId: 'rev-1',
+        target: { groupId: 7, kind: 'group' },
+        text: 'hello',
+        timestamp: 100,
+      }),
+      150,
+    );
+    const real = confirmedMessage({ chatReference: 'orig-sig', data: HELLO_B64, signature: 'rev-sig', timestamp: 160 });
+
+    expect(revision.resolvedSignature).toBeNull();
+    expect(prunePendingRevisions([revision], new Set(), { messages: [real], network: 'qortium' })).toEqual([]);
+    expect(
+      prunePendingRevisions([revision], new Set(), { messages: [{ ...real, chatReference: 'other' }], network: 'qortium' }),
+    ).toEqual([revision]);
+    expect(expirePendingRevisions([revision], 150 + 120_000, 120_000, 'expired')).toEqual([]);
   });
 });

@@ -985,12 +985,53 @@ describe('Core API path builders', () => {
     expect(qortalRequestMock).not.toHaveBeenCalled();
   });
 
-  it('throws when the bridge accepts a chat send but returns no signature', async () => {
-    qdnRequestMock.mockResolvedValueOnce({ accepted: true, action: 'SEND_CHAT_MESSAGE', groupId: 9 });
+  it('throws when a reply neither carries a signature nor claims acceptance', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ action: 'SEND_CHAT_MESSAGE', groupId: 9 });
 
     await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toThrow(
       'Chat send did not return a transaction signature.',
     );
+  });
+
+  // Home 1.x (electron/qdn.ts sendChatMessageForApp at v1.8.0): the public
+  // group send forwards Core's /transactions/process API-v1 body — the bare
+  // `true` — and never the signature it computed. The host said "accepted",
+  // so this is a success to reconcile by content, not an unknown outcome.
+  it('treats Home 1.x\'s accepted-without-signature public-group reply as an unsigned success', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      accepted: true,
+      action: 'SEND_CHAT_MESSAGE',
+      encrypted: false,
+      groupId: 9,
+      groupName: 'general',
+      result: true,
+    });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).resolves.toMatchObject({
+      outcome: 'accepted-unsigned',
+      signature: '',
+    });
+  });
+
+  it('reads Core\'s messageSignature from Home 1.x private send replies', async () => {
+    qdnRequestMock.mockResolvedValueOnce({
+      accepted: true,
+      action: 'SEND_CHAT_MESSAGE',
+      encrypted: true,
+      groupId: 9,
+      result: { keyAnnouncementSignature: 'key-sig', messageSignature: 'msg-sig', status: 'STORED' },
+    });
+
+    const result = await sendChatMessage('qortium', 9, 'hello');
+
+    expect(result.signature).toBe('msg-sig');
+    expect(result.outcome).toBeUndefined();
+  });
+
+  it('still reports an explicit failure without a signature as a failure, never as unsigned success', async () => {
+    qdnRequestMock.mockResolvedValueOnce({ accepted: false, error: 'Node refused', result: true });
+
+    await expect(sendChatMessage('qortium', 9, 'hello')).rejects.toThrow('Node refused');
   });
 
   it('fetches transaction status through FETCH_NODE_API', async () => {

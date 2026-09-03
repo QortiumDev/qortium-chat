@@ -131,8 +131,10 @@ import {
   retainPendingForNetworkAccount,
   resolvePendingRevision,
   resolvePendingRevisionAmbiguously,
+  resolvePendingRevisionUnsigned,
   resolvePendingSend,
   resolvePendingSendAmbiguously,
+  resolvePendingSendUnsigned,
   retryPendingRevision,
   retryPendingSend,
   type PendingRevision,
@@ -259,7 +261,7 @@ import {
 } from './trackedTransactions';
 import { getDirectSectionDefaultCollapse, getPrivateChatCapabilityStatus } from './sidebarSections';
 import { shouldShowGroupApprovalHint } from './composerNotices';
-import { hasLegacyHomeDirectSend, hasLegacyHomePrivateGroupSend } from './legacyHome';
+import { hasLegacyHomeDirectSend, hasLegacyHomePrivateGroupSend, isLegacyHomePreBroadcastRefusal } from './legacyHome';
 import {
   mergePersistedDirect,
   initializeQortalUiStorage,
@@ -2443,8 +2445,10 @@ export default function App() {
       return;
     }
 
-    updatePendingSends((current) => prunePendingSends(current, confirmedSignatures));
-    updatePendingRevisions((current) => prunePendingRevisions(current, confirmedSignatures));
+    const confirmedEchoes = { messages: messages.value, network: confirmedNetwork };
+
+    updatePendingSends((current) => prunePendingSends(current, confirmedSignatures, confirmedEchoes));
+    updatePendingRevisions((current) => prunePendingRevisions(current, confirmedSignatures, confirmedEchoes));
   }, [messages.value, messagesChatKey, selectedChat, selectedChatKey]);
   // Stable identities for every handler passed to the memoized GroupList /
   // DirectList / MessageList (the handlers themselves are re-declared each
@@ -5733,12 +5737,18 @@ export default function App() {
                   result,
                   result.error ?? t('message.delivery.ambiguous'),
                 )
-                : resolvePendingSend(candidate, result)
+                : result.outcome === 'accepted-unsigned'
+                  ? resolvePendingSendUnsigned(candidate)
+                  : resolvePendingSend(candidate, result)
             : candidate,
         ),
       );
 
-      if (entry.kind === 'reaction' && result.outcome) {
+      // An accepted-but-unsigned reply (Home 1.x) is a success, not an
+      // unknown outcome — no ambiguity banner and no journal refresh for it.
+      const isUnknownOutcome = result.outcome === 'ambiguous' || result.outcome === 'not-submitted';
+
+      if (entry.kind === 'reaction' && isUnknownOutcome) {
         setWriteError(result.error ?? t('message.delivery.ambiguous'));
       }
 
@@ -5746,7 +5756,7 @@ export default function App() {
       // pending-journal entry (a signed mutation with an unknown broadcast
       // result) — refresh the journal so the conversation notice appears
       // without waiting for the next unrelated bridge/account-ready trigger.
-      if (result.outcome) {
+      if (isUnknownOutcome) {
         void fetchPendingJournal(entry.target.network ?? 'qortium');
       } else {
         markQpgcKeyAvailableFor(entry.target);
@@ -5792,7 +5802,9 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? isChatSendRejectedError(error) || isDefiniteChatMutationRejection(error)
+            ? isChatSendRejectedError(error) ||
+              isDefiniteChatMutationRejection(error) ||
+              isLegacyHomePreBroadcastRefusal(message)
               ? failPendingSend(candidate, message)
               : failPendingSendAmbiguously(candidate, message)
             : candidate,
@@ -5848,14 +5860,16 @@ export default function App() {
                   result,
                   result.error ?? t('message.delivery.ambiguous'),
                 )
-                : resolvePendingRevision(candidate, result)
+                : result.outcome === 'accepted-unsigned'
+                  ? resolvePendingRevisionUnsigned(candidate)
+                  : resolvePendingRevision(candidate, result)
             : candidate,
         ),
       );
 
       // Item D: same as runPendingSend — an ambiguous revision outcome is
       // exactly when Home records a new journal entry.
-      if (result.outcome) {
+      if (result.outcome === 'ambiguous' || result.outcome === 'not-submitted') {
         void fetchPendingJournal(entry.target.network ?? 'qortium');
       } else {
         markQpgcKeyAvailableFor(entry.target);
@@ -5893,7 +5907,9 @@ export default function App() {
           candidate.localId === localId &&
           candidate.delivery.phase === 'pending' &&
           candidate.delivery.updatedAt === attemptUpdatedAt
-            ? isChatSendRejectedError(error) || isDefiniteChatMutationRejection(error)
+            ? isChatSendRejectedError(error) ||
+              isDefiniteChatMutationRejection(error) ||
+              isLegacyHomePreBroadcastRefusal(message)
               ? failPendingRevision(candidate, message)
               : failPendingRevisionAmbiguously(candidate, message)
             : candidate,
