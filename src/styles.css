@@ -4260,7 +4260,10 @@ button.message__reply-preview:focus-visible,
   }
 
   .app-shell--home-v2 .composer {
-    flex-wrap: nowrap;
+    /* Context, auxiliary notices, and the message row need independent lines
+       on narrow Home 2 tabs. Keeping the inherited wrap behavior prevents a
+       reply/edit context from squeezing the textarea beside the toolbar. */
+    flex-wrap: wrap;
   }
 
   .app-shell--home-v2 .composer textarea {
