@@ -4260,16 +4260,39 @@ button.message__reply-preview:focus-visible,
   }
 
   .app-shell--home-v2 .composer {
-    flex-wrap: nowrap;
+    /* Context, auxiliary notices, and the message row need independent lines
+       on narrow Home 2 tabs. Keeping the inherited wrap behavior prevents a
+       reply/edit context from squeezing the textarea beside the toolbar. */
+    flex-wrap: wrap;
   }
 
   .app-shell--home-v2 .composer textarea {
-    flex-basis: auto;
-    width: auto;
+    flex-basis: 100%;
+    width: 100%;
   }
 
   .app-shell--home-v2 .composer__toolbar {
     flex: 0 0 auto;
+  }
+}
+
+/* Android resizes the app viewport while the IME is open. On a short Home 2
+   tab the persistent topbar would consume space needed by a focused,
+   auto-growing composer, leaving its toolbar below the visible viewport.
+   Keep the composer controls available and reclaim only the redundant tab
+   chrome for the duration of that focused short viewport. */
+@media (max-width: 600px) and (max-height: 500px) {
+  .app-shell--home-v2:has(.composer:focus-within) .topbar,
+  .app-shell--home-v2:has(.composer:focus-within) .chat-pane__header {
+    display: none;
+  }
+
+  .app-shell--home-v2:has(.composer:focus-within) .composer {
+    min-height: max-content;
+  }
+
+  .app-shell--home-v2:has(.composer:focus-within) .chat-pane {
+    grid-template-rows: 0 minmax(0, 1fr) max-content;
   }
 }
 

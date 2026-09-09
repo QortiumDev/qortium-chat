@@ -6,7 +6,7 @@ import path from 'node:path';
 const repoRoot = process.cwd();
 const previewPort = 4182;
 const cdpPort = 9342;
-const previewUrl = `http://127.0.0.1:${previewPort}/`;
+const previewUrl = `http://127.0.0.1:${previewPort}/?homeV2Bridge=1`;
 const screenshotPath = path.join(tmpdir(), 'qortium-chat-mobile-density-smoke.png');
 const browserProfile = mkdtempSync(path.join(tmpdir(), 'qortium-chat-mobile-density-'));
 const children = [];
@@ -68,6 +68,83 @@ async function evaluate(client, expression) {
   return result.result?.value;
 }
 
+async function readComposerLayout(client) {
+  return evaluate(client, `(() => {
+    const composer = document.querySelector('.composer');
+    const context = composer?.querySelector('.composer__context');
+    const textarea = composer?.querySelector('textarea');
+    const toolbar = composer?.querySelector('.composer__toolbar');
+    const cancel = context?.querySelector('button');
+    if (!composer || !context || !textarea || !toolbar || !cancel) return null;
+
+    const box = (element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      };
+    };
+
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      composer: box(composer),
+      context: box(context),
+      textarea: box(textarea),
+      toolbar: box(toolbar),
+      cancel: box(cancel),
+      flexWrap: getComputedStyle(composer).flexWrap,
+    };
+  })()`);
+}
+
+function assertReplyComposerLayout(label, metrics) {
+  if (!metrics) throw new Error(`${label} context fixture did not render.`);
+
+  const contextFullRow = metrics.context.width >= metrics.composer.width - 4;
+  const textareaFullRow = metrics.textarea.width >= metrics.composer.width - 4;
+  const toolbarVisible = metrics.toolbar.width >= 100;
+  const textareaAndToolbarDoNotOverlap =
+    metrics.textarea.bottom <= metrics.toolbar.top ||
+    metrics.toolbar.bottom <= metrics.textarea.top ||
+    (Math.abs(metrics.textarea.top - metrics.toolbar.top) <= 1 && metrics.textarea.right <= metrics.toolbar.left);
+  const contextPrecedesComposerControls =
+    metrics.context.bottom <= metrics.textarea.top && metrics.context.bottom <= metrics.toolbar.top;
+  const cancelReachable =
+    metrics.cancel.width > 0 &&
+    metrics.cancel.height > 0 &&
+    metrics.cancel.left >= metrics.context.left &&
+    metrics.cancel.right <= metrics.context.right &&
+    metrics.cancel.bottom <= metrics.viewport.height;
+
+  if (
+    metrics.flexWrap !== 'wrap' ||
+    !contextFullRow ||
+    !textareaFullRow ||
+    !toolbarVisible ||
+    !textareaAndToolbarDoNotOverlap ||
+    !contextPrecedesComposerControls ||
+    !cancelReachable
+  ) {
+    throw new Error(`Unexpected ${label} composer layout: ${JSON.stringify(metrics)}`);
+  }
+
+  return metrics;
+}
+
+function assertShortViewportComposerLayout(metrics) {
+  assertReplyComposerLayout('short-viewport edit', metrics);
+
+  if (metrics.textarea.height <= 42 || metrics.toolbar.bottom > metrics.viewport.height) {
+    throw new Error(`Unexpected short-viewport edit composer layout: ${JSON.stringify(metrics)}`);
+  }
+
+  return metrics;
+}
+
 function launch(command, args) {
   const child = spawn(command, args, { cwd: repoRoot, stdio: 'ignore' });
 
@@ -119,7 +196,8 @@ const bootstrap = `
             'GET_ACCOUNT_GROUPS', 'GET_ACCOUNT_GROUP_JOIN_REQUESTS', 'GET_ACTIVE_CHATS',
             'GET_ADMIN_GROUP_JOIN_REQUESTS', 'GET_MINTING_STATUS', 'GET_PRIVATE_DIRECT_ACTIVE_CHATS',
             'GET_SELECTED_ACCOUNT', 'RESOLVE_IDENTITIES', 'SEARCH_CHAT_MESSAGES',
-            'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES', 'SEND_CHAT_MESSAGE', 'SEND_DIRECT_CHAT_MESSAGE'
+            'SEARCH_PRIVATE_DIRECT_CHAT_MESSAGES', 'SEND_CHAT_MESSAGE', 'SEND_DIRECT_CHAT_MESSAGE',
+            'SEND_DIRECT_CHAT_EDIT', 'SEND_DIRECT_CHAT_DELETE', 'SEND_DIRECT_CHAT_REACTION'
           ];
         case 'WHICH_UI': return 'QORTIUM_HOME_ELECTRON';
         case 'IS_USING_PUBLIC_NODE': return false;
@@ -208,7 +286,63 @@ try {
     throw new Error(`Unexpected mobile density metrics: ${JSON.stringify(metrics)}`);
   }
 
-  console.log(JSON.stringify({ metrics, screenshotPath }, null, 2));
+  await waitUntil('reply action', async () =>
+    evaluate(client, `(() => [...document.querySelectorAll('.message__actions button')]
+      .find((button) => button.textContent.trim().toLowerCase() === 'reply') !== undefined)`),
+  );
+  await evaluate(client, `(() => {
+    const button = [...document.querySelectorAll('.message__actions button')]
+      .find((candidate) => candidate.textContent.trim().toLowerCase() === 'reply');
+    button?.click();
+  })()`);
+  const replyLayout = assertReplyComposerLayout(
+    'reply',
+    await waitUntil('reply composer context', async () => readComposerLayout(client)),
+  );
+
+  await evaluate(client, "document.querySelector('.composer__context button')?.click()");
+  await waitUntil('reply composer cancel', async () =>
+    evaluate(client, "!document.querySelector('.composer__context')"),
+  );
+
+  await waitUntil('edit action', async () =>
+    evaluate(client, `(() => [...document.querySelectorAll('.message__actions button')]
+      .find((button) => button.textContent.trim().toLowerCase() === 'edit') !== undefined)`),
+  );
+  await evaluate(client, `(() => {
+    const button = [...document.querySelectorAll('.message__actions button')]
+      .find((candidate) => candidate.textContent.trim().toLowerCase() === 'edit');
+    button?.click();
+  })()`);
+  const editLayout = assertReplyComposerLayout(
+    'edit',
+    await waitUntil('edit composer context', async () => readComposerLayout(client)),
+  );
+
+  await evaluate(client, "document.querySelector('.composer__context button')?.click()");
+  await waitUntil('edit composer cancel', async () =>
+    evaluate(client, "!document.querySelector('.composer__context')"),
+  );
+
+  await client.send('Emulation.setDeviceMetricsOverride', {
+    deviceScaleFactor: 1, height: 243, mobile: true, screenHeight: 243, screenWidth: 390, width: 390,
+  });
+  await evaluate(client, `(() => {
+    const button = [...document.querySelectorAll('.message__actions button')]
+      .find((candidate) => candidate.textContent.trim().toLowerCase() === 'edit');
+    button?.click();
+  })()`);
+  await waitUntil('short-viewport edit composer context', async () => readComposerLayout(client));
+  await evaluate(client, "document.querySelector('.composer textarea')?.focus()");
+  await client.send('Input.insertText', { text: '\nSecond line keeps the focused edit useful.' });
+  const shortViewportLayout = assertShortViewportComposerLayout(
+    await waitUntil('short-viewport edit growth', async () => {
+      const layout = await readComposerLayout(client);
+      return layout?.textarea.height > 42 ? layout : null;
+    }),
+  );
+
+  console.log(JSON.stringify({ metrics, replyLayout, editLayout, shortViewportLayout, screenshotPath }, null, 2));
 } finally {
   client?.socket.close();
   for (const child of children.reverse()) child.kill('SIGTERM');
