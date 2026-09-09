@@ -4267,8 +4267,8 @@ button.message__reply-preview:focus-visible,
   }
 
   .app-shell--home-v2 .composer textarea {
-    flex-basis: auto;
-    width: auto;
+    flex-basis: 100%;
+    width: 100%;
   }
 
   .app-shell--home-v2 .composer__toolbar {

@@ -105,7 +105,7 @@ function assertReplyComposerLayout(label, metrics) {
   if (!metrics) throw new Error(`${label} context fixture did not render.`);
 
   const contextFullRow = metrics.context.width >= metrics.composer.width - 4;
-  const textareaUsefulWidth = metrics.textarea.width >= 100;
+  const textareaFullRow = metrics.textarea.width >= metrics.composer.width - 4;
   const toolbarVisible = metrics.toolbar.width >= 100;
   const textareaAndToolbarDoNotOverlap =
     metrics.textarea.bottom <= metrics.toolbar.top ||
@@ -123,7 +123,7 @@ function assertReplyComposerLayout(label, metrics) {
   if (
     metrics.flexWrap !== 'wrap' ||
     !contextFullRow ||
-    !textareaUsefulWidth ||
+    !textareaFullRow ||
     !toolbarVisible ||
     !textareaAndToolbarDoNotOverlap ||
     !contextPrecedesComposerControls ||
