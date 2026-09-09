@@ -135,6 +135,16 @@ function assertReplyComposerLayout(label, metrics) {
   return metrics;
 }
 
+function assertShortViewportComposerLayout(metrics) {
+  assertReplyComposerLayout('short-viewport edit', metrics);
+
+  if (metrics.textarea.height <= 42 || metrics.toolbar.bottom > metrics.viewport.height) {
+    throw new Error(`Unexpected short-viewport edit composer layout: ${JSON.stringify(metrics)}`);
+  }
+
+  return metrics;
+}
+
 function launch(command, args) {
   const child = spawn(command, args, { cwd: repoRoot, stdio: 'ignore' });
 
@@ -314,7 +324,25 @@ try {
     evaluate(client, "!document.querySelector('.composer__context')"),
   );
 
-  console.log(JSON.stringify({ metrics, replyLayout, editLayout, screenshotPath }, null, 2));
+  await client.send('Emulation.setDeviceMetricsOverride', {
+    deviceScaleFactor: 1, height: 243, mobile: true, screenHeight: 243, screenWidth: 390, width: 390,
+  });
+  await evaluate(client, `(() => {
+    const button = [...document.querySelectorAll('.message__actions button')]
+      .find((candidate) => candidate.textContent.trim().toLowerCase() === 'edit');
+    button?.click();
+  })()`);
+  await waitUntil('short-viewport edit composer context', async () => readComposerLayout(client));
+  await evaluate(client, "document.querySelector('.composer textarea')?.focus()");
+  await client.send('Input.insertText', { text: '\nSecond line keeps the focused edit useful.' });
+  const shortViewportLayout = assertShortViewportComposerLayout(
+    await waitUntil('short-viewport edit growth', async () => {
+      const layout = await readComposerLayout(client);
+      return layout?.textarea.height > 42 ? layout : null;
+    }),
+  );
+
+  console.log(JSON.stringify({ metrics, replyLayout, editLayout, shortViewportLayout, screenshotPath }, null, 2));
 } finally {
   client?.socket.close();
   for (const child of children.reverse()) child.kill('SIGTERM');
