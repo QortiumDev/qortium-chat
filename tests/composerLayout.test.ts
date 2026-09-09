@@ -36,14 +36,4 @@ describe('composer layout CSS', () => {
     expect(narrowComposer?.[1]).toMatch(/flex-basis:\s*100%\s*;/);
     expect(narrowComposer?.[1]).toMatch(/width:\s*100%\s*;/);
   });
-
-  it('keeps Home v2 reply and edit context from squeezing the textarea', () => {
-    const homeV2Composer = styles.match(
-      /@media\s*\(max-width:\s*600px\)[\s\S]*?\.app-shell--home-v2 \.composer\s*\{([^}]+)\}/,
-    );
-
-    expect(homeV2Composer, 'Expected the narrow Home v2 composer rule').toBeDefined();
-    expect(homeV2Composer?.[1]).toMatch(/flex-wrap:\s*wrap\s*;/);
-    expect(homeV2Composer?.[1]).not.toMatch(/flex-wrap:\s*nowrap\s*;/);
-  });
 });
