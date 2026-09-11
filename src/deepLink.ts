@@ -11,6 +11,11 @@ export type ChatDeepLinkTarget = {
 
 export type ChatHistoryMode = 'none' | 'push' | 'replace';
 
+// Workspace shown by the app shell. 'chat' is the conversation layout;
+// 'developers' overlays the public contract reference (README "Developers")
+// without touching the conversation selection or its in-memory draft.
+export type ChatView = 'chat' | 'developers';
+
 type LocationLike = {
   hash?: string;
   pathname?: string;
@@ -27,7 +32,13 @@ type BrowserLike = {
   location: LocationLike;
 };
 
-const CHAT_ROUTE_QUERY_KEYS = ['address', 'group', 'network'] as const;
+export const CHAT_ROUTE_QUERY_KEYS = ['address', 'group', 'network'] as const;
+
+// Fleet Developers-workspace route: `?view=developers` is canonical; the
+// `developer`/`reference` spellings are accepted and folded on mount.
+export const VIEW_QUERY_PARAM = 'view';
+export const DEVELOPERS_VIEW = 'developers';
+export const DEVELOPERS_VIEW_ALIASES = ['developer', 'reference'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -94,8 +105,35 @@ export function parseDeepLinkSearch(search: string): ChatDeepLinkTarget | null {
   );
 }
 
-// Rewrite only the conversation target. Home's bridge/display parameters and
-// any future host-owned values must survive every in-app navigation.
+export function normalizeChatView(value: string | null | undefined): ChatView {
+  const normalized = (value ?? '').trim().toLowerCase();
+
+  return normalized === DEVELOPERS_VIEW || (DEVELOPERS_VIEW_ALIASES as readonly string[]).includes(normalized)
+    ? 'developers'
+    : 'chat';
+}
+
+// Any `view` value (canonical or alias, even when repeated) selects the
+// Developers workspace; everything else is the conversation layout.
+export function parseChatView(search: string): ChatView {
+  const values = new URLSearchParams(search).getAll(VIEW_QUERY_PARAM);
+
+  return values.some((value) => normalizeChatView(value) === 'developers') ? 'developers' : 'chat';
+}
+
+function serializeLocation(location: LocationLike, query: URLSearchParams) {
+  const serializedQuery = query.toString();
+
+  return `${location.pathname || '/'}${serializedQuery ? `?${serializedQuery}` : ''}${location.hash ?? ''}`;
+}
+
+function getCurrentUrl(location: LocationLike) {
+  return `${location.pathname || '/'}${location.search ?? ''}${location.hash ?? ''}`;
+}
+
+// Rewrite only the conversation target. Home's bridge/display parameters, the
+// workspace `view`, and any future host-owned values must survive every
+// in-app navigation.
 export function getChatRouteUrl(
   target: ChatDeepLinkTarget,
   location: LocationLike = typeof window === 'undefined' ? {} : window.location,
@@ -119,9 +157,25 @@ export function getChatRouteUrl(
     query.set('network', target.network ?? 'qortium');
   }
 
-  const serializedQuery = query.toString();
+  return serializeLocation(location, query);
+}
 
-  return `${location.pathname || '/'}${serializedQuery ? `?${serializedQuery}` : ''}${location.hash ?? ''}`;
+// Rewrite only the workspace `view`. The conversation keys, host parameters,
+// repeated/unknown keys and the fragment all survive, so entering or leaving
+// the Developers workspace never changes which conversation the URL names.
+export function getChatViewUrl(
+  view: ChatView,
+  location: LocationLike = typeof window === 'undefined' ? {} : window.location,
+): string {
+  const query = new URLSearchParams(location.search ?? '');
+
+  query.delete(VIEW_QUERY_PARAM);
+
+  if (view === 'developers') {
+    query.set(VIEW_QUERY_PARAM, DEVELOPERS_VIEW);
+  }
+
+  return serializeLocation(location, query);
 }
 
 export function writeChatRoute(
@@ -134,13 +188,74 @@ export function writeChatRoute(
   }
 
   const nextUrl = getChatRouteUrl(target, browser.location);
-  const currentUrl = `${browser.location.pathname || '/'}${browser.location.search ?? ''}${browser.location.hash ?? ''}`;
 
-  if (nextUrl === currentUrl) {
+  if (nextUrl === getCurrentUrl(browser.location)) {
     return;
   }
 
   browser.history[mode === 'replace' ? 'replaceState' : 'pushState']({}, '', nextUrl);
+}
+
+export function writeChatView(view: ChatView, mode: ChatHistoryMode, browser: BrowserLike = window): void {
+  if (mode === 'none') {
+    return;
+  }
+
+  const nextUrl = getChatViewUrl(view, browser.location);
+
+  if (nextUrl === getCurrentUrl(browser.location)) {
+    return;
+  }
+
+  browser.history[mode === 'replace' ? 'replaceState' : 'pushState']({}, '', nextUrl);
+}
+
+// Fold `view=developer` / `view=reference` (or a repeated `view`) into the
+// canonical `view=developers`, and drop a `view` that does not name a
+// workspace, without adding a history entry. Nothing else in the URL changes.
+export function canonicalizeChatViewUrl(browser: BrowserLike = window): void {
+  const rawValues = new URLSearchParams(browser.location.search ?? '').getAll(VIEW_QUERY_PARAM);
+
+  if (rawValues.length === 0) {
+    return;
+  }
+
+  const view = parseChatView(browser.location.search ?? '');
+  const isCanonical = view === 'developers' ? rawValues.length === 1 && rawValues[0] === DEVELOPERS_VIEW : false;
+
+  if (isCanonical) {
+    return;
+  }
+
+  writeChatView(view, 'replace', browser);
+}
+
+// The conversation the app currently shows, in the shape App.tsx keeps it.
+// Only the fields the route names are read.
+export type ChatSelectionLike =
+  | { kind: 'group'; group: { groupId: number }; network?: ChatNetwork }
+  | { kind: 'direct'; direct: { address: string }; network?: ChatNetwork };
+
+// True when a history entry's target names the conversation that is already
+// selected. Back/Forward between the chat and Developers workspaces (or
+// between reference sections) produces such entries: they must switch only
+// the workspace, never re-select the conversation, so the reply/edit context,
+// the in-memory draft and the mobile list/conversation state survive.
+export function isDeepLinkTargetForSelection(
+  target: ChatDeepLinkTarget | null,
+  selection: ChatSelectionLike | null,
+): boolean {
+  if (!target || !selection) {
+    return false;
+  }
+
+  if ((target.network ?? 'qortium') !== (selection.network ?? 'qortium')) {
+    return false;
+  }
+
+  return selection.kind === 'group'
+    ? target.address === undefined && target.group === selection.group.groupId
+    : target.address === selection.direct.address;
 }
 
 export function getInitialDeepLinkTarget(): ChatDeepLinkTarget | null {
@@ -149,6 +264,14 @@ export function getInitialDeepLinkTarget(): ChatDeepLinkTarget | null {
   }
 
   return parseDeepLinkSearch(window.location?.search ?? '');
+}
+
+export function getInitialChatView(): ChatView {
+  if (typeof window === 'undefined') {
+    return 'chat';
+  }
+
+  return parseChatView(window.location?.search ?? '');
 }
 
 export function parseOpenAppTargetMessage(value: unknown): ChatDeepLinkTarget | null {

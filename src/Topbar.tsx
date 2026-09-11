@@ -1,12 +1,20 @@
-import type { Dispatch, RefObject, SetStateAction } from 'react';
+import type { Dispatch, MouseEvent, RefObject, SetStateAction } from 'react';
 
 import { getAvatarView, getShortAddress, UserAvatar, type AvatarProfilesByAddress } from './accountDisplay';
 import type { AvatarLightboxImage } from './AvatarLightbox';
+import { getChatViewUrl, type ChatView } from './deepLink';
 import { BellIcon, BrandMark } from './icons';
 import type { TranslateFunction } from './i18n';
 import type { ChatNotificationPreferences } from './notifications';
 import type { AvatarProfile } from './avatarProfiles';
 import type { QdnSelectedAccount } from './types';
+
+// Workspace tabs (fleet Developers convention): real document links so a
+// middle-click or copy-link works, intercepted for in-app history handling.
+const WORKSPACE_TABS = [
+  ['chat', 'nav.chat'],
+  ['developers', 'nav.developers'],
+] as const;
 
 function getAccountMessage(error: string, isHomeBridge: boolean, t: TranslateFunction) {
   if (error.includes('No account is selected')) {
@@ -108,10 +116,12 @@ export function Topbar({
   isHomeV2AppTab,
   onOpenAvatar,
   onRequestAccountRefresh,
+  onSelectWorkspace,
   qortiumAvatarProfiles,
   setChatNotificationMenuOpen,
   t,
   updateChatNotificationPreference,
+  workspaceView,
 }: {
   account: QdnSelectedAccount | null;
   accountError: string;
@@ -131,6 +141,7 @@ export function Topbar({
   isHomeV2AppTab: boolean;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   onRequestAccountRefresh: () => void;
+  onSelectWorkspace: (view: ChatView) => void;
   qortiumAvatarProfiles: AvatarProfilesByAddress;
   setChatNotificationMenuOpen: Dispatch<SetStateAction<boolean>>;
   t: TranslateFunction;
@@ -138,7 +149,19 @@ export function Topbar({
     key: Exclude<keyof ChatNotificationPreferences, 'version'>,
     enabled: boolean,
   ) => Promise<void> | void;
+  workspaceView: ChatView;
 }) {
+  const workspaceLocation = typeof window === 'undefined' ? { pathname: '/' } : window.location;
+
+  function selectWorkspace(event: MouseEvent<HTMLAnchorElement>, view: ChatView) {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+
+    event.preventDefault();
+    onSelectWorkspace(view);
+  }
+
   return (
     <header className="topbar">
       <div className="topbar__title">
@@ -149,6 +172,19 @@ export function Topbar({
         ) : (
           <span className="topbar__version">{appVersion}</span>
         )}
+        <nav aria-label={t('aria.workspaces')} className="workspace-nav">
+          {WORKSPACE_TABS.map(([view, key]) => (
+            <a
+              aria-current={workspaceView === view ? 'page' : undefined}
+              className="workspace-nav__tab"
+              href={getChatViewUrl(view, workspaceLocation)}
+              key={view}
+              onClick={(event) => selectWorkspace(event, view)}
+            >
+              {t(key)}
+            </a>
+          ))}
+        </nav>
       </div>
       <div className="topbar__account">
         {canControlChatNotifications ? (

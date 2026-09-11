@@ -309,7 +309,7 @@ function parseQortalHubEmbed(qdnUrl: string, parts: string[], queryString: strin
 
 // Characters that survive Hub's no-decode query parsing AND the LINK_PATTERN
 // scanner above (no whitespace, quotes, or angle brackets).
-const HUB_EMBED_SAFE_VALUE = /^[A-Za-z0-9._-]+$/;
+export const HUB_EMBED_SAFE_VALUE = /^[A-Za-z0-9._-]+$/;
 
 function getHubEmbedType(service: string): 'ATTACHMENT' | 'IMAGE' | 'VIDEO' {
   if (isImageQdnService(service)) {

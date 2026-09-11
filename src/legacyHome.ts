@@ -51,7 +51,7 @@ export function hasLegacyHomeDirectSend(actions: readonly QdnAction[] | undefine
 // getQdnChatContext at v1.8.0). That refusal is a definite non-send: the
 // pending entry can be marked rejected (retryable) instead of "outcome
 // unknown".
-const LEGACY_HOME_PRE_BROADCAST_REFUSALS = [
+export const LEGACY_HOME_PRE_BROADCAST_REFUSALS = [
   /Start Qortium Core from Home, or save the local node API key/i,
 ];
 
