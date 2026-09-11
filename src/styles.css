@@ -5411,7 +5411,14 @@ button.message__reply-preview:focus-visible,
 }
 
 @media (max-width: 600px) {
+  /* The title row must wrap so the workspace tabs take their own line instead
+     of widening .app-shell past the viewport (found at 390px in acceptance). */
+  .topbar__title {
+    flex-wrap: wrap;
+  }
+
   .workspace-nav {
+    flex-basis: 100%;
     width: 100%;
     margin-inline-start: 0;
   }
