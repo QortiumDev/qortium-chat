@@ -1,6 +1,6 @@
 import type { BridgeHost, BridgeState, BridgeTransport, NodeApiFetchResult, QdnAction } from './types';
 
-const DEFAULT_NODE_API_URL = 'http://127.0.0.1:24891';
+export const DEFAULT_NODE_API_URL = 'http://127.0.0.1:24891';
 
 export const LOCAL_READ_ACTIONS = [
   'FETCH_NODE_API',
@@ -226,9 +226,10 @@ export async function getBridgeState(): Promise<BridgeState> {
   }
 
   try {
-    // Home reports whether chat is bound to a public/network node. There, sends
-    // are keyless and only open groups are accepted; direct and closed-group
-    // sends must be gated off. Default to false (trusted local/custom node).
+    // Home reports whether chat is bound to a public/network node. The flag is
+    // informational only: sends are never gated on it (README "Current
+    // Limits") — the host's advertised actions and structured errors decide.
+    // Default to false (trusted local/custom node).
     isUsingPublicNode = (await qdnRequest<unknown>({ action: 'IS_USING_PUBLIC_NODE' })) === true;
   } catch {
     isUsingPublicNode = false;

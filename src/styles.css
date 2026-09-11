@@ -5035,3 +5035,391 @@ button.message__reply-preview:focus-visible,
   object-fit: cover;
   width: 44px;
 }
+
+/* ---- Developers workspace (2.0.14) ---------------------------------------
+   Additive: the reference replaces the conversation grid inside `.layout`
+   and owns its own scroll (`.layout--developers`) at every width, so section
+   navigation scrolls this container and never Home's outer document. Tokens
+   only, so theme, accent (clay included), text size and UI style apply. */
+.workspace-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+
+.workspace-nav__tab {
+  transition: var(--qc-transition-control);
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 14px;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-small);
+  font-weight: 650;
+  line-height: var(--qc-line-tight);
+  text-decoration: none;
+  white-space: nowrap;
+  background: var(--qc-color-control-bg);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-pill);
+}
+
+.workspace-nav__tab:hover {
+  color: var(--qc-color-text);
+  background: var(--qc-color-control-hover);
+}
+
+.workspace-nav__tab[aria-current='page'] {
+  color: var(--qc-color-accent-text);
+  background: var(--qc-gradient-primary);
+  border-color: var(--qc-color-accent-hover);
+}
+
+.workspace-nav__tab:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+}
+
+.layout--developers,
+.app-shell--home-v2 .layout--developers {
+  display: block;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 18px;
+  padding-left: calc(18px + env(safe-area-inset-left, 0px));
+  padding-right: calc(18px + env(safe-area-inset-right, 0px));
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  background: var(--qc-color-frame-bg);
+}
+
+.developer-reference {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  max-width: 1120px;
+  min-width: 0;
+  margin-inline: auto;
+  color: var(--qc-color-text);
+}
+
+.reference-hero,
+.reference-card {
+  min-width: 0;
+  background: var(--qc-color-surface);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+  box-shadow: var(--qc-shadow-card);
+}
+
+.reference-hero {
+  display: grid;
+  gap: 10px;
+  padding: clamp(18px, 3vw, 32px);
+  background:
+    linear-gradient(135deg, var(--qc-color-accent-soft), transparent 62%),
+    var(--qc-color-surface);
+}
+
+.reference-hero > *,
+.reference-section > *,
+.reference-card > *,
+.reference-section__heading > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reference-hero h1,
+.reference-hero p,
+.reference-section h2,
+.reference-section__heading p,
+.reference-card h3,
+.reference-card p {
+  margin: 0;
+}
+
+.reference-hero h1 {
+  font-size: var(--qc-text-title);
+  line-height: 1.12;
+}
+
+.reference-eyebrow,
+.reference-kicker {
+  color: var(--qc-color-accent-readable);
+  font-size: var(--qc-text-small);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reference-note {
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-small);
+}
+
+.reference-toc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+}
+
+.reference-toc a {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 6px 12px;
+  color: var(--qc-color-text-secondary);
+  font-size: var(--qc-text-small);
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  background: var(--qc-color-control-bg);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+}
+
+.reference-toc a:hover {
+  color: var(--qc-color-text);
+  background: var(--qc-color-control-hover);
+}
+
+.reference-toc a:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+}
+
+.reference-section {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  scroll-margin-top: 16px;
+}
+
+.reference-section:focus-visible,
+.reference-code pre:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: -2px;
+}
+
+.reference-section__heading {
+  display: grid;
+  gap: 6px;
+  max-width: 78ch;
+}
+
+.reference-section__heading h2 {
+  font-size: var(--qc-text-heading);
+}
+
+.reference-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  min-width: 0;
+}
+
+.reference-card {
+  display: grid;
+  gap: 12px;
+  padding: clamp(14px, 2vw, 20px);
+}
+
+.reference-card--wide {
+  grid-column: 1 / -1;
+}
+
+.reference-card h3 {
+  font-size: var(--qc-text-body);
+}
+
+.reference-card ul,
+.reference-card ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-inline-start: 20px;
+}
+
+.developer-reference code {
+  padding: 1px 5px;
+  font-size: 0.92em;
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border-subtle);
+  border-radius: var(--qc-radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.reference-code {
+  display: grid;
+  min-width: 0;
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+  overflow: hidden;
+}
+
+.reference-code__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-small);
+  font-weight: 700;
+  border-bottom: 1px solid var(--qc-color-border);
+}
+
+.reference-code__copy {
+  transition: var(--qc-transition-control);
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 6px 14px;
+  color: var(--qc-color-text);
+  font-size: var(--qc-text-small);
+  font-weight: 650;
+  background: var(--qc-color-control-bg);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+  cursor: pointer;
+}
+
+.reference-code__copy:hover {
+  background: var(--qc-color-control-hover);
+  border-color: var(--qc-color-accent);
+}
+
+.reference-code__copy:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+}
+
+.reference-copy-status {
+  margin: 0;
+  padding: 6px 12px;
+  min-height: 1.5em;
+  color: var(--qc-color-muted);
+  font-size: var(--qc-text-small);
+  overflow-wrap: anywhere;
+}
+
+.reference-code pre {
+  margin: 0;
+  padding: 12px;
+  font-size: var(--qc-text-small);
+  line-height: var(--qc-line-ui);
+  white-space: pre;
+  overflow: auto;
+}
+
+.reference-code pre code {
+  padding: 0;
+  font-size: inherit;
+  background: none;
+  border: 0;
+}
+
+.reference-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  background: var(--qc-color-surface);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md);
+}
+
+.reference-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--qc-text-small);
+}
+
+.reference-table th,
+.reference-table td {
+  padding: 8px 10px;
+  text-align: start;
+  vertical-align: top;
+  border-bottom: 1px solid var(--qc-color-border-subtle);
+}
+
+.reference-table thead th {
+  color: var(--qc-color-muted);
+  font-weight: 700;
+}
+
+.reference-table tbody th {
+  font-weight: 600;
+}
+
+.reference-roster {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.reference-roster dt {
+  font-weight: 650;
+}
+
+.reference-roster dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+}
+
+@media (max-width: 620px) {
+  .developer-reference {
+    gap: 14px;
+  }
+
+  .reference-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reference-card {
+    padding: 12px;
+  }
+
+  :root[data-text-size='extra-large'] .reference-toc,
+  :root[data-text-size='huge'] .reference-toc {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  :root[data-text-size='extra-large'] .reference-toc a,
+  :root[data-text-size='huge'] .reference-toc a,
+  :root[data-text-size='extra-large'] .workspace-nav__tab,
+  :root[data-text-size='huge'] .workspace-nav__tab {
+    min-width: 0;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 600px) {
+  /* The title row must wrap so the workspace tabs take their own line instead
+     of widening .app-shell past the viewport (found at 390px in acceptance). */
+  .topbar__title {
+    flex-wrap: wrap;
+  }
+
+  .workspace-nav {
+    flex-basis: 100%;
+    width: 100%;
+    margin-inline-start: 0;
+  }
+}

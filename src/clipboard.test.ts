@@ -57,3 +57,25 @@ describe('copyTextToClipboard', () => {
     await expect(copyTextToClipboard('Qmissing', {})).resolves.toBe(false);
   });
 });
+
+describe('copyTextToClipboard focus handling', () => {
+  it('restores focus to the previously focused control without scrolling after the textarea fallback', async () => {
+    const previous = { focus: vi.fn() };
+    const { document, textarea } = createTextareaDocument();
+    (document as { activeElement?: unknown }).activeElement = previous;
+
+    await expect(copyTextToClipboard('Qrestore', { document })).resolves.toBe(true);
+    expect(textarea.focus).toHaveBeenCalledOnce();
+    expect(previous.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.body.removeChild).toHaveBeenCalledWith(textarea);
+  });
+
+  it('restores focus even when the copy command fails', async () => {
+    const previous = { focus: vi.fn() };
+    const { document } = createTextareaDocument(false);
+    (document as { activeElement?: unknown }).activeElement = previous;
+
+    await expect(copyTextToClipboard('Qfail', { document })).resolves.toBe(false);
+    expect(previous.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+});

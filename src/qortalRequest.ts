@@ -8,7 +8,7 @@ import { classifyBridgeHost, classifyBridgeTransport, hasHomeBridge, qdnRequest 
 import { buildQortalHubGroupChatPayload, normalizeQortalOutgoingMessage } from './qortalChatPayload';
 import { getInjectedQortalRequestGlobal } from './qortalGlobal';
 
-const DEFAULT_NODE_API_URL = 'http://127.0.0.1:12391';
+export const DEFAULT_NODE_API_URL = 'http://127.0.0.1:12391';
 
 export const LOCAL_READ_ACTIONS = [
   'FETCH_NODE_API',
@@ -38,7 +38,7 @@ type QortalRequestPayload = {
   [key: string]: unknown;
 };
 
-const LEGACY_QORTAL_ACTIONS: Readonly<Record<string, string>> = Object.freeze({
+export const LEGACY_QORTAL_ACTIONS: Readonly<Record<string, string>> = Object.freeze({
   FETCH_NODE_API: 'FETCH_QORTAL_NODE_API',
   FETCH_QDN_RESOURCE: 'FETCH_QORTAL_RESOURCE',
   GET_ACCOUNT_GROUPS: 'GET_QORTAL_ACCOUNT_GROUPS',

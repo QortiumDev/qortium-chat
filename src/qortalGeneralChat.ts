@@ -11,17 +11,17 @@ import {
 import { qortalRequest } from './qortalRequest';
 import type { ChatMessage, ChatSendResult, NodeApiFetchResult } from './types';
 
-const CHAT_TRANSACTION_TYPE = 18;
-const MESSAGE_TRANSACTION_TYPE = 17;
+export const CHAT_TRANSACTION_TYPE = 18;
+export const MESSAGE_TRANSACTION_TYPE = 17;
 const GENERAL_CHAT_GROUP_ID = 0;
-const CHAT_NONCE_OFFSET = 112;
-const CHAT_REFERENCE_FEATURE_TRIGGER_TIMESTAMP = 1674316800000;
-const MAX_MESSAGE_DATA_BYTES = 4000;
-const CHAT_POW_DIFFICULTY = 8;
-const MESSAGE_POW_DIFFICULTY = 12;
-const WRAPPER_ADDRESS_VERSION = 58;
-const WRAPPER_FETCH_MAX_BYTES = 8 * 1024 * 1024;
-const POW_TIMEOUT_MS = 5 * 60 * 1000;
+export const CHAT_NONCE_OFFSET = 112;
+export const CHAT_REFERENCE_FEATURE_TRIGGER_TIMESTAMP = 1674316800000;
+export const MAX_MESSAGE_DATA_BYTES = 4000;
+export const CHAT_POW_DIFFICULTY = 8;
+export const MESSAGE_POW_DIFFICULTY = 12;
+export const WRAPPER_ADDRESS_VERSION = 58;
+export const WRAPPER_FETCH_MAX_BYTES = 8 * 1024 * 1024;
+export const POW_TIMEOUT_MS = 5 * 60 * 1000;
 
 type RawMessageTransaction = {
   amount?: number | string;

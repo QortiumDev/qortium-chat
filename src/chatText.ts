@@ -33,7 +33,15 @@ export type QortalHubImageRef = {
   timestamp?: number;
 };
 
-const QORTAL_HUB_IMAGE_SERVICES = new Set(['GIF_REPOSITORY', 'IMAGE', 'QCHAT_IMAGE', 'THUMBNAIL']);
+export const QORTAL_HUB_IMAGE_SERVICES = new Set(['GIF_REPOSITORY', 'IMAGE', 'QCHAT_IMAGE', 'THUMBNAIL']);
+
+// Hub pins at most this many images per v3 envelope, and Chat reads at most
+// this many attachment descriptor candidates from its own envelope.
+export const MAX_ENVELOPE_CANDIDATES = 12;
+// Nested envelope levels unwrapped before the text is shown as-is.
+export const MAX_ENVELOPE_DEPTH = 3;
+export const QORTAL_HUB_IMAGE_NAME_MAX_LENGTH = 255;
+export const QORTAL_HUB_IMAGE_IDENTIFIER_MAX_LENGTH = 64;
 
 export type ChatReaction = {
   content: string;
@@ -63,7 +71,7 @@ export function encodeBase64(value: string) {
   return btoa(binary);
 }
 
-const MAX_REACTION_CONTENT_LENGTH = 32;
+export const MAX_REACTION_CONTENT_LENGTH = 32;
 
 export const DEFAULT_REACTION_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
 
@@ -570,7 +578,7 @@ function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
 
   const images: QortalHubImageRef[] = [];
 
-  for (const image of candidate.slice(0, 12)) {
+  for (const image of candidate.slice(0, MAX_ENVELOPE_CANDIDATES)) {
     if (!isPlainObject(image)) {
       continue;
     }
@@ -582,10 +590,10 @@ function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
     if (
       !QORTAL_HUB_IMAGE_SERVICES.has(service) ||
       !name ||
-      name.length > 255 ||
+      name.length > QORTAL_HUB_IMAGE_NAME_MAX_LENGTH ||
       /[\u0000-\u001f/\\]/.test(name) ||
       !identifier ||
-      identifier.length > 64 ||
+      identifier.length > QORTAL_HUB_IMAGE_IDENTIFIER_MAX_LENGTH ||
       /[\u0000-\u001f/\\]/.test(identifier)
     ) {
       continue;
@@ -607,7 +615,7 @@ function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
 // PrivateAttachmentDescriptor shape) happens downstream via coreApi's
 // isPrivateAttachmentDescriptor (see the DisplayChatMessage.attachments doc
 // comment above for why that check cannot live in this module).
-function getAttachmentCandidates(value: unknown, max = 12): unknown[] {
+function getAttachmentCandidates(value: unknown, max = MAX_ENVELOPE_CANDIDATES): unknown[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -666,7 +674,7 @@ function unwrapChatTextEnvelope(value: string): UnwrappedChatText {
   // Direct sends wrap the text in {message}; reply envelopes add repliedTo. A
   // reply sent as a direct message can end up wrapped twice, so unwrap a few
   // levels deep.
-  for (let depth = 0; depth < 3; depth += 1) {
+  for (let depth = 0; depth < MAX_ENVELOPE_DEPTH; depth += 1) {
     let parsed: unknown;
 
     try {

@@ -29,6 +29,10 @@ import type { ChatMessage, ChatNetwork } from './types';
 export type PendingSendStatus = 'failed' | 'sending';
 export type SendDeliveryPhase = 'ambiguous' | 'broadcast' | 'confirmed' | 'expired' | 'pending' | 'rejected';
 
+// A broadcast that neither confirms nor rejects within this window is marked
+// expired (never retryable: the transaction may already be on chain).
+export const SEND_CONFIRMATION_TIMEOUT_MS = 120000;
+
 export type SendDeliveryState = {
   readonly phase: SendDeliveryPhase;
   readonly updatedAt: number;

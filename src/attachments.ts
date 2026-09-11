@@ -34,8 +34,8 @@ export const QDN_PUBLISH_SOURCE_MAX_BYTES = 100 * 1024 * 1024;
 // it, so the "select the file again" notice can appear immediately.
 export const SOURCE_TOKEN_EXPIRY_MS = 30 * 60 * 1000;
 
-const IMAGE_COMPRESSION_MAX_WIDTH = 1200;
-const IMAGE_COMPRESSION_QUALITY = 0.6;
+export const IMAGE_COMPRESSION_MAX_WIDTH = 1200;
+export const IMAGE_COMPRESSION_QUALITY = 0.6;
 
 export type AttachmentService = 'ATTACHMENT' | 'IMAGE';
 

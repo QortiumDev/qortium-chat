@@ -80,12 +80,34 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.13, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.14, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
 compatibility badge. The manifest is ignored by Qortal Hub, where the same
 bundle runs against the classic `qortalRequest` surface.
+
+## Developers
+
+Since 2.0.14 the app carries an in-app public contract reference for other
+clients, following the fleet Developers-workspace convention. Open it from the
+`Developers` tab in the top bar or with `qdn://APP/Chat/Chat?view=developers`
+(`view=developer` and `view=reference` are accepted and folded to the canonical
+form). It documents the chat envelope and `chatReference` rules, the
+machine-message skip rule, Qortium vs Qortal payload shapes (Hub v3 group,
+direct v2, General Chat wrapper, delete markers), client-side limits, capability
+discovery and the full bridge action roster, send outcomes and the pending
+journal, discovery paths and deep links, and the attachment contract. Every
+printed value is bound to the implementation constant it describes and every
+example is produced by the real codec (`src/referenceExamples.ts`,
+`src/reference.test.tsx`).
+
+The workspace is additive: switching to it keeps the selected conversation, its
+in-memory draft and the `address/group/network` query keys, adds one history
+entry so Back returns to the conversation, and scrolls only its own container
+(never Home's outer document). The tab label is localized; the reference body
+intentionally stays English (`lang="en" dir="ltr"`). Note that the Chat
+workspace tab is the same `Chat` loanword in several locales on purpose.
 
 ## Qortium Home Smoke Check
 
@@ -150,8 +172,9 @@ groups. Public-group attachments work on every host that can publish to QDN: thr
 Home's native picker where it is offered (Home 1.3+, Home 2), otherwise by
 reading the file in the app and publishing it inline (older Home 1.x, Qortal Hub);
 pasting or dropping a file into the composer stages it wherever the host
-accepts inline bytes (everywhere except Home 2 desktop, which needs a Home
-change first — see `docs/CHAT_ATTACHMENTS.md`). The composer can also link any
+accepts inline bytes, and on token-only hosts (Home 2 desktop and Android)
+through `STAGE_QDN_PUBLISH_SOURCE` when the host advertises it — see
+`docs/CHAT_ATTACHMENTS.md`. The composer can also link any
 resource already published to QDN — by any account — instead of republishing
 it, emitting Qortal Hub's `use-embed` form in Qortal conversations so Hub
 renders it inline. Qortal direct messages,

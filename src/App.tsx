@@ -140,6 +140,7 @@ import {
   type PendingRevision,
   type PendingSend,
   type PendingSendTarget,
+  SEND_CONFIRMATION_TIMEOUT_MS,
 } from './pendingSends';
 import { updatePendingStateRef } from './pendingState';
 import { isPrivateGroupRecoveryContextCurrent } from './privateGroupRecovery';
@@ -164,12 +165,18 @@ import {
   resolveNetworkTint,
 } from './displaySettings';
 import {
+  canonicalizeChatViewUrl,
+  getInitialChatView,
   getInitialDeepLinkTarget,
+  isDeepLinkTargetForSelection,
   isPlausibleQortiumAddress,
+  parseChatView,
   parseOpenAppTargetMessage,
   writeChatRoute,
+  writeChatView,
   type ChatDeepLinkTarget,
   type ChatHistoryMode,
+  type ChatView,
 } from './deepLink';
 import {
   GENERAL_CHAT_GROUP_ID,
@@ -192,6 +199,7 @@ import { ConversationNetworkSection } from './ConversationRail';
 import { LoadingRows } from './LoadingRows';
 import { MembersDrawer } from './MembersDrawer';
 import { SidebarPane } from './SidebarPane';
+import Reference from './Reference';
 import { Topbar } from './Topbar';
 import {
   createGroupConversationSummary,
@@ -367,7 +375,6 @@ const QORTAL_GATEWAY_GROUP_REFRESH_MS = 60000;
 // while the tab is hidden, reconnection waits for visibility instead.
 const WS_RECONNECT_BASE_MS = 5000;
 const WS_RECONNECT_MAX_MS = 60000;
-const SEND_CONFIRMATION_TIMEOUT_MS = 120000;
 
 // Groups whose transactions are gated by development-group approval (e.g. Core
 // auto-updates). Previewnet uses group id 1 ("development"); override with the
@@ -1445,6 +1452,10 @@ export default function App() {
   const [loadedDirectActivityByAddress, setLoadedDirectActivityByAddress] =
     useState<ReadonlyMap<string, number | null>>(() => new Map());
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
+  // Workspace shown in the shell. The Developers reference overlays the chat
+  // layout: switching it never touches selectedChat, drafts, composeContext,
+  // mobileChatView or the conversation keys in the URL (README "Developers").
+  const [workspaceView, setWorkspaceView] = useState<ChatView>(getInitialChatView);
   // A target may arrive before the parallel group/account loads finish. Keep the
   // newest one until both have settled, so it wins over the normal first-group
   // fallback and a saved last chat without racing either source.
@@ -9487,18 +9498,29 @@ export default function App() {
     function handlePopState() {
       // Back/Forward owns the current history entry already. Queue its target
       // through the normal async resolver, but never push or replace while
-      // rehydrating it.
-      pendingDeepLinkRef.current = {
-        historyMode: 'none',
-        isInitial: false,
-        target: getInitialDeepLinkTarget(),
-      };
-      setDeepLinkRevision((current) => current + 1);
+      // rehydrating it. An entry that only differs by workspace (or section
+      // fragment) names the conversation that is already open, so it must not
+      // re-select it — that would reset the reply/edit context and the mobile
+      // list/conversation state the user left behind.
+      const target = getInitialDeepLinkTarget();
+
+      if (!isDeepLinkTargetForSelection(target, selectedChatRef.current)) {
+        pendingDeepLinkRef.current = { historyMode: 'none', isInitial: false, target };
+        setDeepLinkRevision((current) => current + 1);
+      }
+
+      setWorkspaceView(parseChatView(window.location.search));
     }
 
     window.addEventListener('popstate', handlePopState);
 
     return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Fold `view=developer` / `view=reference` into the canonical route once,
+  // without adding a history entry.
+  useEffect(() => {
+    canonicalizeChatViewUrl();
   }, []);
 
   useEffect(() => {
@@ -9508,6 +9530,11 @@ export default function App() {
       const target = parseOpenAppTargetMessage(event.data);
 
       if (target) {
+        // A host-pushed conversation implies the chat workspace. Drop the view
+        // key in place first so the selection push below writes a plain
+        // conversation entry.
+        setWorkspaceView('chat');
+        writeChatView('chat', 'replace');
         pendingDeepLinkRef.current = { historyMode: 'push', isInitial: false, target };
         setDeepLinkRevision((current) => current + 1);
       }
@@ -10319,6 +10346,17 @@ export default function App() {
   const layoutClassName = `layout${showGroupMembers && membersOpen ? ' layout--members-open' : ''}${
     mobileChatView ? ' layout--mobile-chat' : ''
   }`;
+  // Entering or leaving the Developers workspace only changes the view state
+  // and the `view` query key (one pushed history entry); the conversation
+  // selection, drafts and compose context are left exactly as they are.
+  function openWorkspace(view: ChatView) {
+    if (view === workspaceView) {
+      return;
+    }
+
+    setWorkspaceView(view);
+    writeChatView(view, 'push');
+  }
   const topbarAccount: QdnSelectedAccount | null = isQortalOnlyHost && qortalAccount
     ? {
         address: qortalAccount.address,
@@ -10348,10 +10386,12 @@ export default function App() {
       isHomeV2AppTab={homeV2AppTab}
       onOpenAvatar={setAvatarLightboxImage}
       onRequestAccountRefresh={requestSelectedAccountRefresh}
+      onSelectWorkspace={openWorkspace}
       qortiumAvatarProfiles={isQortalOnlyHost ? qortalAvatarProfiles : qortiumAvatarProfiles}
       setChatNotificationMenuOpen={setChatNotificationMenuOpen}
       t={t}
       updateChatNotificationPreference={updateChatNotificationPreference}
+      workspaceView={workspaceView}
     />
   );
 
@@ -10422,7 +10462,16 @@ export default function App() {
   );
 
   return (
-    <AppShell dialogs={dialogs} isHomeV2AppTab={homeV2AppTab} layoutClassName={layoutClassName} topbar={topbar}>
+    <AppShell
+      dialogs={dialogs}
+      isHomeV2AppTab={homeV2AppTab}
+      layoutClassName={workspaceView === 'developers' ? 'layout layout--developers' : layoutClassName}
+      topbar={topbar}
+    >
+      {workspaceView === 'developers' ? (
+        <Reference appVersion={APP_VERSION} />
+      ) : (
+        <>
         <SidebarPane ariaLabel={t('aria.navigation')} inert={isMembersOverlay}>
           {!qortalOnlyRuntime ? (
           <ConversationNetworkSection network="qortium" showHeader={qortalAvailable}>
@@ -11346,6 +11395,8 @@ export default function App() {
             t={t}
           />
         ) : null}
+        </>
+      )}
     </AppShell>
   );
 }

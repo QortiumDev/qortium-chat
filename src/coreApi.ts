@@ -63,7 +63,7 @@ import type {
   TransactionStatus,
 } from './types';
 
-const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+export const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_LIST_LIMIT = 100;
 
 function appendQueryValue(query: URLSearchParams, key: string, value: string | number | boolean | undefined) {
@@ -1219,13 +1219,13 @@ function assertNotDotSegment(label: string, value: string) {
 }
 
 // review/schemas-publish-attachments.md § 2 "Constraints".
-const QDN_PUBLISH_NAME_MAX_BYTES: Record<ChatNetwork, number> = { qortal: 400, qortium: 40 };
-const QDN_PUBLISH_IDENTIFIER_MAX_BYTES = 64;
-const QDN_PUBLISH_TITLE_MAX_BYTES = 80;
-const QDN_PUBLISH_DESCRIPTION_MAX_BYTES = 500;
-const QDN_PUBLISH_CATEGORY_MAX_BYTES = 40;
-const QDN_PUBLISH_TAG_MAX_BYTES = 20;
-const QDN_PUBLISH_TAGS_MAX_COUNT = 5;
+export const QDN_PUBLISH_NAME_MAX_BYTES: Record<ChatNetwork, number> = { qortal: 400, qortium: 40 };
+export const QDN_PUBLISH_IDENTIFIER_MAX_BYTES = 64;
+export const QDN_PUBLISH_TITLE_MAX_BYTES = 80;
+export const QDN_PUBLISH_DESCRIPTION_MAX_BYTES = 500;
+export const QDN_PUBLISH_CATEGORY_MAX_BYTES = 40;
+export const QDN_PUBLISH_TAG_MAX_BYTES = 20;
+export const QDN_PUBLISH_TAGS_MAX_COUNT = 5;
 
 function normalizeQdnPublishOutcome(raw: unknown): QdnPublishOutcome {
   const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -1388,7 +1388,7 @@ export async function publishChatAttachment(
   );
 }
 
-const PRIVATE_ATTACHMENT_CODECS = [
+export const PRIVATE_ATTACHMENT_CODECS = [
   'qenc-v2-direct',
   'qenc-v2-group',
   'qortal-hub-group-image-v1',
@@ -1396,10 +1396,10 @@ const PRIVATE_ATTACHMENT_CODECS = [
   'qortal-qatt-group-v1',
 ] as const;
 
-const PRIVATE_ATTACHMENT_SERVICES = ['IMAGE', 'QCHAT_ATTACHMENT_PRIVATE'] as const;
+export const PRIVATE_ATTACHMENT_SERVICES = ['IMAGE', 'QCHAT_ATTACHMENT_PRIVATE'] as const;
 
 const PRIVATE_ATTACHMENT_HASH_RE = /^[0-9a-f]{64}$/;
-const PRIVATE_ATTACHMENT_MAX_CIPHERTEXT_BYTES = 1024 * 1024;
+export const PRIVATE_ATTACHMENT_MAX_CIPHERTEXT_BYTES = 1024 * 1024;
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -2170,7 +2170,7 @@ export async function getQortalUserAccount(actions?: QdnAction[]): Promise<Qorta
 // "Direct chat" DirectChatRequest.message) — enforced client-side before any
 // bridge round trip so an oversized draft fails with a clear message instead
 // of a bridge-side rejection.
-const DIRECT_MESSAGE_MAX_BYTES = 3984;
+export const DIRECT_MESSAGE_MAX_BYTES = 3984;
 
 function assertDirectMessageByteLimit(message: string) {
   const byteLength = new TextEncoder().encode(message).byteLength;

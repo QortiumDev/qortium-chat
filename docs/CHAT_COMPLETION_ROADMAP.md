@@ -52,7 +52,9 @@ are never probed — Hub leaves unrecognized requests to a 30-second timeout.
   implemented-but-unavailable action fails with `NODE_CAPABILITY_MISSING`; an
   action absent from the protocol fails with `UNSUPPORTED_PROTOCOL`.
 - `GET_HOST_INFO` supplies host, protocol, network, platform, and route
-  diagnostics.
+  diagnostics on Home 2. Chat does not call it: the only Home 2 tab signal Chat
+  consumes is the `?homeV2Bridge=1` query parameter (`src/hostContext.ts`), and
+  every capability decision comes from `SHOW_ACTIONS`/`WHICH_UI`.
 - Bridge errors carry structured fields (`code`, `network`, `action`,
   `retryable`, `outcome`, optional `target`). Chat maps the documented codes
   to localized notices and treats `outcome: "unknown"` as ambiguous, never as

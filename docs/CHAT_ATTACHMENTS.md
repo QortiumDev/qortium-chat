@@ -170,3 +170,15 @@ other QDN link. Open-group ATTACHMENT publishes in Qortal conversations emit
 the use-embed form too — the previous `qdn://SERVICE/name/identifier` form was
 mis-parsed in Qortal conversations, where an identifier only rides
 `?identifier=` (the third segment was read as an app path).
+
+## Caps the reader enforces (2.0.14 note)
+
+Two limits apply on the decode side and were previously documented only in
+code (both are exported and printed by the in-app Developers reference):
+
+- `PRIVATE_ATTACHMENT_MAX_CIPHERTEXT_BYTES` (`src/coreApi.ts`): a descriptor
+  whose `ciphertext.size` is not an integer in `1..1 MiB` fails
+  `isPrivateAttachmentDescriptor` and is ignored.
+- `MAX_ENVELOPE_CANDIDATES` (`src/chatText.ts`): at most 12 `attachments`
+  candidates (Chat envelope) or 12 `images[]` entries (Hub v3 envelope) are
+  read from one message; later entries are dropped before validation.
