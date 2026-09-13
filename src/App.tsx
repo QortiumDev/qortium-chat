@@ -322,6 +322,15 @@ import {
 } from './avatarProfiles';
 import { AvatarTaskQueue } from './avatarQueue';
 import { buildQortalHubGroupChatPayload } from './qortalChatPayload';
+import { estimateComposerByteBudget } from './composerByteBudget';
+import {
+  getMutedConversationKey,
+  readMutedConversations,
+  toggleMutedConversation,
+  writeMutedConversations,
+} from './mutedConversations';
+import { readPrivateGroupKeyRequestMemo, rememberPrivateGroupKeyRequest } from './privateGroupKeyRequestMemo';
+import { getJoinSendHoldMs, recordJoinSendHold, type JoinSendHolds } from './joinSendHold';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -1420,6 +1429,11 @@ export default function App() {
     () => ({ ...DISABLED_CHAT_NOTIFICATION_PREFERENCES }),
   );
   const [chatNotificationsBusy, setChatNotificationsBusy] = useState(false);
+  // G4-i: conversation keys whose foreground notifications this account has
+  // muted (persisted per account address; see mutedConversations.ts).
+  const [mutedConversationKeys, setMutedConversationKeys] = useState<Set<string>>(() => new Set());
+  const mutedConversationKeysRef = useRef(mutedConversationKeys);
+  mutedConversationKeysRef.current = mutedConversationKeys;
   const [chatNotificationsError, setChatNotificationsError] = useState('');
   const [isChatNotificationMenuOpen, setChatNotificationMenuOpen] = useState(false);
   const chatNotificationsEnabled = hasAnyChatNotificationsEnabled(chatNotificationPreferences);
@@ -1501,6 +1515,9 @@ export default function App() {
   const loadedDirectActivityRef = useRef<ReadonlyMap<string, number | null>>(new Map());
   const activeChatsGroupIdsRef = useRef<ReadonlySet<number>>(new Set());
   const requestedPrivateGroupKeysRef = useRef(new Set<string>());
+  // O4: per-group "hold sends until" deadlines set when a join confirms (see
+  // joinSendHold.ts); runPendingSend waits them out before broadcasting.
+  const joinSendHoldsRef = useRef<JoinSendHolds>(new Map());
   const resolvedPrivateGroupKeyRequestsRef = useRef(new Set<string>());
   const pendingApprovalsRequestRef = useRef(0);
   const groupMembersRequestGuardRef = useRef(new LatestRequestGuard());
@@ -3154,11 +3171,39 @@ export default function App() {
       : undefined;
   const draftByteLength =
     typeof selectedGroupPrivatePlaintextMaxBytes === 'number' ? getUtf8ByteLength(draft) : 0;
+  // G10: every other conversation gets a wire-envelope estimate against the
+  // public caps (4000 CHAT / 3984 direct); shown from half the cap, blocking
+  // at the cap so a long draft fails here and not at the bridge.
+  const publicComposerByteBudget = useMemo(() => {
+    if (!selectedChat || typeof selectedGroupPrivatePlaintextMaxBytes === 'number') {
+      return null;
+    }
+    if (selectedChat.kind === 'group' && selectedChat.group.isOpen === false) {
+      return null;
+    }
+    return estimateComposerByteBudget({
+      draft,
+      isGeneralChat: selectedChat.kind === 'group' && selectedChat.group.groupId === 0,
+      kind: selectedChat.kind === 'group' ? 'group' : 'direct',
+      network: selectedChat.network ?? 'qortium',
+      repliedTo: composeContext?.kind === 'reply' ? composeContext.message.signature ?? null : null,
+    });
+  }, [composeContext, draft, selectedChat, selectedGroupPrivatePlaintextMaxBytes]);
+  const selectedConversationMuted =
+    !!selectedChat &&
+    mutedConversationKeys.has(
+      getMutedConversationKey(
+        selectedChat.kind === 'group'
+          ? { groupId: selectedChat.group.groupId, kind: 'group', network: selectedChat.network ?? 'qortium' }
+          : { kind: 'direct', network: selectedChat.network ?? 'qortium', otherAddress: selectedChat.direct.address },
+      ),
+    );
   const canSubmitMessage =
     canComposeMessage &&
     (draft.trim().length > 0 || stagedAttachment?.phase === 'ready') &&
     !sendPending &&
-    (typeof selectedGroupPrivatePlaintextMaxBytes !== 'number' || draftByteLength <= selectedGroupPrivatePlaintextMaxBytes);
+    (typeof selectedGroupPrivatePlaintextMaxBytes !== 'number' || draftByteLength <= selectedGroupPrivatePlaintextMaxBytes) &&
+    !(publicComposerByteBudget?.overLimit && composeContext?.kind !== 'edit');
   // Direct edit/delete/react have no generic-envelope fallback (item B's
   // sendDirectChatEdit/Delete/Reaction throw when unadvertised — a fallback
   // would create a new unrelated message instead of a revision), so the
@@ -5026,6 +5071,17 @@ export default function App() {
     }
 
     const canRequestPrivateGroupChatKey = hasAction(actionList, 'REQUEST_PRIVATE_GROUP_CHAT_KEY');
+    // O3: requests already sent from an earlier tab load (within the memo TTL)
+    // count as sent, so a reload does not re-prompt for pre-join messages that
+    // can never decrypt here. Storage keys carry the network; the in-memory
+    // recovery key does not (it predates the Qortal section).
+    for (const memoKey of readPrivateGroupKeyRequestMemo()) {
+      if (memoKey.startsWith(`${network}:request:`)) {
+        requestedPrivateGroupKeysRef.current.add(memoKey.slice(`${network}:request:`.length));
+      } else if (memoKey.startsWith(`${network}:resolve:`)) {
+        resolvedPrivateGroupKeyRequestsRef.current.add(memoKey.slice(`${network}:resolve:`.length));
+      }
+    }
     // Qortal's RESOLVE is admin-only bundle publication — never automatic
     // here (see the function doc above); `canResolvePrivateGroupChatKeyRequests`
     // therefore stays false for Qortal regardless of advertisement, which
@@ -5070,9 +5126,10 @@ export default function App() {
         if (!isCurrentRecovery()) {
           return;
         }
-        requestedPrivateGroupKeysRef.current.add(
-          getPrivateGroupKeyRecoveryKey(selectedAccount.address, request),
-        );
+        const recoveryKey = getPrivateGroupKeyRecoveryKey(selectedAccount.address, request);
+
+        requestedPrivateGroupKeysRef.current.add(recoveryKey);
+        rememberPrivateGroupKeyRequest(`${network}:request:${recoveryKey}`);
 
         const outcome = await requestPrivateGroupChatKey(request, actionList, network);
 
@@ -5089,6 +5146,7 @@ export default function App() {
           return;
         }
         resolvedPrivateGroupKeyRequestsRef.current.add(resolveKey);
+        rememberPrivateGroupKeyRequest(`${network}:resolve:${resolveKey}`);
         await resolvePrivateGroupChatKeyRequests(group.groupId, actionList, 20, network);
         if (!isCurrentRecovery()) {
           return;
@@ -5742,6 +5800,24 @@ export default function App() {
     const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
+      // O4: a group message right after this account's join confirmed waits
+      // about one block so every gateway backend has applied the membership
+      // (the optimistic bubble already shows it as pending meanwhile).
+      const holdMs =
+        entry.kind === 'message' && entry.target.kind === 'group'
+          ? getJoinSendHoldMs(joinSendHoldsRef.current, network, entry.target.groupId)
+          : 0;
+
+      if (holdMs > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, holdMs));
+
+        if (!isCurrentWritablePendingTarget(entry.target, entry.accountAddress)) {
+          updatePendingSends((current) => current.filter((candidate) => candidate.localId !== localId));
+          options.onSettled?.();
+          return;
+        }
+      }
+
       const result = await dispatchChatSend(entry);
 
       if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
@@ -7719,6 +7795,23 @@ export default function App() {
     qortalAccount?.address,
   ]);
 
+  useEffect(() => {
+    setMutedConversationKeys(account?.address ? readMutedConversations(account.address) : new Set());
+  }, [account?.address]);
+
+  function toggleSelectedConversationMute() {
+    if (!selectedChat || !account?.address) return;
+    const network = selectedChat.network ?? 'qortium';
+    const key = getMutedConversationKey(
+      selectedChat.kind === 'group'
+        ? { groupId: selectedChat.group.groupId, kind: 'group', network }
+        : { kind: 'direct', network, otherAddress: selectedChat.direct.address },
+    );
+    const next = toggleMutedConversation(mutedConversationKeys, key);
+    setMutedConversationKeys(next);
+    writeMutedConversations(account.address, next);
+  }
+
   // A live foreground SHOW_NOTIFICATION call is best-effort and never throws
   // (see notifications.ts), but a `revoked`/`disabled` result is a signal
   // worth reflecting: Home is telling Chat its one durable app permission is
@@ -8361,8 +8454,11 @@ export default function App() {
           });
 
           const enabledAttention = getEnabledChatAttentionKind(attention, chatNotificationPreferences);
+          const groupMuted = mutedConversationKeysRef.current.has(
+            getMutedConversationKey({ groupId: selectedChat.group.groupId, kind: 'group', network: attentionNetwork }),
+          );
 
-          if (enabledAttention) {
+          if (enabledAttention && !groupMuted) {
             const title = enabledAttention === 'reply'
               ? t('notification.reply.title')
               : t('notification.mention.title');
@@ -9295,7 +9391,11 @@ export default function App() {
                 sinceTimestamp,
               });
 
-              if (notifiable) {
+              const directMuted = mutedConversationKeysRef.current.has(
+                getMutedConversationKey({ kind: 'direct', network: 'qortium', otherAddress: direct.address }),
+              );
+
+              if (notifiable && !directMuted) {
                 void showChatNotification('qortium', {
                   source: { conversation: { kind: 'direct', otherAddress: direct.address }, kind: 'chat' },
                   text: getMessageSnippet(notifiable, t),
@@ -9727,6 +9827,9 @@ export default function App() {
                 phase: 'confirmed',
               },
             }));
+            if (transaction.action === 'join' && typeof transaction.groupId === 'number') {
+              recordJoinSendHold(joinSendHoldsRef.current, getTrackedTransactionNetwork(transaction), transaction.groupId);
+            }
             void refreshAfterTrackedTransaction(transaction);
           }
         } catch (error) {
@@ -11087,6 +11190,17 @@ export default function App() {
             actionHint={topActionUnavailableLabel}
             actions={
               <>
+              {selectedChat && account?.address && canShowNotifications && !isSelectedGeneralChat ? (
+                <button
+                  aria-pressed={selectedConversationMuted}
+                  className="button button--secondary"
+                  onClick={toggleSelectedConversationMute}
+                  title={selectedConversationMuted ? t('action.unmuteConversation') : t('action.muteConversation')}
+                  type="button"
+                >
+                  {selectedConversationMuted ? t('button.unmute') : t('button.mute')}
+                </button>
+              ) : null}
               {selectedChat?.kind === 'group' ? (
                 <button
                   aria-controls="members-drawer"
@@ -11453,11 +11567,17 @@ export default function App() {
                       max: String(selectedGroupPrivatePlaintextMaxBytes),
                       remaining: String(Math.max(0, selectedGroupPrivatePlaintextMaxBytes - draftByteLength)),
                     })
-                  : null
+                  : publicComposerByteBudget?.visible
+                    ? t('label.composer.privateGroupBytesRemaining', {
+                        max: String(publicComposerByteBudget.max),
+                        remaining: String(Math.max(0, publicComposerByteBudget.max - publicComposerByteBudget.bytes)),
+                      })
+                    : null
               }
               remainingBytesOverLimit={
-                typeof selectedGroupPrivatePlaintextMaxBytes === 'number' &&
-                draftByteLength > selectedGroupPrivatePlaintextMaxBytes
+                (typeof selectedGroupPrivatePlaintextMaxBytes === 'number' &&
+                  draftByteLength > selectedGroupPrivatePlaintextMaxBytes) ||
+                publicComposerByteBudget?.overLimit === true
               }
               removeAttachmentLabel={t('label.attachment.remove')}
               searchLabel={t('label.search')}

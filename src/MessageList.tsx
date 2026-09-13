@@ -49,6 +49,7 @@ import {
   type QdnMediaResource,
 } from './messageLinks';
 import { formatAttachmentSize } from './attachments';
+import { copyTextToClipboard } from './clipboard';
 import {
   getChatAttachmentStreamUrl,
   isPrivateAttachmentDescriptor,
@@ -805,6 +806,18 @@ export const MessageList = memo(function MessageList({
   const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
   const [openReactionPickerKey, setOpenReactionPickerKey] = useState('');
   const [openReactionDetailsKey, setOpenReactionDetailsKey] = useState('');
+  // G8: thread key whose text was just copied, so its Copy button reads
+  // "Copied" briefly (works on every host — the clipboard helper falls back
+  // to a textarea where navigator.clipboard is unavailable, e.g. gateway).
+  const [copiedThreadKey, setCopiedThreadKey] = useState('');
+  const copiedTimeoutRef = useRef(0);
+
+  async function copyMessageText(threadKey: string, body: string) {
+    if (!(await copyTextToClipboard(body))) return;
+    window.clearTimeout(copiedTimeoutRef.current);
+    setCopiedThreadKey(threadKey);
+    copiedTimeoutRef.current = window.setTimeout(() => setCopiedThreadKey(''), 2000);
+  }
   // Viewport rect of the trigger (React button / reaction chip) that opened the
   // floating reaction popover, so it can be anchored above that element.
   const [reactionAnchorRect, setReactionAnchorRect] = useState<DOMRect | null>(null);
@@ -1643,6 +1656,7 @@ export const MessageList = memo(function MessageList({
     return () => {
       window.clearTimeout(highlightTimeoutRef.current);
       window.clearTimeout(expandedTimeTimeoutRef.current);
+      window.clearTimeout(copiedTimeoutRef.current);
       window.clearTimeout(userScrollClearRef.current);
       window.clearTimeout(scrollSettleTimeoutRef.current);
 
@@ -1942,11 +1956,13 @@ export const MessageList = memo(function MessageList({
             // the ordinary Edit/Delete buttons silently supersede that record.
             const canEditOrDelete = canRevise && canReviseMessageThread(thread, selfAddress) && !pendingRevision;
             const canReact = canRevise && hasLoadedMessageThreadRoot(thread);
+            const canCopy = decoded.kind === 'text' && decoded.body.trim().length > 0;
             const hasPublicResourceActions =
               hasImagePreviews || hasMediaActions || hasDocumentViewerActions || hasDocumentSaveActions;
             const actionButtons =
               canReply ||
               canReact ||
+              canCopy ||
               hasImagePreviews ||
               hasMediaActions ||
               hasDocumentViewerActions ||
@@ -2000,6 +2016,15 @@ export const MessageList = memo(function MessageList({
                   {canReply ? (
                     <button onClick={() => onReply(original)} type="button">
                       {t('button.reply')}
+                    </button>
+                  ) : null}
+                  {canCopy ? (
+                    <button
+                      onClick={() => void copyMessageText(threadKey, decoded.body)}
+                      title={t('action.copyMessage')}
+                      type="button"
+                    >
+                      {copiedThreadKey === threadKey ? t('button.copied') : t('button.copy')}
                     </button>
                   ) : null}
                   {canReact ? (

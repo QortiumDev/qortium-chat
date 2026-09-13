@@ -11,6 +11,7 @@ import {
   getMessageQdnResources,
   getMessageSegments,
   getMessageTextParts,
+  parseQortalPollEmbed,
   getQortalHubImageResources,
   MessageResourceCards,
   openAppLinkInHomeTab,
@@ -55,6 +56,21 @@ describe('message link helpers', () => {
       { address: 'core://', kind: 'app-link', text: 'core://' },
       { kind: 'text', text: ' now' },
     ]);
+  });
+
+  it("labels Hub poll embeds as copy-only poll parts (G9)", () => {
+    const link = 'qortal://use-embed/POLL?name=weekly-vote&ref=abc123';
+
+    expect(getMessageTextParts(`Vote here ${link} please`)).toEqual([
+      { kind: 'text', text: 'Vote here ' },
+      { kind: 'poll-embed', name: 'weekly-vote', text: link, url: link },
+      { kind: 'text', text: ' please' },
+    ]);
+    expect(parseQortalPollEmbed('qortal://use-embed/POLL?ref=abc123')).toBeNull();
+    expect(parseQortalPollEmbed('qortal://use-embed/POLL?name=..')).toBeNull();
+    expect(parseQortalPollEmbed(`qortal://use-embed/POLL?name=${'x'.repeat(65)}`)).toBeNull();
+    // Other embed types stay ordinary app links (parsed elsewhere).
+    expect(getMessageTextParts('qortal://use-embed/IMAGE?name=a&service=IMAGE')[0]?.kind).toBe('app-link');
   });
 
   it('splits http and https web links as copyable parts', () => {

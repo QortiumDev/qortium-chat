@@ -50,6 +50,14 @@ export type MessageTextPart =
       kind: 'web-link';
       text: string;
       url: string;
+    }
+  | {
+      // Hub's poll embed (qortal://use-embed/POLL?name=…&ref=…). Chat has no
+      // poll bridge, so it renders as a labelled copy-only link (G9).
+      kind: 'poll-embed';
+      name: string;
+      text: string;
+      url: string;
     };
 
 type QdnImageService = 'GIF_REPOSITORY' | 'IMAGE' | 'QCHAT_IMAGE' | 'THUMBNAIL';
@@ -259,6 +267,29 @@ function parseQdnResource(qdnUrl: string, conversationNetwork: ChatNetwork): Qdn
 // buildQdnResourceShareLink. POLL embeds carry no QDN coordinate and parse to
 // null. The embed TYPE (IMAGE/VIDEO/ATTACHMENT) is Hub's renderer hint; the
 // QDN coordinate lives entirely in the query's service/name/identifier.
+// Hub's poll embed carries the poll name (and a `ref` message signature)
+// with Hub's no-decode query grammar. Returns the name, or null when the
+// address is not a well-formed poll embed.
+export function parseQortalPollEmbed(address: string): string | null {
+  const match = /^qortal:\/\/use-embed\/POLL\?(.*)$/i.exec(address);
+
+  if (!match) {
+    return null;
+  }
+
+  for (const pair of match[1].split('&')) {
+    const separator = pair.indexOf('=');
+
+    if (separator > 0 && pair.slice(0, separator).trim() === 'name') {
+      const name = pair.slice(separator + 1).trim();
+
+      return name && name.length <= 64 && !isDotSegment(name) && !/[/\\\u0000-\u001f]/.test(name) ? name : null;
+    }
+  }
+
+  return null;
+}
+
 function parseQortalHubEmbed(qdnUrl: string, parts: string[], queryString: string): QdnResourceBase<string> | null {
   const embedType = (parts[0] ?? '').trim().toUpperCase();
 
@@ -316,7 +347,11 @@ function getHubEmbedType(service: string): 'ATTACHMENT' | 'IMAGE' | 'VIDEO' {
     return 'IMAGE';
   }
 
-  return service === 'VIDEO' ? 'VIDEO' : 'ATTACHMENT';
+  // Hub's `VIDEO` embed is its media player: it fetches the link's own
+  // `service` and plays it in a <video> element, which handles audio too.
+  // Sending AUDIO/PODCAST/VOICE as plain ATTACHMENT embeds (pre-2.0.18) gave
+  // Hub readers a download card instead of a player (parity finding G9).
+  return isMediaQdnService(service) ? 'VIDEO' : 'ATTACHMENT';
 }
 
 // Builds the link Chat inserts for an existing/just-published QDN resource
@@ -432,8 +467,12 @@ export function getMessageTextParts(text: string): MessageTextPart[] {
       appendText(text.slice(previousIndex, matchIndex));
     }
 
+    const pollName = parseQortalPollEmbed(address);
+
     if (WEB_LINK_SCHEME.test(address)) {
       parts.push({ kind: 'web-link', text: address, url: address });
+    } else if (pollName) {
+      parts.push({ kind: 'poll-embed', name: pollName, text: address, url: address });
     } else {
       parts.push({ address, kind: 'app-link', text: address });
     }
@@ -1351,6 +1390,7 @@ function renderTextPart(
   key: string,
   copiedLabel: string,
   copyLabel: string,
+  pollLabel: string,
   conversationNetwork: ChatNetwork,
   canOpenQortalAppLinks: boolean,
 ): ReactNode {
@@ -1366,6 +1406,19 @@ function renderTextPart(
         copyLabel={copyLabel}
         key={key}
         text={part.text}
+        url={part.url}
+      />
+    );
+  }
+
+  if (part.kind === 'poll-embed') {
+    return (
+      <CopyOnlyLink
+        className="message__app-link message__app-link--copy-only message__poll-embed"
+        copiedLabel={copiedLabel}
+        copyLabel={copyLabel}
+        key={key}
+        text={`${pollLabel}: ${part.name}`}
         url={part.url}
       />
     );
@@ -1416,6 +1469,7 @@ export function renderMessageTextWithAppLinks(
 ): ReactNode {
   const copiedLabel = translate ? translate('button.copied') : 'Copied';
   const copyLabel = translate ? translate('button.copy') : 'Copy';
+  const pollLabel = translate ? translate('label.pollEmbed') : 'Poll';
 
   return getMessageSegments(text).map((segment, segmentIndex) => {
     if (segment.kind === 'code') {
@@ -1432,6 +1486,7 @@ export function renderMessageTextWithAppLinks(
         `${segmentIndex}-${partIndex}`,
         copiedLabel,
         copyLabel,
+        pollLabel,
         conversationNetwork,
         options.canOpenQortalAppLinks === true,
       ),
