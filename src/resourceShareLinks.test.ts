@@ -16,10 +16,20 @@ describe('buildQdnResourceShareLink', () => {
     expect(buildQdnResourceShareLink('qortal', { identifier: 'v1', name: 'bob', service: 'VIDEO' })).toBe(
       'qortal://use-embed/VIDEO?name=bob&service=VIDEO&identifier=v1',
     );
-    // Non-image/video services embed as ATTACHMENT.
+    // Non-image/media services embed as ATTACHMENT.
     expect(buildQdnResourceShareLink('qortal', { identifier: 'f1', name: 'bob', service: 'DOCUMENT' })).toBe(
       'qortal://use-embed/ATTACHMENT?name=bob&service=DOCUMENT&identifier=f1',
     );
+  });
+
+  it("maps audio services onto Hub's VIDEO embed so Hub readers get a player (G9)", () => {
+    // Hub's VIDEO embed fetches the link's own `service`, so AUDIO rides it
+    // unchanged; only the embed type changes from the pre-2.0.18 ATTACHMENT.
+    for (const service of ['AUDIO', 'PODCAST', 'VOICE'] as const) {
+      expect(buildQdnResourceShareLink('qortal', { identifier: 'a1', name: 'bob', service })).toBe(
+        `qortal://use-embed/VIDEO?name=bob&service=${service}&identifier=a1`,
+      );
+    }
   });
 
   it('falls back to the plain Qortal link form when a value would break Hub parsing', () => {
