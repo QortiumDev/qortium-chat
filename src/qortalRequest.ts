@@ -399,7 +399,15 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
         throw new Error('Qortal chat messages require text.');
       }
 
-      const envelope = buildQortalHubGroupChatPayload(normalizeQortalOutgoingMessage(request.message));
+      // `qortalEnvelope: true` is Chat's own marker (coreApi.ts): `message` is
+      // already a complete Hub-v3 envelope — the edit/delete/reaction
+      // revision payloads on the generic-send fallback — so it must not be
+      // wrapped as plain text again. The marker never reaches the bridge.
+      const { qortalEnvelope, ...bridgeRequestFields } = request;
+      const envelope =
+        qortalEnvelope === true
+          ? request.message
+          : buildQortalHubGroupChatPayload(normalizeQortalOutgoingMessage(request.message));
 
       // Qortal Hub (1.0.1 → 3.0.3, `src/qortal/get.ts sendChatMessage`) wraps
       // whatever an app passes as `message` into ITS OWN Tiptap document
@@ -413,12 +421,12 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
       // envelope in `message` and knows no `fullMessageObject`, so the shape
       // is chosen by the shell label the WHICH_UI probe recorded.
       if (isQortalHubUiLabel(dedicatedQortalUi)) {
-        const { message: _message, ...rest } = request;
+        const { message: _message, ...rest } = bridgeRequestFields;
 
         return bridgeRequest<T>({ ...rest, fullMessageObject: envelope });
       }
 
-      return bridgeRequest<T>({ ...request, message: envelope });
+      return bridgeRequest<T>({ ...bridgeRequestFields, message: envelope });
     }
 
     return requestDedicatedQortal<T>(bridgeRequest, request);
