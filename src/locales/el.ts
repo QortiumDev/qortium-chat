@@ -331,6 +331,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Νέα άμεση συνομιλία',
   'button.opening': 'Άνοιγμα',
   'status.direct.nameNotFound': 'Δεν βρέθηκε λογαριασμός με αυτό το όνομα.',
+  'status.direct.selfAddress': 'Δεν μπορείτε να ανοίξετε άμεση συνομιλία με τον δικό σας λογαριασμό.',
   'status.loadingError.nameLookup': 'Αδυναμία αναζήτησης αυτού του ονόματος.',
   'label.unread': 'Μη αναγνωσμένα μηνύματα',
   'label.newMessages': 'Νέα μηνύματα',

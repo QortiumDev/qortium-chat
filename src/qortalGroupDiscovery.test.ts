@@ -51,7 +51,7 @@ describe('Qortal catalogue search', () => {
 });
 
 describe('Qortal gateway active groups', () => {
-  it('isolates failed metadata and message candidates and filters closed or hidden-only groups', async () => {
+  it('isolates failed metadata; keeps closed, reaction-only and unreadable groups listed after the active ones', async () => {
     const reaction = message(4, 400, buildReactionMessageText('👍', true));
     const discoveries = await discoverQortalGatewayGroups({
       concurrency: 2,
@@ -67,7 +67,11 @@ describe('Qortal gateway active groups', () => {
       stats: [1, 2, 3, 4, 5, 6].map((groupId) => ({ groupId })),
     });
 
-    expect(discoveries.map(({ group: candidate }) => candidate.groupId)).toEqual([6, 1]);
+    // 6 and 1 by activity; then the closed (3), reaction-only (4) and
+    // unreadable (5) groups by name, without a preview. Group 2 (no metadata)
+    // cannot be listed at all.
+    expect(discoveries.map(({ group: candidate }) => candidate.groupId)).toEqual([6, 1, 3, 4, 5]);
+    expect(discoveries.slice(2).every(({ latestMessage }) => latestMessage === null)).toBe(true);
   });
 
   it('removes expired groups on refresh while retaining the selected public group', () => {

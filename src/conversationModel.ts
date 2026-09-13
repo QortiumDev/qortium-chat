@@ -31,9 +31,11 @@ export type DirectConversationSummary = ConversationSummaryBase & {
 export type ConversationSummary = GroupConversationSummary | DirectConversationSummary;
 
 export type PublicGroupDiscovery = {
+  /** Timestamp of the newest visible message; 0 when the group has none in the node's retention. */
   activityAt: number;
   group: GroupData;
-  latestMessage: ChatMessage;
+  /** Null for a quiet group, and always null for a closed one (its history is encrypted). */
+  latestMessage: ChatMessage | null;
 };
 
 export const DEFAULT_DISCOVERY_CANDIDATE_LIMIT = 12;
@@ -173,12 +175,17 @@ export async function qualifyPublicGroupDiscoveries({
   const limit = normalizePositiveLimit(candidateLimit, DEFAULT_DISCOVERY_CANDIDATE_LIMIT);
   const candidates: GroupData[] = [];
 
+  // Closed groups are listed too (their history is not read — it is encrypted
+  // for non-members — but a user has to be able to find one to request to
+  // join it), and a group with no message inside the node's chat retention is
+  // still a real group: Core keeps roughly a day of chat, so filtering on
+  // "has a recent message" made every quiet group undiscoverable (live V0
+  // finding B5, 2026-09-13).
   for (const group of groups) {
     if (
       candidates.length >= limit ||
       !Number.isSafeInteger(group.groupId) ||
       group.groupId <= 0 ||
-      group.isOpen !== true ||
       memberGroupIds.has(group.groupId) ||
       seenGroupIds.has(group.groupId)
     ) {
@@ -205,26 +212,38 @@ export async function qualifyPublicGroupDiscoveries({
       const index = nextIndex++;
       const group = candidates[index];
 
+      if (group.isOpen !== true) {
+        results[index] = { activityAt: 0, group, latestMessage: null };
+        continue;
+      }
+
       try {
         const latestMessage = latestVisibleMessage(await loadMessages(group));
 
-        if (latestMessage) {
-          results[index] = {
-            activityAt: latestMessage.timestamp,
-            group,
-            latestMessage,
-          };
-        }
+        results[index] = {
+          activityAt: latestMessage?.timestamp ?? 0,
+          group,
+          latestMessage,
+        };
       } catch {
         // A public node may withhold one group's read or time out. Discovery is
-        // best-effort and must not turn that candidate into an app-wide error.
+        // best-effort: the group stays listed without a preview rather than
+        // vanishing, and must not turn into an app-wide error.
+        results[index] = { activityAt: 0, group, latestMessage: null };
       }
     }
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
+  // Active groups first (newest activity), then the quiet and closed ones by
+  // name so the order is stable across sweeps.
   return results
     .filter((result): result is PublicGroupDiscovery => result !== null)
-    .sort((first, second) => second.activityAt - first.activityAt);
+    .sort(
+      (first, second) =>
+        second.activityAt - first.activityAt ||
+        (first.group.groupName ?? '').localeCompare(second.group.groupName ?? '') ||
+        first.group.groupId - second.group.groupId,
+    );
 }

@@ -331,6 +331,7 @@ export const STRINGS = {
   'label.newDirectChat': 'नई प्रत्यक्ष चैट',
   'button.opening': 'खोला जा रहा है',
   'status.direct.nameNotFound': 'उस नाम से कोई खाता नहीं मिला।',
+  'status.direct.selfAddress': 'आप अपने ही खाते के साथ सीधी चैट नहीं खोल सकते।',
   'status.loadingError.nameLookup': 'उस नाम की खोज नहीं कर सका।',
   'label.unread': 'अपठित संदेश',
   'label.newMessages': 'नए संदेश',

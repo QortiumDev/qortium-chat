@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Új közvetlen csevegés',
   'button.opening': 'Megnyitás',
   'status.direct.nameNotFound': 'Nem található fiók ezzel a névvel.',
+  'status.direct.selfAddress': 'Nem nyithatsz közvetlen csevegést a saját fiókoddal.',
   'status.loadingError.nameLookup': 'Nem sikerült lekérni ezt a nevet.',
   'label.unread': 'Olvasatlan üzenetek',
   'label.newMessages': 'Új üzenetek',

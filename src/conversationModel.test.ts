@@ -108,7 +108,7 @@ describe('conversation model', () => {
 });
 
 describe('public group discovery qualification', () => {
-  it('keeps only unjoined open groups with a visible message and sorts by activity', async () => {
+  it('lists every unjoined group — active first, then quiet and closed by name — never reading a closed group', async () => {
     const groups = [
       group(1, 'Joined'),
       group(2, 'Closed', { isOpen: false }),
@@ -123,17 +123,25 @@ describe('public group discovery qualification', () => {
       [5, [message(300), message(200)]],
     ]);
 
+    const read: number[] = [];
     const discoveries = await qualifyPublicGroupDiscoveries({
       groups,
-      loadMessages: async (candidate) => messages.get(candidate.groupId) ?? [],
+      loadMessages: async (candidate) => {
+        read.push(candidate.groupId);
+        return messages.get(candidate.groupId) ?? [];
+      },
       memberGroupIds: new Set([1]),
     });
 
-    expect(discoveries.map((item) => item.group.groupId)).toEqual([5, 4]);
-    expect(discoveries.map((item) => item.activityAt)).toEqual([300, 100]);
+    // 5 and 4 by activity; then "Closed" (2) and "Empty" (3) alphabetically
+    // with no activity. Joined (1) and General (0) never appear.
+    expect(discoveries.map((item) => item.group.groupId)).toEqual([5, 4, 2, 3]);
+    expect(discoveries.map((item) => item.activityAt)).toEqual([300, 100, 0, 0]);
+    expect(discoveries.map((item) => item.latestMessage?.timestamp ?? null)).toEqual([300, 100, null, null]);
+    expect(read).not.toContain(2);
   });
 
-  it('ignores reaction-only groups and isolates candidate failures', async () => {
+  it('treats reaction-only groups as quiet and keeps a group whose read failed, without a preview', async () => {
     const reaction = message(500, buildReactionMessageText('👍', true));
 
     const discoveries = await qualifyPublicGroupDiscoveries({
@@ -145,7 +153,11 @@ describe('public group discovery qualification', () => {
       memberGroupIds: new Set(),
     });
 
-    expect(discoveries.map((item) => item.group.groupId)).toEqual([5]);
+    expect(discoveries.map((item) => [item.group.groupId, item.latestMessage === null])).toEqual([
+      [5, false],
+      [3, true],
+      [4, true],
+    ]);
   });
 
   it('deduplicates candidates and never probes beyond the configured cap', async () => {

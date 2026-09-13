@@ -368,6 +368,8 @@ const emptyJournalEntries: PendingBridgeTransactionEntry[] = [];
 // fills it; when one does, the merge skips rather than guessing (see
 // mergeActivityTimestamp's allowTombstone).
 const ACTIVITY_SWEEP_MESSAGE_LIMIT = 10;
+// B6: how often the joined-groups list is re-read to pick up membership changes made elsewhere.
+const MEMBERSHIP_SWEEP_INTERVAL_MS = 60000;
 const QORTAL_GATEWAY_GROUP_REFRESH_MS = 60000;
 
 // Websocket reconnects back off 5s → 60s while the node stays unreachable
@@ -2266,7 +2268,8 @@ export default function App() {
             group,
             membership: 'preview',
             network: 'qortium',
-            preview: getMessageSnippet(latestMessage, t, 80),
+            // A quiet or closed discovery has no message to preview.
+            preview: latestMessage ? getMessageSnippet(latestMessage, t, 80) : null,
             title: getGroupTitle(group, t),
           }),
         ),
@@ -3729,16 +3732,22 @@ export default function App() {
         phase: 'ready',
         value: {
           direct: [],
-          groups: discoveries.map(({ group, latestMessage }) => ({
-            data: latestMessage.data,
-            encoding: latestMessage.encoding,
-            groupId: group.groupId,
-            groupName: group.groupName,
-            sender: latestMessage.sender,
-            senderName: latestMessage.senderName ?? undefined,
-            signature: latestMessage.signature,
-            timestamp: latestMessage.timestamp,
-          })),
+          // Only discoveries with a visible message become active-chat rows;
+          // quiet/closed groups are listed through the catalogue instead.
+          groups: discoveries.flatMap(({ group, latestMessage }) =>
+            latestMessage
+              ? [{
+                  data: latestMessage.data,
+                  encoding: latestMessage.encoding,
+                  groupId: group.groupId,
+                  groupName: group.groupName,
+                  sender: latestMessage.sender,
+                  senderName: latestMessage.senderName ?? undefined,
+                  signature: latestMessage.signature,
+                  timestamp: latestMessage.timestamp,
+                }]
+              : [],
+          ),
         },
       });
     } catch (error) {
@@ -7542,6 +7551,13 @@ export default function App() {
       }
     }
 
+    // O2 (2026-09-13): a direct chat with the sender's own address is not a
+    // conversation — Home cannot address it and the row only confuses the list.
+    if (account && address === account.address) {
+      setDirectLookupError(t('status.direct.selfAddress'));
+      return;
+    }
+
     setDirectAddress('');
     setDirectSearchOpen(false);
     const direct: ActiveDirectChat = name ? { address, name } : { address };
@@ -7591,6 +7607,11 @@ export default function App() {
       } finally {
         setQortalDirectLookupPending(false);
       }
+    }
+
+    if (qortalAccount && address === qortalAccount.address) {
+      setQortalDirectLookupError(t('status.direct.selfAddress'));
+      return;
     }
 
     setQortalDirectAddress('');
@@ -9101,6 +9122,98 @@ export default function App() {
       window.clearInterval(interval);
     };
   }, [actionsKey, canReadPrivateGroupChat, groups.value, isAccountUnlocked, joinedIds, memberGroups.phase]);
+
+  // Membership sweep (live V0 finding B6, 2026-09-13): the joined-groups list
+  // was loaded only at connect and after Chat's own join/leave, so a group
+  // created in another app, a closed-group request an admin approved later, an
+  // invite or a kick never showed up until the tab reloaded. Re-read the
+  // account's groups on a slow cadence while the tab is visible and reload
+  // that network's account data only when the set of group ids changed.
+  const memberGroupsRef = useRef(memberGroups.value);
+  memberGroupsRef.current = memberGroups.value;
+  const qortalMemberGroupsRef = useRef(qortalMemberGroups.value);
+  qortalMemberGroupsRef.current = qortalMemberGroups.value;
+  const accountRef = useRef(account);
+  accountRef.current = account;
+  const qortalAccountRef = useRef(qortalAccount);
+  qortalAccountRef.current = qortalAccount;
+  const membershipSweepActionsRef = useRef(avatarActionsByNetwork);
+  membershipSweepActionsRef.current = avatarActionsByNetwork;
+  const qortalAccountErrorRef = useRef(qortalAccountError);
+  qortalAccountErrorRef.current = qortalAccountError;
+
+  useEffect(() => {
+    if (!isAccountUnlocked && !qortalAccount && !qortalAccountError) {
+      return;
+    }
+
+    let disposed = false;
+    let inFlight = false;
+
+    const sameGroupIds = (current: readonly GroupData[], next: readonly GroupData[]) => {
+      if (current.length !== next.length) return false;
+      const ids = new Set(current.map((group) => group.groupId));
+      return next.every((group) => ids.has(group.groupId));
+    };
+
+    const sweep = async () => {
+      if (inFlight || disposed) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      inFlight = true;
+
+      try {
+        const qortiumAccount = accountRef.current;
+
+        if (qortiumAccount && !accountRefreshPendingRef.current) {
+          const next = await getMemberGroups('qortium', qortiumAccount.address, membershipSweepActionsRef.current.qortium);
+
+          if (!disposed && accountRef.current?.address === qortiumAccount.address && !sameGroupIds(memberGroupsRef.current, next)) {
+            await loadAccountData(qortiumAccount, membershipSweepActionsRef.current.qortium, {
+              isCurrent: () => !disposed && accountRef.current?.address === qortiumAccount.address,
+            });
+          }
+        }
+
+        const currentQortalAccount = qortalAccountRef.current;
+
+        // B9: the Qortal identity is resolved once when the app connects. If the
+        // Qortal route was offline at that moment (a node that comes online
+        // later, a custom node confirmed afterwards) the section stayed
+        // read-only until a reload. Retry the account resolution while the
+        // bridge is available and the last attempt failed.
+        if (
+          !currentQortalAccount &&
+          qortalAvailableRef.current &&
+          qortalAccountErrorRef.current &&
+          !qortalAccountRefreshPendingRef.current
+        ) {
+          await refreshQortalSelectedAccount(membershipSweepActionsRef.current.qortal);
+        }
+
+        if (currentQortalAccount && !qortalAccountRefreshPendingRef.current) {
+          const next = await getMemberGroups('qortal', currentQortalAccount.address, membershipSweepActionsRef.current.qortal);
+
+          if (!disposed && qortalAccountRef.current?.address === currentQortalAccount.address && !sameGroupIds(qortalMemberGroupsRef.current, next)) {
+            await loadQortalMemberGroups(currentQortalAccount.address, membershipSweepActionsRef.current.qortal, {
+              isCurrent: () => !disposed && qortalAccountRef.current?.address === currentQortalAccount.address,
+            });
+          }
+        }
+      } catch {
+        // Best effort: a failed sweep changes nothing and the next tick retries.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const interval = window.setInterval(() => void sweep(), MEMBERSHIP_SWEEP_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads live state through refs; re-arms on account presence only
+  }, [isAccountUnlocked, !!qortalAccount, !!qortalAccountError]);
 
   useEffect(() => {
     const directs = activeChats.value.direct ?? [];
@@ -11373,6 +11486,7 @@ export default function App() {
             accountLockedLabel={accountLockedLabel}
             accountRequiredLabel={accountRequiredLabel}
             approvePendingJoiner={approvePendingJoiner}
+            approveError={membersOpen && writeError ? writeError : null}
             avatarProfiles={selectedAvatarProfiles}
             canApproveGroupJoinRequests={
               isSelectedQortalGroupForAdminRequests ? canApproveQortalGroupJoinRequests : canApproveGroupJoinRequests

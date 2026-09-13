@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Uus otsesõnumivestlus',
   'button.opening': 'Avatakse',
   'status.direct.nameNotFound': 'Selle nimega kontot ei leitud.',
+  'status.direct.selfAddress': 'Sa ei saa avada otsevestlust oma kontoga.',
   'status.loadingError.nameLookup': 'Selle nime otsimine ebaõnnestus.',
   'label.unread': 'Lugemata sõnumid',
   'label.newMessages': 'Uued sõnumid',

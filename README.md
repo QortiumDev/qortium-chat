@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.16, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.17, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -167,8 +167,9 @@ Qortal support currently covers public groups end to end: joined-group
 history, messages, replies, edits, deletes, and emoji reactions (through the
 host's exact revision actions when advertised, otherwise the interoperable
 `chatReference` envelope), plus join/leave when the host advertises those
-actions, bounded discovery, and read-only previews for qualifying active open
-groups. Public-group attachments work on every host that can publish to QDN: through
+actions, bounded discovery that lists every unjoined group (active ones first
+with a preview; quiet and closed ones by name — a closed group's Join sends a
+join request), and read-only previews of open groups. Public-group attachments work on every host that can publish to QDN: through
 Home's native picker where it is offered (Home 1.3+, Home 2), otherwise by
 reading the file in the app and publishing it inline (older Home 1.x, Qortal Hub);
 pasting or dropping a file into the composer stages it wherever the host

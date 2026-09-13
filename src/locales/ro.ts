@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Conversație directă nouă',
   'button.opening': 'Se deschide',
   'status.direct.nameNotFound': 'Nu a fost găsit niciun cont cu acest nume.',
+  'status.direct.selfAddress': 'Nu poți deschide un chat direct cu propriul tău cont.',
   'status.loadingError.nameLookup': 'Nu se poate căuta acel nume.',
   'label.unread': 'Mesaje necitite',
   'label.newMessages': 'Mesaje noi',

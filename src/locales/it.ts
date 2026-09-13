@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Nuova chat diretta',
   'button.opening': 'Apertura',
   'status.direct.nameNotFound': 'Nessun account trovato con quel nome.',
+  'status.direct.selfAddress': 'Non puoi aprire una chat diretta con il tuo stesso account.',
   'status.loadingError.nameLookup': 'Impossibile cercare quel nome.',
   'label.unread': 'Messaggi non letti',
   'label.newMessages': 'Nuovi messaggi',

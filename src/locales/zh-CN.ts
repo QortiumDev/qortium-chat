@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': '新建私聊',
   'button.opening': '打开中',
   'status.direct.nameNotFound': '未找到该名称的账号。',
+  'status.direct.selfAddress': '无法与自己的账号开启私聊。',
   'status.loadingError.nameLookup': '无法查找该名称。',
   'label.unread': '未读消息',
   'label.newMessages': '新消息',

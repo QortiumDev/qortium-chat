@@ -337,6 +337,7 @@ export const EN_STRINGS = {
   'button.opening': 'Opening',
   'button.discardLocal': 'Discard local record',
   'status.direct.nameNotFound': 'No account found with that name.',
+  'status.direct.selfAddress': 'You cannot open a direct chat with your own account.',
   'status.loadingError.nameLookup': 'Unable to look up that name.',
   'label.unread': 'Unread messages',
   'label.newMessages': 'New messages',

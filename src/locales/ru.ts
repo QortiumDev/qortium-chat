@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Новый личный чат',
   'button.opening': 'Открывается',
   'status.direct.nameNotFound': 'Счет не найден с таким именем.',
+  'status.direct.selfAddress': 'Нельзя открыть личный чат с собственным аккаунтом.',
   'status.loadingError.nameLookup': 'Не удалось найти это имя.',
   'label.unread': 'Непрочитанные сообщения',
   'label.newMessages': 'Новые сообщения',
