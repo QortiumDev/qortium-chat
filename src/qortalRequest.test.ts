@@ -340,6 +340,30 @@ describe('qortalRequest bridge adapter', () => {
     expect(typeof revision.fullMessageObject).toBe('string');
   });
 
+  it('passes a pre-built revision envelope through untouched and never forwards the qortalEnvelope marker', async () => {
+    const reaction = '{"content":"👍","contentState":true,"message":"","specialId":"s1","type":"reaction"}';
+    const qortalRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce('QORTIUM_HOME_ELECTRON')
+      .mockResolvedValueOnce({ signature: 'home-sig' })
+      .mockResolvedValueOnce('HUB_ELECTRON')
+      .mockResolvedValueOnce({ signature: 'hub-sig' });
+
+    vi.stubGlobal('window', { qdnRequest: vi.fn(), qortalRequest: qortalRequestMock });
+
+    await qortalRequest({ action: 'WHICH_UI' });
+    await qortalRequest({ action: 'SEND_CHAT_MESSAGE', chatReference: 'orig', message: reaction, qortalEnvelope: true, txGroupId: 12 });
+    const home = qortalRequestMock.mock.calls[1]?.[0] as Record<string, unknown>;
+
+    expect(home).toEqual({ action: 'SEND_CHAT_MESSAGE', chatReference: 'orig', message: reaction, txGroupId: 12 });
+
+    await qortalRequest({ action: 'WHICH_UI' });
+    await qortalRequest({ action: 'SEND_CHAT_MESSAGE', chatReference: 'orig', message: reaction, qortalEnvelope: true, txGroupId: 12 });
+    const hub = qortalRequestMock.mock.calls[3]?.[0] as Record<string, unknown>;
+
+    expect(hub).toEqual({ action: 'SEND_CHAT_MESSAGE', chatReference: 'orig', fullMessageObject: reaction, txGroupId: 12 });
+  });
+
   it('keeps `message` for Home 2 after WHICH_UI names the Home shell', async () => {
     const qortalRequestMock = vi
       .fn()

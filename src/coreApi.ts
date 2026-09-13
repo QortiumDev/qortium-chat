@@ -1836,6 +1836,7 @@ export async function sendChatMessage(
   groupId: number | string,
   message: string,
   chatReference?: string,
+  options: { qortalEnvelope?: boolean } = {},
 ) {
   const txGroupId = normalizeChatGroupId(groupId);
 
@@ -1851,6 +1852,10 @@ export async function sendChatMessage(
     groupId: txGroupId,
     message,
     txGroupId,
+    // Qortal only: `message` is already a finished Hub-v3 revision envelope
+    // (edit/delete/reaction on the generic fallback). The qortalRequest
+    // adapter honours and strips this marker; it is never sent to a host.
+    ...(network === 'qortal' && options.qortalEnvelope ? { qortalEnvelope: true } : {}),
   };
 
   return normalizeChatSendResult(
@@ -1899,7 +1904,19 @@ export async function sendChatEdit(
     );
   }
 
-  return sendChatMessage(network, txGroupId, message, chatReference);
+  // Generic fallback (no exact SEND_CHAT_EDIT — Qortal Hub): the revision must
+  // still be the Hub-v3 edit envelope (`type:'edit'`, `isEdited:true`), never
+  // plain text that the adapter would wrap as a brand-new message. Found live
+  // on Hub 3.0.3 (2026-09-13).
+  return network === 'qortal'
+    ? sendChatMessage(
+        network,
+        txGroupId,
+        buildQortalHubGroupChatEditPayload(normalizeQortalOutgoingMessage(message)),
+        chatReference,
+        { qortalEnvelope: true },
+      )
+    : sendChatMessage(network, txGroupId, message, chatReference);
 }
 
 // `repliedTo` (the reply-thread target the deleted message itself was
@@ -1935,7 +1952,9 @@ export async function sendChatDelete(
     );
   }
 
-  return sendChatMessage(network, txGroupId, buildDeletedMessageText(repliedTo), chatReference);
+  return network === 'qortal'
+    ? sendChatMessage(network, txGroupId, buildQortalHubGroupChatDeletePayload(), chatReference, { qortalEnvelope: true })
+    : sendChatMessage(network, txGroupId, buildDeletedMessageText(repliedTo), chatReference);
 }
 
 export async function sendChatReaction(
@@ -1969,7 +1988,15 @@ export async function sendChatReaction(
     );
   }
 
-  return sendChatMessage(network, txGroupId, qortiumReactionMessage, chatReference);
+  return network === 'qortal'
+    ? sendChatMessage(
+        network,
+        txGroupId,
+        buildQortalHubGroupChatReactionPayload(content, contentState),
+        chatReference,
+        { qortalEnvelope: true },
+      )
+    : sendChatMessage(network, txGroupId, qortiumReactionMessage, chatReference);
 }
 
 // Qortal private-group plaintext cap (review/schemas-private-group-actions.md

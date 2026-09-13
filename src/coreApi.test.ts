@@ -1531,6 +1531,41 @@ describe('Core API path builders', () => {
         });
       });
 
+      it('keeps Qortal revisions as Hub-v3 envelopes on the generic fallback (no exact actions — Qortal Hub)', async () => {
+        // Hub 3.0.3 live finding (2026-09-13): without SEND_CHAT_EDIT/DELETE/
+        // REACTION the fallback used to hand plain text / the Qortium reaction
+        // JSON to the adapter, which wrapped it as a brand-new v3 message.
+        qortalRequestMock
+          .mockResolvedValueOnce({ signature: 'fb-edit-sig', timestamp: 1 })
+          .mockResolvedValueOnce({ signature: 'fb-delete-sig', timestamp: 2 })
+          .mockResolvedValueOnce({ signature: 'fb-reaction-sig', timestamp: 3 });
+
+        await sendChatEdit('qortal', 7, 'fixed on hub', 'orig-sig', []);
+        await sendChatDelete('qortal', 7, 'orig-sig', []);
+        await sendChatReaction('qortal', 7, 'orig-sig', '👍', true, []);
+
+        const calls = qortalRequestMock.mock.calls.map((call) => call[0] as Record<string, unknown>);
+
+        expect(calls).toHaveLength(3);
+        for (const call of calls) {
+          expect(call.action).toBe('SEND_CHAT_MESSAGE');
+          expect(call.chatReference).toBe('orig-sig');
+          expect(call.txGroupId).toBe(7);
+          // The adapter (qortalRequest.ts, mocked here) strips this marker and
+          // skips its own plain-text wrapping when it is set.
+          expect(call.qortalEnvelope).toBe(true);
+        }
+
+        expect(JSON.parse(String(calls[0].message))).toMatchObject({
+          isEdited: true,
+          messageText: { content: [{ content: [{ text: 'fixed on hub', type: 'text' }], type: 'paragraph' }], type: 'doc' },
+          type: 'edit',
+          version: 3,
+        });
+        expect(JSON.parse(String(calls[1].message))).toMatchObject({ isEdited: true, messageText: '<p></p>', type: 'edit', version: 3 });
+        expect(JSON.parse(String(calls[2].message))).toMatchObject({ content: '👍', contentState: true, type: 'reaction' });
+      });
+
       it('builds the exact SEND_CHAT_EDIT Hub v3 envelope for Qortal with a bounded specialId', async () => {
         qortalRequestMock.mockResolvedValueOnce({ signature: 'hub-edit-sig', timestamp: 1700000000120 });
 
