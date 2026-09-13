@@ -113,6 +113,15 @@ export function isDefiniteChatMutationRejection(error: unknown): boolean {
     return true;
   }
 
+  // Home 2 refuses to open a permission prompt while the requesting app view
+  // is hidden behind another prompt or menu (`home-v2-app-bridge.ts`:
+  // "Open this app tab to review the requested permission."). Nothing has
+  // been signed or sent at that point, so the attempt is a plain rejection —
+  // not the ambiguous "outcome unknown" notice observed live on 2026-09-13.
+  if (/Open this app tab to review the requested permission/i.test(message)) {
+    return true;
+  }
+
   return !!details.code && DEFINITE_PRE_BROADCAST_CHAT_ERROR_CODES.has(details.code as BridgeErrorCode);
 }
 

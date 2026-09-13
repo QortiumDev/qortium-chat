@@ -111,6 +111,10 @@ describe('bridgeErrors', () => {
     expect(isDefiniteChatMutationRejection(
       new Error('No Qortal private-group key bundle is available to this account.'),
     )).toBe(true);
+    // Home 2 refuses to prompt while the app view is hidden — nothing signed.
+    expect(isDefiniteChatMutationRejection(
+      new Error('Open this app tab to review the requested permission.'),
+    )).toBe(true);
   });
 
   it('keeps true unknown, reconciliation, generic, and transport failures non-retryable', () => {
