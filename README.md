@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.14, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.15, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -186,8 +186,11 @@ Qortal Hub specifically, direct messages are not offered at all — Hub
 provides no way for an app to decrypt DM history — and private groups,
 private attachments, and app notifications are likewise Home-only. Chat
 always hides unsupported revision controls instead of broadcasting them as
-unrelated new messages. Reticulum/RCHAT remains a later, separate source
-family.
+unrelated new messages. On Hub, Chat hands its Hub-v3 envelope to
+`SEND_CHAT_MESSAGE` as `fullMessageObject` (Hub sends that verbatim), never
+as `message`, which Hub would wrap into a second Tiptap document; Home 2's
+`qortalRequest` global takes the envelope in `message` and validates it.
+Reticulum/RCHAT remains a later, separate source family.
 
 The working plan for completing both Qortium and Qortal CHAT capabilities is in
 [`docs/CHAT_COMPLETION_ROADMAP.md`](docs/CHAT_COMPLETION_ROADMAP.md).

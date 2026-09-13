@@ -3565,7 +3565,11 @@ export default function App() {
     !isConfirmedJoinedGroup &&
     canJoinGroup &&
     !canSubmitJoin
-      ? hasPendingJoinTransaction
+      // joinPending: the click was accepted and the JOIN_GROUP request is in
+      // flight but not yet tracked — the same "pending" story as a tracked
+      // transaction, never the "not available in this Home build" hint that
+      // showed live on 2026-09-13 (B10).
+      ? hasPendingJoinTransaction || joinPending
         ? t('button.join.transaction.pending')
         : hasPendingJoinRequest
           ? t('button.join.request.pending')
@@ -3586,7 +3590,7 @@ export default function App() {
             !isConfirmedJoinedQortalGroup &&
             canJoinQortalGroup &&
             !canSubmitQortalJoin
-          ? hasPendingQortalJoinTransaction
+          ? hasPendingQortalJoinTransaction || joinPending
             ? t('button.join.transaction.pending')
             : hasPendingQortalJoinRequest
               ? t('button.join.request.pending')

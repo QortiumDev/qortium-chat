@@ -357,6 +357,21 @@ export function hasLegacyQortalBridgeCandidate() {
   return !hasQortalHomeBridge() && hasHomeBridge();
 }
 
+// The last WHICH_UI answer from the dedicated qortalRequest bridge. Hub and
+// Home 2 need different SEND_CHAT_MESSAGE request shapes (see below), and the
+// send path has no bridge-state handle of its own, so remember the shell label
+// the moment the probe learns it.
+let dedicatedQortalUi: string | null = null;
+
+export function isQortalHubUiLabel(ui: unknown) {
+  const normalized = typeof ui === 'string' ? ui.trim().toUpperCase() : '';
+  return normalized === 'HUB_ELECTRON' || normalized === 'HUB_WEB';
+}
+
+export function resetDedicatedQortalUiForTests() {
+  dedicatedQortalUi = null;
+}
+
 export async function qortalRequest<T = unknown>(request: QortalRequestPayload): Promise<T> {
   if (!isRecord(request) || typeof request.action !== 'string') {
     throw new Error('Qortal requests must include an action.');
@@ -365,7 +380,15 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
   const bridgeRequest = getInjectedQortalRequestGlobal();
 
   if (typeof bridgeRequest === 'function') {
-    if (request.action.toUpperCase() === 'SEND_CHAT_MESSAGE') {
+    const action = request.action.toUpperCase();
+
+    if (action === 'WHICH_UI') {
+      const ui = await requestDedicatedQortal<T>(bridgeRequest, request);
+      dedicatedQortalUi = typeof ui === 'string' ? ui : null;
+      return ui;
+    }
+
+    if (action === 'SEND_CHAT_MESSAGE') {
       // A chatReference here is the generic-envelope revision fallback (edit/
       // delete/reaction routed through sendChatMessage when the exact Home 2
       // SEND_CHAT_EDIT/DELETE/REACTION action is not advertised) — no longer
@@ -376,10 +399,26 @@ export async function qortalRequest<T = unknown>(request: QortalRequestPayload):
         throw new Error('Qortal chat messages require text.');
       }
 
-      return bridgeRequest<T>({
-        ...request,
-        message: buildQortalHubGroupChatPayload(normalizeQortalOutgoingMessage(request.message)),
-      });
+      const envelope = buildQortalHubGroupChatPayload(normalizeQortalOutgoingMessage(request.message));
+
+      // Qortal Hub (1.0.1 → 3.0.3, `src/qortal/get.ts sendChatMessage`) wraps
+      // whatever an app passes as `message` into ITS OWN Tiptap document
+      // (`{messageText:{type:'doc',…text:message}, images:[], repliedTo:'',
+      // version:3}`); an app-built envelope must travel as `fullMessageObject`
+      // (alias `fullContent`), which Hub sends verbatim when it is a string.
+      // Sending the envelope as `message` double-wrapped every group message,
+      // edit, delete and reaction from Chat inside Hub from 2.0.0 to 2.0.14
+      // (readers saw the raw JSON as the body — live V0 finding B11,
+      // 2026-09-13). Home 2's qortalRequest global validates the app's
+      // envelope in `message` and knows no `fullMessageObject`, so the shape
+      // is chosen by the shell label the WHICH_UI probe recorded.
+      if (isQortalHubUiLabel(dedicatedQortalUi)) {
+        const { message: _message, ...rest } = request;
+
+        return bridgeRequest<T>({ ...rest, fullMessageObject: envelope });
+      }
+
+      return bridgeRequest<T>({ ...request, message: envelope });
     }
 
     return requestDedicatedQortal<T>(bridgeRequest, request);

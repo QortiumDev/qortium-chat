@@ -9,11 +9,13 @@ import {
   LOCAL_READ_ACTIONS,
   QORTAL_PUBLIC_READ_ACTIONS,
   qortalRequest,
+  resetDedicatedQortalUiForTests,
 } from './qortalRequest';
 
 describe('qortalRequest bridge adapter', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetDedicatedQortalUiForTests();
   });
 
   it('detects the injected Qortal bridge separately from window.qdnRequest', async () => {
@@ -292,6 +294,67 @@ describe('qortalRequest bridge adapter', () => {
 
     expect(revisionRequest.chatReference).toBe('edit-sig');
     expect(qortalRequestMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands Qortal Hub the v3 envelope as fullMessageObject, never as message (B11)', async () => {
+    // Hub's sendChatMessage wraps `message` into its own Tiptap document and
+    // sends `fullMessageObject` verbatim when it is a string. Once WHICH_UI
+    // has identified a Hub shell, every generic send (plain, and the
+    // chatReference revision fallback) must use the verbatim channel.
+    const qortalRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce('HUB_ELECTRON')
+      .mockResolvedValueOnce({ signature: 'sent-sig' })
+      .mockResolvedValueOnce({ signature: 'reaction-sig' });
+
+    vi.stubGlobal('window', { qdnRequest: vi.fn(), qortalRequest: qortalRequestMock });
+
+    await expect(qortalRequest({ action: 'WHICH_UI' })).resolves.toBe('HUB_ELECTRON');
+    await qortalRequest({ action: 'SEND_CHAT_MESSAGE', message: 'hello hub', txGroupId: 12 });
+
+    const request = qortalRequestMock.mock.calls[1]?.[0] as Record<string, unknown>;
+
+    expect(request).not.toHaveProperty('message');
+    expect(request.txGroupId).toBe(12);
+    expect(typeof request.fullMessageObject).toBe('string');
+    expect(JSON.parse(String(request.fullMessageObject))).toMatchObject({
+      images: [],
+      isEdited: false,
+      messageText: { content: [{ content: [{ text: 'hello hub', type: 'text' }], type: 'paragraph' }], type: 'doc' },
+      repliedTo: '',
+      type: '',
+      version: 3,
+    });
+
+    await qortalRequest({
+      action: 'SEND_CHAT_MESSAGE',
+      chatReference: 'target-sig',
+      message: '{"message":"","type":"reaction","content":"👍","contentState":true}',
+      txGroupId: 12,
+    });
+
+    const revision = qortalRequestMock.mock.calls[2]?.[0] as Record<string, unknown>;
+
+    expect(revision).not.toHaveProperty('message');
+    expect(revision.chatReference).toBe('target-sig');
+    expect(typeof revision.fullMessageObject).toBe('string');
+  });
+
+  it('keeps `message` for Home 2 after WHICH_UI names the Home shell', async () => {
+    const qortalRequestMock = vi
+      .fn()
+      .mockResolvedValueOnce('QORTIUM_HOME_ELECTRON')
+      .mockResolvedValueOnce({ signature: 'sent-sig' });
+
+    vi.stubGlobal('window', { qdnRequest: vi.fn(), qortalRequest: qortalRequestMock });
+
+    await qortalRequest({ action: 'WHICH_UI' });
+    await qortalRequest({ action: 'SEND_CHAT_MESSAGE', message: 'hello home', txGroupId: 12 });
+
+    const request = qortalRequestMock.mock.calls[1]?.[0] as Record<string, unknown>;
+
+    expect(request).not.toHaveProperty('fullMessageObject');
+    expect(JSON.parse(String(request.message))).toMatchObject({ version: 3 });
   });
 
   it('uses local fallback actions outside Home, distinct from GET_SELECTED_ACCOUNT', async () => {
