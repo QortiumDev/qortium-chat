@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Nouveau chat direct',
   'button.opening': 'Ouverture',
   'status.direct.nameNotFound': 'Aucun compte trouvé avec ce nom.',
+  'status.direct.selfAddress': 'Vous ne pouvez pas ouvrir une discussion directe avec votre propre compte.',
   'status.loadingError.nameLookup': 'Impossible de rechercher ce nom.',
   'label.unread': 'Messages non lus',
   'label.newMessages': 'Nouveaux messages',

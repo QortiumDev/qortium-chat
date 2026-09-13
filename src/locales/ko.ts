@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': '새 다이렉트 채팅',
   'button.opening': '열기',
   'status.direct.nameNotFound': '해당 이름의 계정을 찾을 수 없습니다.',
+  'status.direct.selfAddress': '자신의 계정과는 다이렉트 채팅을 열 수 없습니다.',
   'status.loadingError.nameLookup': '해당 이름을 조회할 수 없습니다.',
   'label.unread': '읽지 않은 메시지',
   'label.newMessages': '새 메시지',

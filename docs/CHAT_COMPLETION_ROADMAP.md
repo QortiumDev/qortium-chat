@@ -116,7 +116,9 @@ handling.
 Consume private active/history/state, send/revision, key request, resolve,
 and rotation actions per network on T1/T2; surface structured missing-key,
 recovery, membership, retention-gap, and operator-policy states without
-exposing keys. Unjoined private groups stay hidden; T3 shows none.
+exposing keys. Unjoined private groups appear in discovery as closed (no
+history is read for them; Join sends a join request) since 2.0.17; T3 shows no
+private-group history.
 
 ### P4 — public and private resource completion (shipped, PR #88)
 

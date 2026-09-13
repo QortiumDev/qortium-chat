@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Ny direktchatt',
   'button.opening': 'Öppnar',
   'status.direct.nameNotFound': 'Inget konto hittades med det namnet.',
+  'status.direct.selfAddress': 'Du kan inte öppna en direktchatt med ditt eget konto.',
   'status.loadingError.nameLookup': 'Det gick inte att slå upp det namnet.',
   'label.unread': 'Olästa meddelanden',
   'label.newMessages': 'Nya meddelanden',

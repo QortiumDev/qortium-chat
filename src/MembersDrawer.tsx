@@ -11,6 +11,7 @@ export function MembersDrawer({
   accountLockedLabel,
   accountRequiredLabel,
   approvePendingJoiner,
+  approveError = null,
   avatarProfiles,
   canApproveGroupJoinRequests,
   canUseSelectedAccount,
@@ -33,6 +34,8 @@ export function MembersDrawer({
   accountLockedLabel: string;
   accountRequiredLabel: string;
   approvePendingJoiner: string | null;
+  /** The last approve failure, shown next to the requests it belongs to (the pane's own error sits behind this drawer). */
+  approveError?: string | null;
   avatarProfiles: AvatarProfilesByAddress;
   canApproveGroupJoinRequests: boolean;
   canUseSelectedAccount: boolean;
@@ -104,6 +107,11 @@ export function MembersDrawer({
               <strong>{t('title.joinRequests')}</strong>
               <span>{pendingJoinRequests.length}</span>
             </div>
+            {approveError ? (
+              <p className="error join-requests__error" role="alert">
+                {approveError}
+              </p>
+            ) : null}
             {pendingJoinRequests.map((request) => (
               <div className="join-request" key={`${request.groupId}:${request.joiner}`}>
                 <span>{getShortAddress(request.joiner)}</span>

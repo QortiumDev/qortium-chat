@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'שיחה ישירה חדשה',
   'button.opening': 'פועל',
   'status.direct.nameNotFound': 'לא נמצא חשבון עם השם הזה.',
+  'status.direct.selfAddress': 'אי אפשר לפתוח צ\'אט ישיר עם החשבון שלך.',
   'status.loadingError.nameLookup': 'לא ניתן לחפש את השם הזה.',
   'label.unread': 'הודעות שלא נקראו',
   'label.newMessages': 'הודעות חדשות',

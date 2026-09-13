@@ -2308,6 +2308,12 @@ button.member-chip__name-button:focus-visible {
   font-size: var(--qc-text-caption);
 }
 
+.join-requests__error {
+  margin: 4px 0 0;
+  font-size: var(--qc-text-caption);
+  overflow-wrap: anywhere;
+}
+
 .join-request {
   padding: 8px;
   background: var(--qc-color-surface-raised);

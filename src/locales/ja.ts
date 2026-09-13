@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': '新規ダイレクトチャット',
   'button.opening': '開いています',
   'status.direct.nameNotFound': 'その名前のアカウントは見つかりませんでした。',
+  'status.direct.selfAddress': '自分のアカウントとのダイレクトチャットは開けません。',
   'status.loadingError.nameLookup': 'この名前を検索できませんでした。',
   'label.unread': '未読メッセージ',
   'label.newMessages': '新着メッセージ',

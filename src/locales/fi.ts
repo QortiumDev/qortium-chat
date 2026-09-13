@@ -333,6 +333,7 @@ export const STRINGS = {
   'label.newDirectChat': 'Uusi suora chat',
   'button.opening': 'Avataan...',
   'status.direct.nameNotFound': 'Tällä nimellä ei löytynyt tiliä.',
+  'status.direct.selfAddress': 'Et voi avata suoraa keskustelua oman tilisi kanssa.',
   'status.loadingError.nameLookup': 'Tämän nimen haku epäonnistui.',
   'label.unread': 'Lukemattomat viestit',
   'label.newMessages': 'Uudet viestit',
