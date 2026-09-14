@@ -104,6 +104,7 @@ const qortalGeneralChatReactionMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./qdnRequest', () => ({
   buildNodeWebSocketUrl: (path: string) => `ws://127.0.0.1:24891${path}`,
+  buildQortalNodeWebSocketUrl: (path: string) => `wss://ext-node.qortal.link${path}`,
   qdnRequest: qdnRequestMock,
 }));
 
@@ -158,6 +159,10 @@ describe('Core API path builders', () => {
     );
     expect(buildGroupMessagesWebSocketUrl(7)).toBe(
       'ws://127.0.0.1:24891/websockets/chat/messages?txGroupId=7&encoding=BASE64&limit=100&reverse=true',
+    );
+    // G12: a Qortal group's socket goes to the Hub's Qortal render origin.
+    expect(buildGroupMessagesWebSocketUrl(1091, 100, 'qortal')).toBe(
+      'wss://ext-node.qortal.link/websockets/chat/messages?txGroupId=1091&encoding=BASE64&limit=100&reverse=true',
     );
     expect(buildActiveChatsWebSocketUrl('Qabc')).toBe(
       'ws://127.0.0.1:24891/websockets/chat/active/Qabc?encoding=BASE64&haschatreference=false',

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildNodeWebSocketUrl,
+  buildQortalNodeWebSocketUrl,
   canUseNodeWebSockets,
+  canUseQortalNodeWebSockets,
   classifyBridgeHost,
   classifyBridgeTransport,
   getBridgeState,
@@ -130,5 +132,24 @@ describe('qdnRequest bridge adapter', () => {
     });
 
     expect(canUseNodeWebSockets()).toBe(true);
+  });
+
+  it('allows Qortal websockets only on Hub, on the render origin (G12)', () => {
+    vi.stubGlobal('window', {
+      location: { origin: 'https://ext-node.qortal.link', pathname: '/render/APP/xchat', protocol: 'https:' },
+    });
+
+    expect(canUseQortalNodeWebSockets('hub')).toBe(true);
+    expect(canUseQortalNodeWebSockets('home2')).toBe(false);
+    expect(canUseQortalNodeWebSockets('gateway')).toBe(false);
+    expect(canUseQortalNodeWebSockets(undefined)).toBe(false);
+    expect(buildQortalNodeWebSocketUrl('/websockets/chat/messages?txGroupId=1091')).toBe(
+      'wss://ext-node.qortal.link/websockets/chat/messages?txGroupId=1091',
+    );
+
+    vi.stubGlobal('window', {
+      location: { origin: 'file://', pathname: '/index.html', protocol: 'file:' },
+    });
+    expect(canUseQortalNodeWebSockets('hub')).toBe(false);
   });
 });
