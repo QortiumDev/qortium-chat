@@ -75,3 +75,15 @@ describe('normalizeGroupEvents', () => {
     expect(mergeGroupEvents(first, second).map((event) => event.kind)).toEqual(['joined', 'left']);
   });
 });
+
+describe('moderation action names', () => {
+  it('sends whichever alias the host advertises (Hub vs Home 2 names)', async () => {
+    const { getGroupModerationAction, hasGroupModerationAction } = await import('./coreApi');
+
+    expect(getGroupModerationAction('kick', ['GROUP_KICK'])).toBe('GROUP_KICK');
+    expect(getGroupModerationAction('kick', ['KICK_FROM_GROUP'])).toBe('KICK_FROM_GROUP');
+    expect(getGroupModerationAction('ban', [])).toBe('BAN_FROM_GROUP');
+    expect(hasGroupModerationAction('ban', ['GROUP_BAN'])).toBe(true);
+    expect(hasGroupModerationAction('kick', ['GROUP_BAN'])).toBe(false);
+  });
+});

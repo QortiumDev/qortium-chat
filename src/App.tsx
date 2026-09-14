@@ -27,7 +27,7 @@ import {
   buildGroupMessagesWebSocketUrl,
   DEFAULT_LIST_LIMIT,
   approveGroupJoinRequest,
-  GROUP_MODERATION_ACTIONS,
+  hasGroupModerationAction,
   moderateGroupMember,
   searchRecentTransactions,
   type GroupModerationKind,
@@ -2159,7 +2159,7 @@ export default function App() {
   const availableModerationKinds = useMemo(() => {
     const kinds = new Set<MemberModerationKind>();
     for (const kind of ['addAdmin', 'ban', 'kick', 'removeAdmin'] as const) {
-      if (hasAction(selectedNetworkActions, GROUP_MODERATION_ACTIONS[kind])) kinds.add(kind);
+      if (hasGroupModerationAction(kind, selectedNetworkActions)) kinds.add(kind);
     }
     return kinds;
   }, [selectedNetworkActions]);
@@ -2167,7 +2167,7 @@ export default function App() {
     !!selectedGroup &&
     !isSelectedGeneralChat &&
     selectedGroupViewerRole !== 'member' &&
-    hasAction(selectedNetworkActions, GROUP_MODERATION_ACTIONS.invite);
+    hasGroupModerationAction('invite', selectedNetworkActions);
   const selectedGroupEvents = selectedChatKey ? groupEventsByChat[selectedChatKey] ?? emptyGroupEvents : emptyGroupEvents;
   const selectedGroupMembersPhase = isSelectedGeneralChat
     ? !hasSelectedMessages && messages.phase === 'ready'
@@ -6532,7 +6532,9 @@ export default function App() {
         return;
       }
 
-      const result = await moderateGroupMember(kind, group.groupId, address, network);
+      const result = await moderateGroupMember(kind, group.groupId, address, network, {
+        actions: network === 'qortal' ? qortalBridge.value.actions : actions,
+      });
 
       if (!isCurrentContext(selectedAccount.address)) {
         return;
