@@ -50,6 +50,10 @@ export function ChatComposer({
   attachLabel,
   attachTitle,
   attachment,
+  inlineImage = null,
+  inlineImageLabels = null,
+  onAttachInlineImageInstead,
+  onClearInlineImage,
   attachmentError,
   attachmentInputRef,
   canAttach,
@@ -94,6 +98,11 @@ export function ChatComposer({
   attachLabel: string;
   attachTitle: string;
   attachment: ComposerAttachment | null;
+  /** 2.0.26 (D-G): a tiny image about to travel inside the message itself. */
+  inlineImage?: { bytes: number; height: number; src: string; width: number } | null;
+  inlineImageLabels?: { attachInstead: string; remove: string; size: string } | null;
+  onAttachInlineImageInstead?: (() => void) | null;
+  onClearInlineImage?: (() => void) | null;
   attachmentError: string;
   /** Hidden <input type="file"> the bytes path opens; App clicks it from onAttachClick. */
   attachmentInputRef: RefObject<HTMLInputElement | null>;
@@ -213,6 +222,25 @@ export function ChatComposer({
               width="100%"
             />
           </Suspense>
+        </div>
+      ) : null}
+      {inlineImage ? (
+        <div className="composer__attachment composer__inline-image">
+          <img alt="" className="composer__inline-image-preview" height={inlineImage.height} src={inlineImage.src} width={inlineImage.width} />
+          <span className="composer__attachment-name">{inlineImageLabels?.size ?? `${inlineImage.bytes} B`}</span>
+          {onAttachInlineImageInstead ? (
+            <button className="button button--secondary composer__inline-image-attach" onClick={onAttachInlineImageInstead} type="button">
+              {inlineImageLabels?.attachInstead ?? 'Attach instead'}
+            </button>
+          ) : null}
+          <button
+            aria-label={inlineImageLabels?.remove ?? removeAttachmentLabel}
+            className="icon-button composer__attachment-remove"
+            onClick={onClearInlineImage ?? undefined}
+            type="button"
+          >
+            <CloseIcon />
+          </button>
         </div>
       ) : null}
       {attachment ? (

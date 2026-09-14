@@ -34,7 +34,24 @@ export type RichInline =
 export type RichBlock =
   | { inlines: RichInline[]; kind: 'paragraph' }
   | { kind: 'codeBlock'; lang: string; text: string }
-  | { items: RichInline[][]; kind: 'bulletList' };
+  | { items: RichInline[][]; kind: 'bulletList' }
+  // 2.0.26 (D-G): a tiny inline image carried in the message itself as a
+  // data: URI — `![alt](data:image/webp;base64,…)` on its own line. Only
+  // webp/jpeg/png, base64, and bounded (the 4 KB CHAT cap bounds it anyway).
+  | { alt: string; kind: 'image'; src: string };
+
+export const INLINE_IMAGE_MAX_SRC_LENGTH = 4000;
+const INLINE_IMAGE_LINE = /^!\[([^\]\n]{0,80})\]\((data:image\/(?:webp|jpeg|png);base64,[A-Za-z0-9+/]+={0,2})\)\s*$/;
+
+export function parseInlineImageLine(line: string): { alt: string; src: string } | null {
+  const match = INLINE_IMAGE_LINE.exec(line);
+  if (!match || match[2]!.length > INLINE_IMAGE_MAX_SRC_LENGTH) return null;
+  return { alt: match[1] ?? '', src: match[2]! };
+}
+
+export function formatInlineImageMarkup(src: string, alt = 'image') {
+  return `![${alt.replace(/[\]\n]/g, ' ').slice(0, 80)}](${src})`;
+}
 
 const MARKER_CHARACTERS = new Set(['*', '_', '~', '`', '@', '\\']);
 const MENTION_NAME = /^[A-Za-z0-9._-]{1,40}/;
@@ -187,6 +204,13 @@ export function parseRichText(markup: string): RichBlock[] {
       // Unterminated fence: literal text.
     }
 
+    const image = parseInlineImageLine(line);
+    if (image) {
+      blocks.push({ alt: image.alt, kind: 'image', src: image.src });
+      index += 1;
+      continue;
+    }
+
     const bullet = /^[-*] (.*)$/.exec(line);
     if (bullet) {
       const items: RichInline[][] = [];
@@ -202,7 +226,9 @@ export function parseRichText(markup: string): RichBlock[] {
       continue;
     }
 
-    blocks.push({ inlines: parseInlines(line), kind: 'paragraph' });
+    // escapeLineStart's backslash before `- ` / `![` is the escape, not text
+    // (`*`, `` ` `` and the inline markers are unescaped by parseInlines).
+    blocks.push({ inlines: parseInlines(/^\\(?:- |!\[)/.test(line) ? line.slice(1) : line), kind: 'paragraph' });
     index += 1;
   }
 
@@ -217,6 +243,7 @@ export function escapeRichText(text: string) {
 function escapeLineStart(line: string) {
   if (/^[-*] /.test(line)) return `\\${line}`;
   if (line.startsWith('```')) return `\\${line}`;
+  if (line.startsWith('![')) return `\\${line}`;
   return line;
 }
 
@@ -246,6 +273,7 @@ export function richTextToMarkup(blocks: RichBlock[]) {
       if (block.kind === 'bulletList') {
         return block.items.map((item) => `- ${serializeInlines(item)}`).join('\n');
       }
+      if (block.kind === 'image') return formatInlineImageMarkup(block.src, block.alt);
       return escapeLineStart(serializeInlines(block.inlines));
     })
     .join('\n');
@@ -257,6 +285,7 @@ export function richTextToPlainText(blocks: RichBlock[]) {
     .map((block) => {
       if (block.kind === 'codeBlock') return block.text;
       if (block.kind === 'bulletList') return block.items.map((item) => `• ${plainInlines(item)}`).join('\n');
+      if (block.kind === 'image') return `[${block.alt || 'image'}]`;
       return plainInlines(block.inlines);
     })
     .join('\n');
@@ -318,6 +347,10 @@ export function richTextToTiptapDoc(blocks: RichBlock[]) {
         type: 'bulletList',
       };
     }
+    // Inline images are a Qortium-only convenience (Chat is the only Qortium
+    // client); a Hub-bound doc gets a Tiptap image node, which Hub readers
+    // either render or drop, never a kilobyte of base64 as visible text.
+    if (block.kind === 'image') return { attrs: { alt: block.alt, src: block.src }, type: 'image' };
     return paragraphToTiptap(block.inlines);
   });
   return { content: content.length > 0 ? content : [{ type: 'paragraph' }], type: 'doc' };
@@ -505,6 +538,7 @@ export function richTextToParagraphHtml(blocks: RichBlock[]) {
     .map((block) => {
       if (block.kind === 'codeBlock') return `<pre><code>${escapeHtml(block.text)}</code></pre>`;
       if (block.kind === 'bulletList') return `<ul>${block.items.map((item) => `<li><p>${inlinesToHtml(item)}</p></li>`).join('')}</ul>`;
+      if (block.kind === 'image') return `<img alt="${escapeHtml(block.alt)}" src="${escapeHtml(block.src)}">`;
       return `<p>${inlinesToHtml(block.inlines)}</p>`;
     })
     .join('');

@@ -2815,6 +2815,37 @@ button.message__reply-preview:focus-visible {
   margin: 0;
 }
 
+/* 2.0.27 (D-G): a pasted/dropped image travelling inside the message —
+   thumbnail, byte count, "Attach instead" (when the file path is available),
+   remove. Shares the attachment row's shell. */
+.composer__inline-image-preview {
+  flex: 0 0 auto;
+  max-width: 96px;
+  max-height: 64px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--qc-radius-sm);
+  background: var(--qc-color-surface);
+}
+
+.composer__inline-image-attach {
+  flex: 0 0 auto;
+  padding-block: 2px;
+  font-size: var(--qc-text-tiny);
+}
+
+/* Inline image block inside a rendered message (![alt](data:image/…)).
+   Previews are ≤160 px by construction; scale on tiny screens. */
+.message__inline-image {
+  display: block;
+  max-width: min(100%, 320px);
+  height: auto;
+  margin-block: 4px;
+  border-radius: var(--qc-radius-sm);
+  image-rendering: auto;
+}
+
 /* P3: closed-group composer byte-remaining counter (see ChatComposer.tsx's
    remainingBytesLabel/remainingBytesOverLimit). */
 .composer__byte-counter {
