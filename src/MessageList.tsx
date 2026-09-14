@@ -1,3 +1,4 @@
+import { filterBlockedMessages, type BlockControls } from './blockList';
 import {
   Fragment,
   lazy,
@@ -692,6 +693,8 @@ export const MessageList = memo(function MessageList({
   onOpenImage,
   onReact,
   onReply,
+  blockedAddresses = null,
+  blocking = null,
   onOpenWebLink,
   onRetryMessage,
   onRetryRevision,
@@ -737,6 +740,10 @@ export const MessageList = memo(function MessageList({
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
   /** 2.0.22 (D-E): host-mediated web-link open; null keeps links copy-only. */
   onOpenWebLink?: ((network: ChatNetwork, url: string) => void) | null;
+  /** 2.0.23 (G5): senders whose messages, revisions and reactions are hidden. */
+  blockedAddresses?: ReadonlySet<string> | null;
+  /** 2.0.23 (G5): Block action on other people's messages; null hides it. */
+  blocking?: BlockControls | null;
   pendingReactionKeys: ReadonlySet<string>;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
   pendingSendByLocalId: ReadonlyMap<string, PendingSend>;
@@ -841,7 +848,11 @@ export const MessageList = memo(function MessageList({
     (resourceNetwork === 'qortal' ? qortalResourceActions : qortiumResourceActions).some(
       (candidate) => candidate.toUpperCase() === action,
     );
-  const threads = useMemo(() => buildMessageThreads(messages), [messages]);
+  // 2.0.23 (G5): a blocked sender's messages, edits and reactions never reach
+  // the thread builder or the reaction index — replies to them show as
+  // "unavailable", exactly like a message that expired.
+  const visibleMessages = useMemo(() => filterBlockedMessages(messages, blockedAddresses), [blockedAddresses, messages]);
+  const threads = useMemo(() => buildMessageThreads(visibleMessages), [visibleMessages]);
   // Index of the first thread newer than the user's read watermark; the "new
   // messages" divider is drawn just above it. Only shown when at least one read
   // message sits above the boundary, so it reads as a separator (not a top edge).
@@ -887,8 +898,8 @@ export const MessageList = memo(function MessageList({
     return count;
   }, [threads, unreadDividerIndex, unreadDividerCeiling]);
   const reactionsBySignature = useMemo(
-    () => buildMessageReactionIndex(messages, selfAddress),
-    [messages, selfAddress],
+    () => buildMessageReactionIndex(visibleMessages, selfAddress),
+    [visibleMessages, selfAddress],
   );
   const renderedThreads = useMemo(
     () => threads.map((thread, index) => ({ key: getMessageKey(thread.original, index), thread })),
@@ -1786,7 +1797,7 @@ export const MessageList = memo(function MessageList({
     });
   }
 
-  if (messages.length === 0 && systemMessages.length === 0 && groupEvents.length === 0) {
+  if (visibleMessages.length === 0 && systemMessages.length === 0 && groupEvents.length === 0) {
     return <p className="empty">{emptyHint ?? t('hint.noMessages')}</p>;
   }
 
@@ -2062,6 +2073,17 @@ export const MessageList = memo(function MessageList({
                       type="button"
                     >
                       {t('button.react')}
+                    </button>
+                  ) : null}
+                  {blocking && !isOwn && original.sender ? (
+                    <button
+                      className="message__block"
+                      disabled={blocking.pendingAddress === original.sender}
+                      onClick={() => blocking.onToggle(original.sender, true)}
+                      title={t('action.blockSender', { sender: getMessageSenderLabel(original, undefined) })}
+                      type="button"
+                    >
+                      {blocking.pendingAddress === original.sender ? t('button.working') : t('button.block')}
                     </button>
                   ) : null}
                   {canEditOrDelete && canEdit ? (

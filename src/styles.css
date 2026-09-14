@@ -3186,6 +3186,22 @@ button.message__reply-preview:focus-visible,
   border-radius: 2px;
 }
 
+.member-chip--blocked .member-chip__name {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.member-chip__blocked {
+  margin-left: 0.4em;
+  padding: 0 0.4em;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--qc-color-muted, var(--qc-color-accent-readable));
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-sm);
+  white-space: nowrap;
+}
+
 .message__web-link-group {
   display: inline;
 }

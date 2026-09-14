@@ -291,6 +291,14 @@ export const BRIDGE_ACTION_ROSTER = {
     'FETCH_ACCOUNT_AVATAR',
     'FETCH_GROUP_AVATAR',
   ],
+  'Block list (node lists)': [
+    'GET_LIST',
+    'ADD_TO_LIST',
+    'REMOVE_FROM_LIST',
+    'GET_LIST_ITEMS',
+    'ADD_LIST_ITEMS',
+    'DELETE_LIST_ITEM',
+  ],
   'Journal, notifications and signing': [
     'GET_PENDING_TRANSACTIONS',
     'FORGET_PENDING_TRANSACTION',

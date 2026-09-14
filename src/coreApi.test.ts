@@ -73,7 +73,9 @@ import {
   selectQdnPublishSource,
   sendChatDelete,
   sendChatEdit,
+  readBlockedAddresses,
   sendChatMessage,
+  setAddressBlocked,
   sendChatReaction,
   sendDirectChatDelete,
   sendDirectChatEdit,
@@ -1232,6 +1234,48 @@ describe('Core API path builders', () => {
 
   // Chat 2.0 slice 2: dual-chain network dispatch and per-protocol differences
   // (docs/HOME_V2_BRIDGE_COMPATIBILITY.md in qortium-home).
+  describe('block list (G5)', () => {
+    it('reads and writes blockedAddresses with the Home 2 list dialect on qdnRequest', async () => {
+      qdnRequestMock.mockResolvedValueOnce(['Qbad', ' Qworse ']);
+      await expect(readBlockedAddresses('qortium', ['GET_LIST', 'ADD_TO_LIST', 'REMOVE_FROM_LIST'])).resolves.toEqual(
+        new Set(['Qbad', 'Qworse']),
+      );
+      expect(qdnRequestMock).toHaveBeenLastCalledWith({ action: 'GET_LIST', listName: 'blockedAddresses' });
+
+      qdnRequestMock.mockResolvedValueOnce('true');
+      await expect(setAddressBlocked('qortium', ' Qbad ', true, ['GET_LIST', 'ADD_TO_LIST', 'REMOVE_FROM_LIST'])).resolves.toBe(true);
+      expect(qdnRequestMock).toHaveBeenLastCalledWith({ action: 'ADD_TO_LIST', items: ['Qbad'], listName: 'blockedAddresses' });
+
+      qdnRequestMock.mockResolvedValueOnce(true);
+      await setAddressBlocked('qortium', 'Qbad', false, ['GET_LIST', 'ADD_TO_LIST', 'REMOVE_FROM_LIST']);
+      expect(qdnRequestMock).toHaveBeenLastCalledWith({ action: 'REMOVE_FROM_LIST', items: ['Qbad'], listName: 'blockedAddresses' });
+
+      // Core's "false" is a refusal, reported — not a silent success.
+      qdnRequestMock.mockResolvedValueOnce('false');
+      await expect(setAddressBlocked('qortium', 'Qbad', true, ['GET_LIST', 'ADD_TO_LIST', 'REMOVE_FROM_LIST'])).rejects.toThrow(
+        /declined to block/,
+      );
+      // No write actions advertised → refused before any bridge call.
+      await expect(setAddressBlocked('qortium', 'Qbad', true, ['GET_LIST'])).rejects.toThrow(/cannot change node lists/);
+      expect(qortalRequestMock).not.toHaveBeenCalled();
+    });
+
+    it('uses the Qortal v3 list dialect on qortalRequest (Hub)', async () => {
+      const hub = ['GET_LIST_ITEMS', 'ADD_LIST_ITEMS', 'DELETE_LIST_ITEM'];
+      qortalRequestMock.mockResolvedValueOnce(['Qx']);
+      await expect(readBlockedAddresses('qortal', hub)).resolves.toEqual(new Set(['Qx']));
+      expect(qortalRequestMock).toHaveBeenLastCalledWith({ action: 'GET_LIST_ITEMS', list_name: 'blockedAddresses' });
+      qortalRequestMock.mockResolvedValueOnce(true);
+      await setAddressBlocked('qortal', 'Qx', true, hub);
+      expect(qortalRequestMock).toHaveBeenLastCalledWith({ action: 'ADD_LIST_ITEMS', items: ['Qx'], list_name: 'blockedAddresses' });
+      qortalRequestMock.mockResolvedValueOnce(true);
+      await setAddressBlocked('qortal', 'Qx', false, hub);
+      expect(qortalRequestMock).toHaveBeenLastCalledWith({ action: 'DELETE_LIST_ITEM', item: 'Qx', list_name: 'blockedAddresses' });
+      await expect(readBlockedAddresses('qortal', [])).rejects.toThrow(/cannot read node lists/);
+      expect(qdnRequestMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('dual-chain (Chat 2.0 slice 2)', () => {
     it('routes a qortium call through qdnRequest and never touches qortalRequest', async () => {
       qdnRequestMock.mockResolvedValueOnce([{ groupId: 1, groupName: 'General' }]);

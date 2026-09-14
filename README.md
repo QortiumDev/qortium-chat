@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.22, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.23, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -169,6 +169,17 @@ keeps links copy-only. On the same hosts Qortal's General Chat is listed and
 writable through `SEND_QORTAL_GENERAL_CHAT`, which builds the MESSAGE-wrapped
 group-0 message Hub and the Classic UI read; Qortal Hub keeps its
 `SIGN_TRANSACTION` path.
+
+## Blocking senders
+
+Since Chat 2.0.23, Block on someone else's message (or Block/Unblock on their
+member chip) adds or removes their address in the node's own `blockedAddresses`
+list — the same list the Classic UI and Qortal Hub use — through the host's
+list actions (`GET_LIST`/`ADD_TO_LIST`/`REMOVE_FROM_LIST` on Qortium Home 2,
+`GET_LIST_ITEMS`/`ADD_LIST_ITEMS`/`DELETE_LIST_ITEM` on Qortal Hub). Messages,
+edits and reactions from blocked senders are hidden and never notify. Home 2
+serves lists only for an administered node (its own Core, or a custom node with
+your API key), so on a public node the controls simply do not appear.
 
 ## Current Limits
 

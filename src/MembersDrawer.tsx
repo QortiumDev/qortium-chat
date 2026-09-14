@@ -3,6 +3,7 @@ import { useState, type RefObject } from 'react';
 import { getShortAddress, type AccountInfoTarget, type AvatarProfilesByAddress } from './accountDisplay';
 import type { AvatarLightboxImage } from './AvatarLightbox';
 import { GroupMemberList, type MemberModeration } from './GroupMemberList';
+import type { BlockControls } from './blockList';
 import type { TranslateFunction } from './i18n';
 import { LoadingRows } from './LoadingRows';
 import type { GroupData, GroupJoinRequest, GroupMember } from './types';
@@ -23,6 +24,8 @@ export function MembersDrawer({
   moderation = null,
   onInvite = null,
   invitePending = false,
+  blocking = null,
+  viewerAddress = null,
   manageHref = null,
   onOpenManage = null,
   membersCloseRef,
@@ -54,6 +57,9 @@ export function MembersDrawer({
   /** Invite by address, when the host advertises INVITE_TO_GROUP for a viewer who may invite. */
   onInvite?: ((address: string) => void) | null;
   invitePending?: boolean;
+  /** 2.0.23 (G5): Block/Unblock per member; null hides it. */
+  blocking?: BlockControls | null;
+  viewerAddress?: string | null;
   /** Link to the full group manager app for create/edit/avatar (D-B: link out). */
   manageHref?: string | null;
   onOpenManage?: (() => void) | null;
@@ -108,12 +114,14 @@ export function MembersDrawer({
         ) : (
           <GroupMemberList
             avatarProfiles={avatarProfiles}
+            blocking={blocking}
             group={group}
             members={members}
             moderation={moderation}
             onOpenAccount={onOpenAccount}
             onOpenAvatar={onOpenAvatar}
             t={t}
+            viewerAddress={viewerAddress}
           />
         )}
         {onInvite ? (
