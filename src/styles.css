@@ -3186,6 +3186,43 @@ button.message__reply-preview:focus-visible,
   border-radius: 2px;
 }
 
+.chat-search {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.9rem;
+  border-bottom: 1px solid var(--qc-color-border);
+  background: var(--qc-color-surface-alt);
+}
+
+.chat-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  color: inherit;
+  background: var(--qc-color-surface);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-sm);
+}
+
+.chat-search__input:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 1px;
+}
+
+.chat-search__count {
+  flex: 0 0 auto;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.message-list__search-empty {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: center;
+}
+
 .member-chip--blocked .member-chip__name {
   opacity: 0.6;
   text-decoration: line-through;

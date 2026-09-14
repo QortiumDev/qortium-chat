@@ -1421,6 +1421,11 @@ export default function App() {
     qortium: 'unknown',
   });
   const [blockPendingAddress, setBlockPendingAddress] = useState<string | null>(null);
+  // 2.0.25 (G11): search over the open conversation's loaded history.
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [chatSearchMatches, setChatSearchMatches] = useState(-1);
+  const chatSearchInputRef = useRef<HTMLInputElement | null>(null);
   const blockedAddressesRef = useRef(blockedAddresses);
   blockedAddressesRef.current = blockedAddresses;
   const [accountJoinRequests, setAccountJoinRequests] =
@@ -10704,6 +10709,14 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [account?.address, actionsKey]);
 
+  // 2.0.25 (G11): a search belongs to one conversation; switching chats
+  // clears it so the next chat opens unfiltered.
+  useEffect(() => {
+    setChatSearchOpen(false);
+    setChatSearchQuery('');
+    setChatSearchMatches(-1);
+  }, [selectedChatKey]);
+
   // 2.0.23 (G5): the block list is node-local, so it is (re)read whenever the
   // host's action list changes — bridge detection, a node-route change that
   // gains or loses an administered node — not per account.
@@ -11535,6 +11548,25 @@ export default function App() {
                   {selectedConversationMuted ? t('button.unmute') : t('button.mute')}
                 </button>
               ) : null}
+              {selectedChat ? (
+                <button
+                  aria-controls="chat-search"
+                  aria-expanded={chatSearchOpen}
+                  aria-pressed={chatSearchOpen}
+                  className="button button--secondary"
+                  onClick={() => {
+                    setChatSearchOpen((current) => {
+                      if (current) setChatSearchQuery('');
+                      return !current;
+                    });
+                    window.setTimeout(() => chatSearchInputRef.current?.focus(), 0);
+                  }}
+                  title={t('action.searchMessages')}
+                  type="button"
+                >
+                  {t('button.search')}
+                </button>
+              ) : null}
               {selectedChat?.kind === 'group' ? (
                 <button
                   aria-controls="members-drawer"
@@ -11652,11 +11684,40 @@ export default function App() {
             unavailableLabel={selectedChatUnavailableLabel}
           />
 
+
           {/* Owns the `1fr` row of the `.chat-pane` grid so the message feed
               always gets the remaining space regardless of how many notices
               above it are currently rendered. */}
           <div className="chat-pane__content">
             <div className="chat-pane__notices">
+              {chatSearchOpen && selectedChat ? (
+                <form
+                  className="chat-search"
+                  id="chat-search"
+                  onSubmit={(event) => event.preventDefault()}
+                  role="search"
+                >
+                  <input
+                    aria-label={t('placeholder.searchMessages')}
+                    className="chat-search__input"
+                    onChange={(event) => setChatSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setChatSearchQuery('');
+                        setChatSearchOpen(false);
+                      }
+                    }}
+                    placeholder={t('placeholder.searchMessages')}
+                    ref={chatSearchInputRef}
+                    type="search"
+                    value={chatSearchQuery}
+                  />
+                  <span aria-live="polite" className="chat-search__count muted">
+                    {chatSearchMatches >= 0 ? t('status.search.matches', { count: chatSearchMatches }) : t('hint.searchLoaded')}
+                  </span>
+                </form>
+              ) : null}
               {messages.phase === 'error' ? (
                 <div className="chat-pane__load-error">
                   <p className="error">{messages.error}</p>
@@ -11777,6 +11838,8 @@ export default function App() {
                 onReply={handleStartReply}
                 blockedAddresses={selectedBlockedAddresses}
                 blocking={selectedBlockControls}
+                onSearchMatches={setChatSearchMatches}
+                searchQuery={chatSearchOpen ? chatSearchQuery : ''}
                 onOpenWebLink={handleOpenWebLink}
                 onRetryMessage={handleRetryMessage}
                 onRetryRevision={handleRetryRevision}

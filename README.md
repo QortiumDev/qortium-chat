@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.24, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.25, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -180,6 +180,13 @@ list actions (`GET_LIST`/`ADD_TO_LIST`/`REMOVE_FROM_LIST` on Qortium Home 2,
 edits and reactions from blocked senders are hidden and never notify. Home 2
 serves lists only for an administered node (its own Core, or a custom node with
 your API key), so on a public node the controls simply do not appear.
+
+## Searching messages
+
+Since Chat 2.0.25 the Search button in a conversation's header filters the
+loaded history to messages whose text or sender matches every word you type
+(Escape closes it). It searches what is loaded so far — use "Load older
+messages" to widen it — because neither chain offers a server-side chat search.
 
 ## Live updates
 
