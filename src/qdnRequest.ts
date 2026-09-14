@@ -34,6 +34,22 @@ export function buildNodeWebSocketUrl(path: string) {
   return url.toString();
 }
 
+// 2.0.24 (G12): Qortal Hub renders Chat straight from a Qortal node's /render
+// path, so that same origin also serves Qortal Core's /websockets routes. On
+// every other Qortal host (Home 2 desktop/Android, gateway) Chat does not know
+// a Qortal node origin it may connect to, so those keep polling.
+export function canUseQortalNodeWebSockets(host: BridgeHost | null | undefined) {
+  if (typeof window === 'undefined' || host !== 'hub') return false;
+  const { protocol, pathname } = window.location;
+  return (protocol === 'https:' || protocol === 'http:') && /\/render\//.test(pathname);
+}
+
+export function buildQortalNodeWebSocketUrl(path: string) {
+  const url = new URL(path, window.location.origin);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+}
+
 export function canUseNodeWebSockets() {
   if (typeof window === 'undefined') {
     return true;

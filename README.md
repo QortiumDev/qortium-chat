@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.23, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.24, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -180,6 +180,14 @@ list actions (`GET_LIST`/`ADD_TO_LIST`/`REMOVE_FROM_LIST` on Qortium Home 2,
 edits and reactions from blocked senders are hidden and never notify. Home 2
 serves lists only for an administered node (its own Core, or a custom node with
 your API key), so on a public node the controls simply do not appear.
+
+## Live updates
+
+Open Qortium groups on desktop Home use the node's `/websockets/chat/messages`
+stream. Since Chat 2.0.24 open Qortal groups inside Qortal Hub do too, over the
+Hub's own render origin (a Qortal node). Everything else — Qortal chats on
+Home 2, everything on Android, closed groups and direct chats — polls: every
+6 seconds while the tab is visible, every 30 seconds while hidden.
 
 ## Current Limits
 

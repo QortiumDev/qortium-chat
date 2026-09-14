@@ -158,6 +158,7 @@ import {
 } from './messageReactions';
 import {
   canUseNodeWebSockets,
+  canUseQortalNodeWebSockets,
   getBridgeState,
   hasAction,
   hasHomeBridge,
@@ -427,6 +428,11 @@ const QORTAL_GATEWAY_GROUP_REFRESH_MS = 60000;
 // Websocket reconnects back off 5s → 60s while the node stays unreachable
 // (reset by any successful frame) instead of hammering a fixed 5s cadence;
 // while the tab is hidden, reconnection waits for visibility instead.
+// Polled-transport cadence (see the message effect): visible tabs refresh
+// every 6 s, hidden tabs every 30 s; the tick is the granularity of both.
+const POLL_TICK_MS = 3000;
+const POLL_VISIBLE_MS = 6000;
+const POLL_HIDDEN_MS = 30000;
 const WS_RECONNECT_BASE_MS = 5000;
 const WS_RECONNECT_MAX_MS = 60000;
 
@@ -10213,34 +10219,54 @@ export default function App() {
       return undefined;
     }
 
+    // 2.0.24 (G12): a Qortal group gets a websocket only where Chat knows a
+    // Qortal node origin it may connect to — Qortal Hub, which renders Chat
+    // from that node's own /render path (canUseQortalNodeWebSockets). Home 2
+    // never tells the app its Qortal node, so Qortal groups there keep polling.
+    const websocketNetwork: ChatNetwork = selectedChat.network === 'qortal' ? 'qortal' : 'qortium';
+    const qortalWebSocketsAvailable =
+      websocketNetwork === 'qortal' && canUseQortalNodeWebSockets(qortalBridge.value.host);
+
     if (
       bridge.value.transport === 'gateway' ||
-      !nodeWebSocketsAvailable ||
       selectedChat.kind !== 'group' ||
       selectedChat.group.isOpen === false ||
-      selectedChat.network === 'qortal'
+      (websocketNetwork === 'qortium' && !nodeWebSocketsAvailable) ||
+      (websocketNetwork === 'qortal' && !qortalWebSocketsAvailable)
     ) {
       // GatewayService exposes REST only; direct and closed-group chats also
-      // have no public websocket. A Qortal group has no websocket route at all
-      // in this slice — buildGroupMessagesWebSocketUrl below connects to the
-      // Qortium node's own /websockets endpoint (same-origin, no per-protocol
-      // equivalent), which would be the wrong chain entirely for a Qortal
-      // groupId. Poll quietly instead so newly received messages show up
-      // without burning a doomed reconnect loop (or querying the wrong chain).
+      // have no public websocket. buildGroupMessagesWebSocketUrl connects to
+      // the Qortium node's own /websockets endpoint (same-origin) for Qortium
+      // groups and to the Hub's Qortal render origin for Qortal groups; where
+      // neither applies, poll quietly instead so newly received messages show
+      // up without burning a doomed reconnect loop (or querying the wrong
+      // chain).
       const chat = selectedChat;
+      const pollActions = websocketNetwork === 'qortal' ? qortalBridge.value.actions : actions;
 
       void loadMessages(chat);
 
+      // 2.0.24 (G12): the polled transports (every Qortal chat on Home 2, every
+      // chat on Android, closed groups and DMs everywhere) refresh every
+      // POLL_VISIBLE_MS while the tab is visible and back off to
+      // POLL_HIDDEN_MS while it is hidden, instead of a flat 15 s either way.
+      let lastPoll = Date.now();
       const interval = window.setInterval(() => {
-        void loadMessages(chat, actions, { quiet: true });
-      }, 15000);
+        const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+        if (Date.now() - lastPoll < (hidden ? POLL_HIDDEN_MS : POLL_VISIBLE_MS)) return;
+        lastPoll = Date.now();
+        void loadMessages(chat, pollActions, { quiet: true });
+      }, POLL_TICK_MS);
 
       return () => window.clearInterval(interval);
     }
 
     const chat = selectedChat;
     const chatKey = getSelectedChatKey(chat);
-    const sessionAccountAddress = account?.address ?? null;
+    const websocketActions = websocketNetwork === 'qortal' ? qortalBridge.value.actions : actions;
+    const sessionAccountAddress =
+      websocketNetwork === 'qortal' ? (qortalAccount?.address ?? null) : (account?.address ?? null);
+    const accountAddressRef = websocketNetwork === 'qortal' ? currentQortalAccountAddressRef : currentAccountAddressRef;
     let socket: WebSocket | null = null;
     let reconnectTimeout = 0;
     let reconnectDelay = WS_RECONNECT_BASE_MS;
@@ -10256,7 +10282,7 @@ export default function App() {
       if (
         isDisposed ||
         selectedChatKeyRef.current !== chatKey ||
-        currentAccountAddressRef.current !== sessionAccountAddress
+        accountAddressRef.current !== sessionAccountAddress
       ) {
         return;
       }
@@ -10278,13 +10304,13 @@ export default function App() {
         return;
       }
 
-      socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId));
+      socket = new WebSocket(buildGroupMessagesWebSocketUrl(chat.group.groupId, DEFAULT_LIST_LIMIT, websocketNetwork));
 
       socket.addEventListener('message', (event) => {
         if (
           isDisposed ||
           selectedChatKeyRef.current !== chatKey ||
-          currentAccountAddressRef.current !== sessionAccountAddress
+          accountAddressRef.current !== sessionAccountAddress
         ) {
           return;
         }
@@ -10295,9 +10321,11 @@ export default function App() {
           // A live frame proves the node is reachable; reset the backoff.
           reconnectDelay = WS_RECONNECT_BASE_MS;
 
-          setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+          if (websocketNetwork === 'qortium') {
+            setLoadedGroupActivityById((current) => mergeActivityTimestamp(current, chat.group.groupId, nextMessages));
+          }
 
-          reconcileJournalWithMessages('qortium', nextMessages);
+          reconcileJournalWithMessages(websocketNetwork, nextMessages);
 
           if (!receivedInitialMessages) {
             receivedInitialMessages = true;
@@ -10345,7 +10373,7 @@ export default function App() {
         if (!receivedInitialMessages) {
           // No websocket (e.g. browser dev against a REST-only node): fall back
           // to REST, quietly after the first load so the list does not flicker.
-          void loadMessages(chat, actions, { quiet: usedRestFallback });
+          void loadMessages(chat, websocketActions, { quiet: usedRestFallback });
           usedRestFallback = true;
         }
 
@@ -10377,6 +10405,7 @@ export default function App() {
     selectedClosedGroupReadKey,
     bridge.value.transport,
     nodeWebSocketsAvailable,
+    qortalBridge.value.host,
   ]);
 
   // P3 item 2: GET_PRIVATE_GROUP_CHAT_STATE for the selected closed group.

@@ -1,4 +1,4 @@
-import { buildNodeWebSocketUrl, qdnRequest } from './qdnRequest';
+import { buildNodeWebSocketUrl, buildQortalNodeWebSocketUrl, qdnRequest } from './qdnRequest';
 import { bridgeRequest } from './chatNetwork';
 import { sortMessagesByTimestamp } from './messageThreads';
 import { buildDeletedMessageText, buildReactionMessageText } from './chatText';
@@ -216,15 +216,16 @@ export function buildGroupMessagesPath(groupId: number, limit = DEFAULT_LIST_LIM
   return `/chat/messages?${query.toString()}`;
 }
 
-export function buildGroupMessagesWebSocketUrl(groupId: number, limit = DEFAULT_LIST_LIMIT) {
+export function buildGroupMessagesWebSocketUrl(groupId: number, limit = DEFAULT_LIST_LIMIT, network: ChatNetwork = 'qortium') {
   const query = new URLSearchParams({
     txGroupId: String(groupId),
     encoding: 'BASE64',
     limit: String(limit),
     reverse: 'true',
   });
+  const path = `/websockets/chat/messages?${query.toString()}`;
 
-  return buildNodeWebSocketUrl(`/websockets/chat/messages?${query.toString()}`);
+  return network === 'qortal' ? buildQortalNodeWebSocketUrl(path) : buildNodeWebSocketUrl(path);
 }
 
 export function buildActiveChatsWebSocketUrl(address: string) {
