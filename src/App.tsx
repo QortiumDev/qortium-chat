@@ -27,6 +27,10 @@ import {
   buildGroupMessagesWebSocketUrl,
   DEFAULT_LIST_LIMIT,
   approveGroupJoinRequest,
+  GROUP_MODERATION_ACTIONS,
+  moderateGroupMember,
+  searchRecentTransactions,
+  type GroupModerationKind,
   getActiveChats,
   getAccountGroupJoinRequests,
   getAdminGroupJoinRequests,
@@ -301,7 +305,18 @@ import {
   getActiveMessageGroupMembers,
   getGroupMemberAddress,
   getGroupMemberRegisteredName,
+  getGroupMemberRole,
 } from './groupMembers';
+import {
+  GROUP_EVENT_FETCH_LIMIT,
+  GROUP_EVENT_TX_TYPES,
+  mergeGroupEvents,
+  normalizeGroupEvents,
+  type GroupEvent,
+} from './groupEvents';
+import { openAppLinkInHomeTab } from './messageLinks';
+import type { MemberModeration, MemberModerationKind } from './GroupMemberList';
+import type { GroupEventRow } from './MessageList';
 import { shouldDecryptGroupMessages } from './groupAccess';
 import { isAlreadyGroupMemberError } from './groupJoin';
 import {
@@ -361,6 +376,30 @@ import type {
 const APP_VERSION = __APP_VERSION__;
 
 const emptyGroups: GroupData[] = [];
+const emptyGroupEvents: GroupEvent[] = [];
+// D-B: create/edit/avatar stay in the sibling Groups app (qortium-group-manager).
+const GROUP_MANAGER_APP_LINK = 'qdn://APP/Groups/Groups';
+const emptyGroupEventRows: GroupEventRow[] = [];
+const GROUP_EVENT_KEYS = {
+  adminAdded: 'system.group.adminAdded',
+  adminRemoved: 'system.group.adminRemoved',
+  approved: 'system.group.approved',
+  banned: 'system.group.banned',
+  inviteCancelled: 'system.group.inviteCancelled',
+  invited: 'system.group.invited',
+  joinRequested: 'system.group.joinRequested',
+  joined: 'system.group.joined',
+  kicked: 'system.group.kicked',
+  left: 'system.group.left',
+  unbanned: 'system.group.unbanned',
+  updated: 'system.group.updated',
+} as const;
+const MODERATION_BUTTON_KEYS = {
+  addAdmin: 'button.moderate.addAdmin',
+  ban: 'button.moderate.ban',
+  kick: 'button.moderate.kick',
+  removeAdmin: 'button.moderate.removeAdmin',
+} as const;
 const emptyMembers: GroupMember[] = [];
 const emptyMessages: ChatMessage[] = [];
 const emptyJoinRequests: GroupJoinRequest[] = [];
@@ -1353,6 +1392,12 @@ export default function App() {
   const [accountError, setAccountError] = useState('');
   const [groups, setGroups] = useState<AsyncState<GroupData[]>>(createState(emptyGroups));
   const [groupMembers, setGroupMembers] = useState<AsyncState<GroupMember[]>>(createState(emptyMembers));
+  // 2.0.20 (G2): confirmed membership/administration transactions for the
+  // selected group (everyone's, not just the viewer's tracked ones), keyed by
+  // chat key so switching groups never shows another group's events.
+  const [groupEventsByChat, setGroupEventsByChat] = useState<Record<string, GroupEvent[]>>({});
+  // 2.0.20 (G3): the member an admin action is in flight for.
+  const [moderationPendingAddress, setModerationPendingAddress] = useState<string | null>(null);
   const [accountJoinRequests, setAccountJoinRequests] =
     useState<AsyncState<GroupJoinRequest[]>>(createState(emptyJoinRequests));
   const [adminJoinRequests, setAdminJoinRequests] =
@@ -2100,6 +2145,30 @@ export default function App() {
       return name ? [{ address: getGroupMemberAddress(member) ?? null, name }] : [];
     });
   }, [selectedChat, selectedGroupMembers]);
+
+  // 2.0.20 (G3): the viewer's role in the selected group, from the member
+  // list (owner from the group record, admins from the membership flag).
+  const selectedGroupViewerAddress = selectedChat?.network === 'qortal' ? qortalAccount?.address ?? null : account?.address ?? null;
+  const selectedGroupViewerRole: 'admin' | 'member' | 'owner' = useMemo(() => {
+    if (!selectedGroup || !selectedGroupViewerAddress) return 'member';
+    if (selectedGroup.owner === selectedGroupViewerAddress) return 'owner';
+    const self = selectedGroupMembers.find((member) => getGroupMemberAddress(member) === selectedGroupViewerAddress);
+    return self ? getGroupMemberRole(self, selectedGroup.owner) : 'member';
+  }, [selectedGroup, selectedGroupMembers, selectedGroupViewerAddress]);
+  const selectedNetworkActions = selectedChat?.network === 'qortal' ? qortalBridge.value.actions : actions;
+  const availableModerationKinds = useMemo(() => {
+    const kinds = new Set<MemberModerationKind>();
+    for (const kind of ['addAdmin', 'ban', 'kick', 'removeAdmin'] as const) {
+      if (hasAction(selectedNetworkActions, GROUP_MODERATION_ACTIONS[kind])) kinds.add(kind);
+    }
+    return kinds;
+  }, [selectedNetworkActions]);
+  const canInviteToSelectedGroup =
+    !!selectedGroup &&
+    !isSelectedGeneralChat &&
+    selectedGroupViewerRole !== 'member' &&
+    hasAction(selectedNetworkActions, GROUP_MODERATION_ACTIONS.invite);
+  const selectedGroupEvents = selectedChatKey ? groupEventsByChat[selectedChatKey] ?? emptyGroupEvents : emptyGroupEvents;
   const selectedGroupMembersPhase = isSelectedGeneralChat
     ? !hasSelectedMessages && messages.phase === 'ready'
       ? 'loading'
@@ -2755,6 +2824,32 @@ export default function App() {
     [avatarProfiles],
   );
   const selectedAvatarProfiles = selectedChat?.network === 'qortal' ? qortalAvatarProfiles : qortiumAvatarProfiles;
+  // 2.0.20 (G2): everyone's confirmed group events as feed rows, named from
+  // the member list (registered name) or the avatar profile, else a short
+  // address. Events already shown as the viewer's own confirmed tracked
+  // transaction are not duplicated.
+  const selectedGroupEventRows = useMemo(() => {
+    if (selectedGroupEvents.length === 0) return emptyGroupEventRows;
+    const trackedSignatures = new Set(
+      selectedTransactions.filter((entry) => entry.phase === 'confirmed' && entry.signature).map((entry) => entry.signature!),
+    );
+    const nameOf = (address: string | null) => {
+      if (!address) return '';
+      const member = selectedGroupMembers.find((candidate) => getGroupMemberAddress(candidate) === address);
+      const registered = member ? getGroupMemberRegisteredName(member) : null;
+
+      return registered ?? selectedAvatarProfiles.get(address)?.name ?? getShortAddress(address);
+    };
+
+    return selectedGroupEvents
+      .filter((event) => !trackedSignatures.has(event.id))
+      .map((event) => ({
+        id: event.id,
+        kind: event.kind,
+        text: t(GROUP_EVENT_KEYS[event.kind], { actor: nameOf(event.actor), target: nameOf(event.target) }),
+        timestamp: event.timestamp,
+      }));
+  }, [selectedAvatarProfiles, selectedGroupEvents, selectedGroupMembers, selectedTransactions, t]);
   const qortiumKnownAvatarNames = useMemo(() => {
     const names = new Map<string, string>();
     for (const [key, name] of knownAvatarNames) {
@@ -6411,6 +6506,89 @@ export default function App() {
     }
   }
 
+  // 2.0.20 (G3): member-level moderation from the members drawer. Mirrors
+  // handleApproveJoinRequest per network: the host prompts and signs, Chat
+  // tracks the transaction and reloads the member list on confirmation.
+  async function handleModerateMember(kind: GroupModerationKind, address: string, label: string) {
+    if (!selectedGroup || moderationPendingAddress) {
+      return;
+    }
+
+    const group = selectedGroup;
+    const chatKey = selectedChatKey;
+    const network: ChatNetwork = selectedChat?.network === 'qortal' ? 'qortal' : 'qortium';
+    const isCurrentContext = (accountAddress: string) =>
+      network === 'qortal'
+        ? isCurrentQortalGroupActionContext(accountAddress, chatKey, group.groupId)
+        : isCurrentQortiumGroupActionContext(accountAddress, chatKey, group.groupId);
+
+    setModerationPendingAddress(address);
+    setWriteError('');
+
+    try {
+      const selectedAccount = await ensureWritableAccountForNetwork(network);
+
+      if (!selectedAccount || !isCurrentContext(selectedAccount.address)) {
+        return;
+      }
+
+      const result = await moderateGroupMember(kind, group.groupId, address, network);
+
+      if (!isCurrentContext(selectedAccount.address)) {
+        return;
+      }
+
+      const actionLabel =
+        kind === 'invite'
+          ? t('button.invite')
+          : kind === 'cancelInvite'
+            ? t('system.group.inviteCancelled', { actor: '', target: label }).trim()
+            : kind === 'unban'
+              ? t('system.group.unbanned', { actor: '', target: label }).trim()
+              : t(MODERATION_BUTTON_KEYS[kind]);
+
+      trackTransaction({
+        action: kind,
+        group,
+        joiner: address,
+        message: t('status.moderation.submitted', { action: `${actionLabel} · ${label}` }),
+        network,
+        result,
+      });
+    } catch (error) {
+      setWriteError(getBridgeErrorMessage(error, t('status.loadingError.moderate'), t));
+    } finally {
+      setModerationPendingAddress(null);
+    }
+  }
+
+  // 2.0.20 (G2): sweep the selected group's recent membership/administration
+  // transactions. Core's search has no group filter for these types, so the
+  // newest GROUP_EVENT_FETCH_LIMIT of each type are fetched and filtered.
+  async function loadGroupEvents(chat: SelectedChat, actionList: QdnAction[]) {
+    if (chat.kind !== 'group' || chat.group.groupId === 0) {
+      return;
+    }
+
+    const network: ChatNetwork = chat.network === 'qortal' ? 'qortal' : 'qortium';
+    const chatKey = getSelectedChatKey(chat);
+
+    try {
+      const rows = await searchRecentTransactions(network, GROUP_EVENT_TX_TYPES, GROUP_EVENT_FETCH_LIMIT, actionList);
+      const events = normalizeGroupEvents(rows, {
+        groupId: chat.group.groupId,
+        isOpen: chat.group.isOpen !== false,
+        network,
+        now: Date.now(),
+      });
+
+      setGroupEventsByChat((current) => ({ ...current, [chatKey]: mergeGroupEvents(current[chatKey] ?? [], events) }));
+    } catch (error) {
+      // Best-effort: the feed simply keeps the events it already has.
+      console.warn('Unable to load group events.', error);
+    }
+  }
+
   async function handleApproveJoinRequest(request: GroupJoinRequest) {
     if (!selectedGroup || !canApproveGroupJoinRequests || !canUseSelectedAccount || approvePendingJoiner) {
       return;
@@ -9838,7 +10016,9 @@ export default function App() {
                       ? t('status.minting.authorization.confirmed')
                       : transaction.action === 'leave'
                         ? t('status.leave.transaction.confirmed')
-                        : t('status.join.transaction.confirmed'),
+                        : transaction.action === 'join'
+                          ? t('status.join.transaction.confirmed')
+                          : t('status.moderation.confirmed'),
                 phase: 'confirmed',
               },
             }));
@@ -9927,6 +10107,7 @@ export default function App() {
       const actionList = network === 'qortal' ? qortalBridge.value.actions : actions;
 
       void loadGroupMembers(selectedChat.group, actionList, { network });
+      void loadGroupEvents(selectedChat, actionList);
     } else {
       groupMembersRequestGuardRef.current.begin();
       setGroupMembers({ phase: 'ready', value: emptyMembers });
@@ -10437,6 +10618,7 @@ export default function App() {
       const actionList = network === 'qortal' ? qortalBridge.value.actions : actions;
 
       void loadGroupMembers(selectedGroup, actionList, { network, quiet: true });
+      if (selectedChat) void loadGroupEvents(selectedChat, actionList);
     }, 30000);
 
     return () => window.clearInterval(interval);
@@ -11470,6 +11652,7 @@ export default function App() {
                 selfName={selfName}
                 sentMessageNonce={sentMessageNonce}
                 systemMessages={selectedTransactions}
+                groupEvents={selectedGroupEventRows}
                 t={t}
                 unreadDividerCeiling={unreadDividerCeiling}
                 unreadDividerTimestamp={unreadDividerTimestamp}
@@ -11653,6 +11836,25 @@ export default function App() {
             onOpenAccount={(target) => setAccountInfoTarget({ ...target, network: selectedChat?.network ?? 'qortium' })}
             onOpenAvatar={setAvatarLightboxImage}
             pendingJoinRequests={selectedAdminJoinRequests}
+            moderation={
+              !isSelectedGeneralChat && selectedGroup && availableModerationKinds.size > 0
+                ? {
+                    available: availableModerationKinds,
+                    onModerate: (kind, address, label) => void handleModerateMember(kind, address, label),
+                    pendingAddress: moderationPendingAddress,
+                    viewerAddress: selectedGroupViewerAddress,
+                    viewerRole: selectedGroupViewerRole,
+                  }
+                : null
+            }
+            onInvite={canInviteToSelectedGroup ? (address) => void handleModerateMember('invite', address, address) : null}
+            invitePending={moderationPendingAddress !== null}
+            manageHref={selectedChat?.network === 'qortal' ? null : GROUP_MANAGER_APP_LINK}
+            onOpenManage={
+              selectedChat?.network === 'qortal'
+                ? null
+                : () => void openAppLinkInHomeTab(GROUP_MANAGER_APP_LINK, 'qortium').catch(() => undefined)
+            }
             t={t}
           />
         ) : null}

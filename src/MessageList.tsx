@@ -79,6 +79,9 @@ import { canRetryPendingDelivery, type PendingRevision, type PendingSend, type S
 // bundle (~300 KB, a third of the app's JS) must not weigh down every app
 // start. The type-only import above keeps the package out of the main chunk,
 // so its enum values are passed as their literal strings at the use site.
+export type GroupEventRow = { id: string; kind: string; text: string; timestamp: number };
+const EMPTY_GROUP_EVENTS: readonly GroupEventRow[] = [];
+
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
 function getReactionDetailsDomId(messageSignature: string, reaction: string) {
@@ -702,6 +705,7 @@ export const MessageList = memo(function MessageList({
   selfName,
   sentMessageNonce,
   systemMessages,
+  groupEvents = EMPTY_GROUP_EVENTS,
   t,
   unreadDividerCeiling,
   unreadDividerTimestamp,
@@ -740,6 +744,8 @@ export const MessageList = memo(function MessageList({
   selfName: string | null;
   sentMessageNonce: number;
   systemMessages: TrackedTransaction[];
+  /** 2.0.20 (G2): everyone's confirmed group events, interleaved by time. */
+  groupEvents?: readonly GroupEventRow[];
   t: TranslateFunction;
   unreadDividerCeiling: number | null;
   unreadDividerTimestamp: number | null;
@@ -1455,7 +1461,7 @@ export const MessageList = memo(function MessageList({
 
   // System messages (transaction status) trail the feed, so a new or updated one
   // should also scroll the feed when the user is stuck to the bottom.
-  const systemMessagesKey = systemMessages.map((entry) => `${entry.id}:${entry.phase}`).join('|');
+  const systemMessagesKey = `${systemMessages.map((entry) => `${entry.id}:${entry.phase}`).join('|')}|${groupEvents.length}`;
 
   // Reset restoration when switching chats so the next chat's saved position (or
   // bottom) is applied instead of the previous chat's, and drop any open popover.
@@ -1777,9 +1783,24 @@ export const MessageList = memo(function MessageList({
     });
   }
 
-  if (messages.length === 0 && systemMessages.length === 0) {
+  if (messages.length === 0 && systemMessages.length === 0 && groupEvents.length === 0) {
     return <p className="empty">{emptyHint ?? t('hint.noMessages')}</p>;
   }
+
+  // Walks the (time-sorted) group events once per render so each event is
+  // emitted exactly once: before the first message that is not older, or at
+  // the end.
+  const groupEventCursor = (() => {
+    let position = 0;
+    return {
+      rest: () => groupEvents.slice(position),
+      take: (before: number) => {
+        const start = position;
+        while (position < groupEvents.length && groupEvents[position]!.timestamp <= before) position += 1;
+        return groupEvents.slice(start, position);
+      },
+    };
+  })();
 
   const { detailsReaction, detailsThread, pickerReactions, pickerThread } = reactionPopoverContent;
 
@@ -1880,6 +1901,8 @@ export const MessageList = memo(function MessageList({
           ) : null}
           {renderedThreads.map(({ key: threadKey, thread }, index) => {
             const { latest, original, revisions } = thread;
+            // 2.0.20 (G2): group events that happened before this message.
+            const eventsBefore = groupEventCursor.take(original.timestamp);
             const decoded = decodeChatMessage(latest, t);
             const isOwn = selfAddress !== null && original.sender === selfAddress;
             const isEdited = revisions.length > 0;
@@ -2053,6 +2076,14 @@ export const MessageList = memo(function MessageList({
 
             return (
               <Fragment key={threadKey}>
+                {eventsBefore.map((event) => (
+                  <li className={`message message--system message--system-${event.kind}`} key={`event-${event.id}`}>
+                    <span className="message__system-text">{event.text}</span>
+                    <time className="message__system-time" dateTime={new Date(event.timestamp).toISOString()}>
+                      {formatTimeAgo(event.timestamp, now, t.locale)}
+                    </time>
+                  </li>
+                ))}
                 {unreadDividerIndex === index ? (
                   <li className="message-list__unread-divider" ref={dividerRef} role="separator">
                     <span>{t('label.newMessages')}</span>
@@ -2194,6 +2225,14 @@ export const MessageList = memo(function MessageList({
               </Fragment>
             );
           })}
+          {groupEventCursor.rest().map((event) => (
+            <li className={`message message--system message--system-${event.kind}`} key={`event-${event.id}`}>
+              <span className="message__system-text">{event.text}</span>
+              <time className="message__system-time" dateTime={new Date(event.timestamp).toISOString()}>
+                {formatTimeAgo(event.timestamp, now, t.locale)}
+              </time>
+            </li>
+          ))}
           {systemMessages.map((transaction) => (
             <li className={`tx-status tx-status--${transaction.phase}`} key={transaction.id}>
               <strong>
