@@ -1,3 +1,4 @@
+import type { BlockControls } from './blockList';
 import {
   getAvatarView,
   getShortAddress,
@@ -72,20 +73,26 @@ export function getMemberModerationKinds(
 
 export function GroupMemberList({
   avatarProfiles,
+  blocking = null,
   group,
   members,
   moderation = null,
   onOpenAccount,
   onOpenAvatar,
   t,
+  viewerAddress = null,
 }: {
   avatarProfiles: AvatarProfilesByAddress;
+  /** 2.0.23 (G5): Block/Unblock per member (never for the viewer); null hides it. */
+  blocking?: BlockControls | null;
   group: GroupData | null;
   members: GroupMember[];
   moderation?: MemberModeration | null;
   onOpenAccount: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   t: TranslateFunction;
+  /** The viewer's own address, so the list never offers to block them. */
+  viewerAddress?: string | null;
 }) {
   const orderedMembers = getOrderedGroupMembers(members, group);
   const ownerAddress = group?.owner;
@@ -108,10 +115,13 @@ export function GroupMemberList({
           role === 'owner' ? t('label.group.owner') : role === 'admin' ? t('label.group.admin') : '';
         const moderationKinds = moderation && address ? getMemberModerationKinds(moderation, address, role) : [];
         const moderationPending = !!moderation && moderation.pendingAddress === address;
+        const isBlocked = !!blocking && !!address && blocking.blocked.has(address);
+        const canBlock = !!blocking && !!address && address !== moderation?.viewerAddress && address !== viewerAddress;
+        const blockPending = !!blocking && blocking.pendingAddress === address;
 
         return (
           <li
-            className={`member-chip member-chip--${role}`}
+            className={`member-chip member-chip--${role}${isBlocked ? ' member-chip--blocked' : ''}`}
             key={address || label}
             title={address}
           >
@@ -155,6 +165,24 @@ export function GroupMemberList({
                 title={roleLabel}
               >
                 {role === 'owner' ? <OwnerIcon /> : <AdminIcon />}
+              </span>
+            ) : null}
+            {isBlocked ? (
+              <span className="member-chip__blocked" title={t('label.blocked')}>
+                {t('label.blocked')}
+              </span>
+            ) : null}
+            {canBlock && address ? (
+              <span className="member-chip__moderation">
+                <button
+                  className={`button button--secondary member-chip__moderate member-chip__moderate--${isBlocked ? 'unblock' : 'block'}`}
+                  disabled={blockPending}
+                  onClick={() => blocking?.onToggle(address, !isBlocked)}
+                  title={t(isBlocked ? 'action.unblockSender' : 'action.blockSender', { sender: label })}
+                  type="button"
+                >
+                  {blockPending ? t('button.working') : t(isBlocked ? 'button.unblock' : 'button.block')}
+                </button>
               </span>
             ) : null}
             {moderationKinds.length > 0 && address ? (

@@ -30,6 +30,8 @@ import {
   hasGroupModerationAction,
   moderateGroupMember,
   openExternalLink,
+  readBlockedAddresses,
+  setAddressBlocked,
   searchRecentTransactions,
   type GroupModerationKind,
   getActiveChats,
@@ -74,6 +76,7 @@ import {
   startMinting,
   submitGroupApproval,
 } from './coreApi';
+import { getBlockListCapability, isBlockListUnavailableError, isBlockedSender } from './blockList';
 import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch';
 import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
 import { PrivateActiveChatsRequestCoordinator } from './privateActiveChatsRequest';
@@ -1399,6 +1402,21 @@ export default function App() {
   const [groupEventsByChat, setGroupEventsByChat] = useState<Record<string, GroupEvent[]>>({});
   // 2.0.20 (G3): the member an admin action is in flight for.
   const [moderationPendingAddress, setModerationPendingAddress] = useState<string | null>(null);
+  // 2.0.23 (G5): Core's blockedAddresses list per network, loaded once the
+  // host's list actions are known (and again after every change). 'unavailable'
+  // = the host has no list actions, or the node is not administered (public
+  // route) — the controls hide and nothing is filtered.
+  const [blockedAddresses, setBlockedAddresses] = useState<Record<ChatNetwork, ReadonlySet<string>>>({
+    qortal: new Set<string>(),
+    qortium: new Set<string>(),
+  });
+  const [blockListStatus, setBlockListStatus] = useState<Record<ChatNetwork, 'unknown' | 'ready' | 'unavailable'>>({
+    qortal: 'unknown',
+    qortium: 'unknown',
+  });
+  const [blockPendingAddress, setBlockPendingAddress] = useState<string | null>(null);
+  const blockedAddressesRef = useRef(blockedAddresses);
+  blockedAddressesRef.current = blockedAddresses;
   const [accountJoinRequests, setAccountJoinRequests] =
     useState<AsyncState<GroupJoinRequest[]>>(createState(emptyJoinRequests));
   const [adminJoinRequests, setAdminJoinRequests] =
@@ -2829,6 +2847,23 @@ export default function App() {
   // the member list (registered name) or the avatar profile, else a short
   // address. Events already shown as the viewer's own confirmed tracked
   // transaction are not duplicated.
+  // 2.0.23 (G5): block-list view for the selected chat's network.
+  const selectedBlockNetwork: ChatNetwork = selectedChat?.network === 'qortal' ? 'qortal' : 'qortium';
+  const selectedBlockedAddresses = blockedAddresses[selectedBlockNetwork];
+  const canBlockOnSelectedNetwork =
+    blockListStatus[selectedBlockNetwork] === 'ready' &&
+    getBlockListCapability(selectedBlockNetwork, getNetworkActions(selectedBlockNetwork)).write;
+  const selectedBlockControls = useMemo(
+    () =>
+      canBlockOnSelectedNetwork
+        ? {
+            blocked: selectedBlockedAddresses,
+            onToggle: (address: string, blocked: boolean) => void handleToggleBlock(selectedBlockNetwork, address, blocked),
+            pendingAddress: blockPendingAddress,
+          }
+        : null,
+    [blockPendingAddress, canBlockOnSelectedNetwork, selectedBlockNetwork, selectedBlockedAddresses],
+  );
   const selectedGroupEventRows = useMemo(() => {
     if (selectedGroupEvents.length === 0) return emptyGroupEventRows;
     const trackedSignatures = new Set(
@@ -5682,6 +5717,43 @@ export default function App() {
   // never off the other network's actions.
   function getNetworkActions(network: ChatNetwork) {
     return network === 'qortal' ? qortalBridge.value.actions : actions;
+  }
+
+  async function loadBlockedAddresses(network: ChatNetwork, actionList: QdnAction[]) {
+    if (!getBlockListCapability(network, actionList).read) {
+      setBlockListStatus((current) => ({ ...current, [network]: 'unavailable' }));
+      return;
+    }
+    try {
+      const blocked = await readBlockedAddresses(network, actionList);
+      setBlockedAddresses((current) => ({ ...current, [network]: blocked }));
+      setBlockListStatus((current) => ({ ...current, [network]: 'ready' }));
+    } catch (error) {
+      if (!isBlockListUnavailableError(error)) console.warn('Unable to read the block list.', error);
+      setBlockListStatus((current) => ({ ...current, [network]: 'unavailable' }));
+    }
+  }
+
+  async function handleToggleBlock(network: ChatNetwork, address: string, blocked: boolean) {
+    if (blockPendingAddress) return;
+    const actionList = getNetworkActions(network);
+    setBlockPendingAddress(address);
+    setWriteError('');
+    try {
+      await setAddressBlocked(network, address, blocked, actionList);
+      setBlockedAddresses((current) => {
+        const next = new Set(current[network]);
+        if (blocked) next.add(address);
+        else next.delete(address);
+        return { ...current, [network]: next };
+      });
+      await loadBlockedAddresses(network, actionList);
+    } catch (error) {
+      const message = getBridgeErrorMessage(error, t('status.loadingError.block'), t);
+      if (!/denied|declined by you|cancel/i.test(message)) setWriteError(message);
+    } finally {
+      setBlockPendingAddress(null);
+    }
   }
 
   // Current per-chat GET_PRIVATE_GROUP_CHAT_STATE snapshot for a closed
@@ -8649,6 +8721,7 @@ export default function App() {
       previous.signature &&
       signature !== previous.signature &&
       isIncomingChatMessage(newest.sender, selfAddress) &&
+      !isBlockedSender(blockedAddressesRef.current[selectedChat?.network === 'qortal' ? 'qortal' : 'qortium'], newest.sender) &&
       decodeChatMessage(newest, t).kind === 'text'
     ) {
       const decoded = decodeChatMessage(newest, t);
@@ -9610,7 +9683,7 @@ export default function App() {
                 getMutedConversationKey({ kind: 'direct', network: 'qortium', otherAddress: direct.address }),
               );
 
-              if (notifiable && !directMuted) {
+              if (notifiable && !directMuted && !isBlockedSender(blockedAddressesRef.current.qortium, direct.address)) {
                 void showChatNotification('qortium', {
                   source: { conversation: { kind: 'direct', otherAddress: direct.address }, kind: 'chat' },
                   text: getMessageSnippet(notifiable, t),
@@ -9734,7 +9807,7 @@ export default function App() {
                 sinceTimestamp,
               });
 
-              if (notifiable) {
+              if (notifiable && !isBlockedSender(blockedAddressesRef.current.qortal, direct.address)) {
                 void showChatNotification('qortal', {
                   source: { conversation: { kind: 'direct', otherAddress: direct.address }, kind: 'chat' },
                   text: getMessageSnippet(notifiable, t),
@@ -10601,6 +10674,19 @@ export default function App() {
 
     return () => window.clearInterval(interval);
   }, [account?.address, actionsKey]);
+
+  // 2.0.23 (G5): the block list is node-local, so it is (re)read whenever the
+  // host's action list changes — bridge detection, a node-route change that
+  // gains or loses an administered node — not per account.
+  useEffect(() => {
+    if (actions.length === 0) return;
+    void loadBlockedAddresses('qortium', actions);
+  }, [actionsKey]);
+
+  useEffect(() => {
+    if (qortalBridge.value.actions.length === 0) return;
+    void loadBlockedAddresses('qortal', qortalBridge.value.actions);
+  }, [qortalActionsKey]);
 
   // D6: mirrors the Qortium join-request/admin-request refresh interval
   // above, gated per-action on the Qortal bridge (see
@@ -11660,6 +11746,8 @@ export default function App() {
                 onOpenImage={setAvatarLightboxImage}
                 onReact={handleReactToMessage}
                 onReply={handleStartReply}
+                blockedAddresses={selectedBlockedAddresses}
+                blocking={selectedBlockControls}
                 onOpenWebLink={handleOpenWebLink}
                 onRetryMessage={handleRetryMessage}
                 onRetryRevision={handleRetryRevision}
@@ -11871,6 +11959,8 @@ export default function App() {
                 : null
             }
             onInvite={canInviteToSelectedGroup ? (address) => void handleModerateMember('invite', address, address) : null}
+            blocking={selectedBlockControls}
+            viewerAddress={selectedGroupViewerAddress}
             invitePending={moderationPendingAddress !== null}
             manageHref={selectedChat?.network === 'qortal' ? null : GROUP_MANAGER_APP_LINK}
             onOpenManage={

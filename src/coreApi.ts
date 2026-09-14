@@ -13,6 +13,12 @@ import {
   normalizeQortalOutgoingMessage,
 } from './qortalChatPayload';
 import {
+  BLOCKED_ADDRESSES_LIST,
+  getBlockListActions,
+  getBlockListCapability,
+  normalizeBlockedAddresses,
+} from './blockList';
+import {
   getQortalGeneralChatMessages,
   rememberQortalGeneralChatAccount,
   rememberQortalGeneralChatHostActions,
@@ -1802,6 +1808,42 @@ export async function openExternalLink(network: ChatNetwork, url: string, action
     throw new Error('Only http and https links can be opened.');
   }
   return bridgeRequest<unknown>(network, { action: 'OPEN_EXTERNAL_LINK', url });
+}
+
+// 2.0.23 (G5): Core's `blockedAddresses` list through whichever list dialect
+// the host advertises (blockList.ts). Reads are permissionless on Home 2 but
+// need an administered node; a capability error is reported as-is so the app
+// can hide the controls (isBlockListUnavailableError).
+export async function readBlockedAddresses(network: ChatNetwork, actions?: QdnAction[]) {
+  const dialect = getBlockListActions(network, actions);
+  if (!dialect) throw new Error('This host cannot read node lists.');
+  const request =
+    dialect.read === 'GET_LIST'
+      ? { action: 'GET_LIST', listName: BLOCKED_ADDRESSES_LIST }
+      : { action: 'GET_LIST_ITEMS', list_name: BLOCKED_ADDRESSES_LIST };
+  return normalizeBlockedAddresses(await bridgeRequest<unknown>(network, request));
+}
+
+export async function setAddressBlocked(network: ChatNetwork, address: string, blocked: boolean, actions?: QdnAction[]) {
+  const dialect = getBlockListActions(network, actions);
+  const capability = getBlockListCapability(network, actions);
+  const target = address.trim();
+  if (!dialect || !capability.write) throw new Error('This host cannot change node lists.');
+  if (!target) throw new Error('An address is required.');
+  const request =
+    dialect.add === 'ADD_TO_LIST'
+      ? blocked
+        ? { action: 'ADD_TO_LIST', items: [target], listName: BLOCKED_ADDRESSES_LIST }
+        : { action: 'REMOVE_FROM_LIST', items: [target], listName: BLOCKED_ADDRESSES_LIST }
+      : blocked
+        ? { action: 'ADD_LIST_ITEMS', items: [target], list_name: BLOCKED_ADDRESSES_LIST }
+        : { action: 'DELETE_LIST_ITEM', item: target, list_name: BLOCKED_ADDRESSES_LIST };
+  const result = await bridgeRequest<unknown>(network, request);
+  // Core answers text/plain "true"/"false"; Home 2 returns it as-is.
+  if (result === false || result === 'false') {
+    throw new Error(blocked ? 'The node declined to block this address.' : 'The node declined to unblock this address.');
+  }
+  return true;
 }
 
 export async function searchRecentTransactions(
