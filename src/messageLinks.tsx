@@ -1599,6 +1599,21 @@ export function renderMessageTextWithAppLinks(
       );
     }
 
+    // 2.0.26 (D-G): a tiny inline image carried in the message (data: URI,
+    // already validated by the parser: webp/jpeg/png, base64, bounded).
+    if (block.kind === 'image') {
+      return (
+        <img
+          alt={block.alt || 'image'}
+          className="message__inline-image"
+          decoding="async"
+          key={`img-${blockIndex}`}
+          loading="lazy"
+          src={block.src}
+        />
+      );
+    }
+
     return (
       <Fragment key={`p-${blockIndex}`}>
         {separator}

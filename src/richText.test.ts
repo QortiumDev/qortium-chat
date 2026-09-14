@@ -7,6 +7,9 @@ import {
   richTextToParagraphHtml,
   richTextToPlainText,
   richTextToTiptapDoc,
+  formatInlineImageMarkup,
+  INLINE_IMAGE_MAX_SRC_LENGTH,
+  parseInlineImageLine,
   stripRichTextMarkup,
   tiptapDocToRichText,
 } from './richText';
@@ -68,6 +71,43 @@ describe('parseRichText', () => {
     expect(hasRichTextMarkup('plain text')).toBe(false);
     expect(hasRichTextMarkup('**bold**')).toBe(true);
     expect(escapeRichText('*a* _b_ @c c@d `e`')).toBe('\\*a\\* \\_b\\_ \\@c c@d \\`e\\`');
+  });
+});
+
+// 2.0.26 (D-G): a tiny data: image on its own line is an image block.
+describe('inline images', () => {
+  const src = 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=';
+
+  it('parses, serializes, strips and escapes image lines', () => {
+    const markup = formatInlineImageMarkup(src, 'a ]cat\nx');
+    expect(markup).toBe(`![a  cat x](${src})`);
+    expect(parseInlineImageLine(markup)).toEqual({ alt: 'a  cat x', src });
+    expect(parseRichText(`before\n${markup}\nafter`)).toEqual([
+      { kind: 'paragraph', inlines: [text('before')] },
+      { alt: 'a  cat x', kind: 'image', src },
+      { kind: 'paragraph', inlines: [text('after')] },
+    ]);
+    expect(richTextToMarkup(parseRichText(markup))).toBe(markup);
+    expect(stripRichTextMarkup(`hi\n${markup}`)).toBe('hi\n[a  cat x]');
+    expect(hasRichTextMarkup(markup)).toBe(true);
+    // Not an image: wrong scheme, non-image mime, oversized, trailing text.
+    expect(parseInlineImageLine('![x](https://example.com/a.png)')).toBeNull();
+    expect(parseInlineImageLine('![x](data:text/html;base64,AAAA)')).toBeNull();
+    expect(parseInlineImageLine(`![x](data:image/png;base64,${'A'.repeat(INLINE_IMAGE_MAX_SRC_LENGTH)})`)).toBeNull();
+    expect(parseInlineImageLine(`${markup} tail`)).toBeNull();
+    expect(parseRichText('![x](https://example.com/a.png)')).toEqual([
+      { kind: 'paragraph', inlines: [text('![x](https://example.com/a.png)')] },
+    ]);
+    // A typed line that merely looks like image markup survives a round trip as text.
+    const literal = parseRichText(`\\${markup}`);
+    expect(literal).toEqual([{ kind: 'paragraph', inlines: [text(markup)] }]);
+    expect(richTextToMarkup(literal)).toBe(`\\${markup}`);
+  });
+
+  it('maps image blocks to Tiptap image nodes and <img> HTML', () => {
+    const blocks = parseRichText(formatInlineImageMarkup(src, 'cat'));
+    expect(richTextToTiptapDoc(blocks)).toEqual({ content: [{ attrs: { alt: 'cat', src }, type: 'image' }], type: 'doc' });
+    expect(richTextToParagraphHtml(blocks)).toBe(`<img alt="cat" src="${src}">`);
   });
 });
 

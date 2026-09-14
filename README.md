@@ -148,6 +148,22 @@ Qortal Hub's editor uses — marks, mentions, bullet lists and code blocks — s
 Hub renders it natively, and Hub-authored formatting (including headings,
 links and quotes) is read back into the same markup here.
 
+## Inline images
+
+Since Chat 2.0.26 an image pasted or dropped into a Qortium conversation
+travels inside the message itself when a small preview of it fits under
+Core's 4 000-byte CHAT cap: the composer downscales it (WebP or JPEG, at most
+160 px on the long side), shows the preview and its byte count, and sends it
+as an `![alt](data:image/…;base64,…)` line that every Chat reader renders as
+a thumbnail. Room for the rest of the message is counted first — reply
+references, the typed text and the closed-group plaintext cap — so an image
+never pushes a message over the limit. A larger image, or one that no longer
+fits after the text grows, takes the ordinary attachment path (a QDN publish
+and link, see "Current Limits"), and the chip's "Attach instead" button
+switches a staged preview to that path by hand. Qortal conversations keep
+the attachment path only, since Qortal Hub carries images as QDN resources.
+
+
 ## Group events and moderation
 
 Since Chat 2.0.20 the group feed interleaves everyone's confirmed group

@@ -77,6 +77,7 @@ import {
   submitGroupApproval,
 } from './coreApi';
 import { getBlockListCapability, isBlockListUnavailableError, isBlockedSender } from './blockList';
+import { encodeInlineImage, inlineImageBudget, isInlineImageCandidate, type InlineImageResult } from './inlineImage';
 import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch';
 import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
 import { PrivateActiveChatsRequestCoordinator } from './privateActiveChatsRequest';
@@ -1426,6 +1427,9 @@ export default function App() {
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [chatSearchMatches, setChatSearchMatches] = useState(-1);
   const chatSearchInputRef = useRef<HTMLInputElement | null>(null);
+  // 2.0.26 (D-G): an image pasted/dropped into a Qortium chat, downscaled to
+  // fit inside the message; cleared on send, chat switch, or "Attach instead".
+  const [stagedInlineImage, setStagedInlineImage] = useState<(InlineImageResult & { file: File }) | null>(null);
   const blockedAddressesRef = useRef(blockedAddresses);
   blockedAddressesRef.current = blockedAddresses;
   const [accountJoinRequests, setAccountJoinRequests] =
@@ -3339,7 +3343,9 @@ export default function App() {
       ? getPrivateGroupComposerMaxPlaintextBytes(selectedChat.network ?? 'qortium', selectedPrivateGroupChatState)
       : undefined;
   const draftByteLength =
-    typeof selectedGroupPrivatePlaintextMaxBytes === 'number' ? getUtf8ByteLength(draft) : 0;
+    typeof selectedGroupPrivatePlaintextMaxBytes === 'number'
+      ? getUtf8ByteLength(stagedInlineImage ? `${draft}\n${stagedInlineImage.markup}` : draft)
+      : 0;
   // G10: every other conversation gets a wire-envelope estimate against the
   // public caps (4000 CHAT / 3984 direct); shown from half the cap, blocking
   // at the cap so a long draft fails here and not at the bridge.
@@ -3351,13 +3357,13 @@ export default function App() {
       return null;
     }
     return estimateComposerByteBudget({
-      draft,
+      draft: stagedInlineImage ? `${draft}\n${stagedInlineImage.markup}` : draft,
       isGeneralChat: selectedChat.kind === 'group' && selectedChat.group.groupId === 0,
       kind: selectedChat.kind === 'group' ? 'group' : 'direct',
       network: selectedChat.network ?? 'qortium',
       repliedTo: composeContext?.kind === 'reply' ? composeContext.message.signature ?? null : null,
     });
-  }, [composeContext, draft, selectedChat, selectedGroupPrivatePlaintextMaxBytes]);
+  }, [composeContext, draft, selectedChat, selectedGroupPrivatePlaintextMaxBytes, stagedInlineImage]);
   const selectedConversationMuted =
     !!selectedChat &&
     mutedConversationKeys.has(
@@ -3369,7 +3375,7 @@ export default function App() {
     );
   const canSubmitMessage =
     canComposeMessage &&
-    (draft.trim().length > 0 || stagedAttachment?.phase === 'ready') &&
+    (draft.trim().length > 0 || stagedAttachment?.phase === 'ready' || stagedInlineImage !== null) &&
     !sendPending &&
     (typeof selectedGroupPrivatePlaintextMaxBytes !== 'number' || draftByteLength <= selectedGroupPrivatePlaintextMaxBytes) &&
     !(publicComposerByteBudget?.overLimit && composeContext?.kind !== 'edit');
@@ -6861,6 +6867,7 @@ export default function App() {
     // Edits keep the original message's media; a staged new attachment does
     // not belong in an edit.
     setStagedAttachment(null);
+    setStagedInlineImage(null);
     setAttachmentError('');
     composerRef.current?.focus();
   }
@@ -7024,7 +7031,9 @@ export default function App() {
         }
       }
 
-      const bodyText = publishedLink ? (text ? `${text}\n${publishedLink}` : publishedLink) : text;
+      const inlineMarkup = context?.kind !== 'edit' && chat.network !== 'qortal' ? stagedInlineImage?.markup ?? '' : '';
+      const withImage = inlineMarkup ? (text ? `${text}\n${inlineMarkup}` : inlineMarkup) : text;
+      const bodyText = publishedLink ? (withImage ? `${withImage}\n${publishedLink}` : publishedLink) : withImage;
       let message = bodyText;
       let chatReference: string | undefined;
 
@@ -7129,6 +7138,7 @@ export default function App() {
         setDraft((current) => (current === submittedDraft ? '' : current));
         setComposeContext(null);
         setStagedAttachment(null);
+        setStagedInlineImage(null);
         setAttachmentError('');
         // Return the feed to the bottom so the just-sent message is in view.
         setSentMessageNonce((nonce) => nonce + 1);
@@ -7504,6 +7514,50 @@ export default function App() {
   // schemas-publish-attachments.md § 2) the app has no way to hand the bytes
   // to Home's picker, so point the user at the attach button instead of
   // silently ignoring the drop.
+  // 2.0.26 (D-G): a small image goes INSIDE a Qortium message when a preview
+  // fits under the CHAT cap; otherwise (or on Qortal, where Hub carries
+  // images as QDN resources) the file takes the attachment path as before.
+  const canInlineImage = selectedChat?.network !== 'qortal' && composeContext?.kind !== 'edit';
+
+  // Bytes left for the image line after the current draft's wire envelope.
+  function currentInlineImageBudget() {
+    if (typeof selectedGroupPrivatePlaintextMaxBytes === 'number') {
+      return inlineImageBudget(selectedGroupPrivatePlaintextMaxBytes, getUtf8ByteLength(draft));
+    }
+    const estimate = selectedChat && selectedChat.kind === 'group' && selectedChat.group.isOpen === false
+      ? null
+      : selectedChat
+        ? estimateComposerByteBudget({
+            draft,
+            isGeneralChat: selectedChat.kind === 'group' && selectedChat.group.groupId === 0,
+            kind: selectedChat.kind === 'group' ? 'group' : 'direct',
+            network: selectedChat.network ?? 'qortium',
+            repliedTo: composeContext?.kind === 'reply' ? composeContext.message.signature ?? null : null,
+          })
+        : null;
+    return estimate ? inlineImageBudget(estimate.max, estimate.bytes) : 0;
+  }
+
+  async function tryStageInlineImage(file: File) {
+    if (!canInlineImage || !isInlineImageCandidate(file)) return false;
+    const result = await encodeInlineImage(file, currentInlineImageBudget());
+    if (!result) return false;
+    setStagedInlineImage({ ...result, file });
+    setAttachmentError('');
+    return true;
+  }
+
+  function stageFileOrInline(file: File) {
+    void tryStageInlineImage(file).then((inlined) => {
+      if (inlined) return;
+      if (canAttach && canStageLocalFile) {
+        stageLocalFile(file);
+        return;
+      }
+      setAttachmentError(t(canAttach ? 'status.attachment.usePicker' : 'status.inlineImage.tooLarge'));
+    });
+  }
+
   function handleAttachmentDrop(event: DragEvent<HTMLElement>) {
     if (!isFileDrag(event)) {
       return;
@@ -7513,18 +7567,18 @@ export default function App() {
     attachmentDragDepthRef.current = 0;
     setDraggingAttachment(false);
 
-    if (!canAttach) {
+    const file = getFirstTransferFile(event.dataTransfer);
+
+    if (!file) {
+      if (canAttach) setAttachmentError(t('status.attachment.usePicker'));
       return;
     }
 
-    const file = canStageLocalFile ? getFirstTransferFile(event.dataTransfer) : null;
-
-    if (file) {
-      stageLocalFile(file);
+    if (!canAttach && !(canInlineImage && isInlineImageCandidate(file))) {
       return;
     }
 
-    setAttachmentError(t('status.attachment.usePicker'));
+    stageFileOrInline(file);
   }
 
   function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -7533,18 +7587,12 @@ export default function App() {
     // Only intercept when the clipboard carries a file (e.g. a screenshot or
     // file copied from the desktop); plain text pastes flow through
     // untouched. Same split as handleAttachmentDrop above.
-    if (!file || !canAttach) {
+    if (!file || (!canAttach && !(canInlineImage && isInlineImageCandidate(file)))) {
       return;
     }
 
     event.preventDefault();
-
-    if (canStageLocalFile) {
-      stageLocalFile(file);
-      return;
-    }
-
-    setAttachmentError(t('status.attachment.usePicker'));
+    stageFileOrInline(file);
   }
 
   // Insert text at the composer caret (falling back to the end), keeping
@@ -9025,6 +9073,7 @@ export default function App() {
     setComposerEmojiOpen(false);
     setLinkResourceOpen(false);
     setStagedAttachment(null);
+    setStagedInlineImage(null);
     setAttachmentError('');
     attachmentDragDepthRef.current = 0;
     setDraggingAttachment(false);
@@ -11968,6 +12017,26 @@ export default function App() {
               onLinkResourceClick={() => setLinkResourceOpen(true)}
               onCancelContext={cancelComposeContext}
               onClearAttachment={clearStagedAttachment}
+              inlineImage={stagedInlineImage}
+              inlineImageLabels={
+                stagedInlineImage
+                  ? {
+                      attachInstead: t('button.attachInstead'),
+                      remove: t('label.inlineImage.remove'),
+                      size: t('label.inlineImage.size', { bytes: String(stagedInlineImage.bytes) }),
+                    }
+                  : null
+              }
+              onAttachInlineImageInstead={
+                stagedInlineImage && canAttach && canStageLocalFile
+                  ? () => {
+                      const { file } = stagedInlineImage;
+                      setStagedInlineImage(null);
+                      stageLocalFile(file);
+                    }
+                  : null
+              }
+              onClearInlineImage={() => setStagedInlineImage(null)}
               onDraftChange={setDraft}
               onEmojiSelected={insertComposerEmoji}
               onPaste={handleComposerPaste}
