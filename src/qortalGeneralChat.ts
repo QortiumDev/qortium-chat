@@ -30,13 +30,23 @@ type RawMessageTransaction = {
   fee?: number | string;
   isEncrypted?: boolean;
   isText?: boolean;
+  nonce?: number | string;
   recipient?: string | null;
   recipientAddress?: string | null;
+  reference?: string;
   senderPublicKey?: string;
+  signature?: string;
   timestamp?: number;
   txGroupId?: number;
   txGroupID?: number;
+  type?: string;
 };
+
+function numberField(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^-?\d+$/.test(value)) return Number(value);
+  return null;
+}
 
 type ParsedGeneralChat = {
   chatReference: string | null;
@@ -462,32 +472,58 @@ function bytesToBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+// 2.0.22: the OUTER MESSAGE is verified too (rebuilt from the row's reference,
+// nonce and timestamp and checked against the row's signature under the
+// derived wrapper key), so a feed row that merely carries someone's valid
+// inner CHAT is not accepted as a wrapper. Same rule as Home 2.1's reader.
 export async function decodeQortalGeneralWrappedMessage(transaction: RawMessageTransaction): Promise<ChatMessage | null> {
   try {
     const txGroupId = transaction.txGroupId ?? transaction.txGroupID;
     const wrapperPublicKey58 = transaction.senderPublicKey ?? transaction.creatorPublicKey;
     const recipient = transaction.recipient ?? transaction.recipientAddress;
+    const nonce = numberField(transaction.nonce);
+    const outerTimestamp = numberField(transaction.timestamp);
 
     if (
+      (transaction.type !== undefined && transaction.type !== 'MESSAGE') ||
       Number(txGroupId) !== GENERAL_CHAT_GROUP_ID ||
       typeof transaction.data !== 'string' ||
+      typeof transaction.reference !== 'string' ||
+      typeof transaction.signature !== 'string' ||
+      nonce === null || nonce < 0 || nonce > 0xffffffff ||
+      outerTimestamp === null || outerTimestamp <= 0 ||
       !wrapperPublicKey58 ||
       !recipient ||
       Number(transaction.amount) !== 0 ||
-      (transaction.fee !== undefined && Number(transaction.fee) !== 0) ||
-      (transaction.isText !== undefined && transaction.isText !== false) ||
-      (transaction.isEncrypted !== undefined && transaction.isEncrypted !== false)
+      Number(transaction.fee ?? 0) !== 0 ||
+      transaction.isText !== false ||
+      transaction.isEncrypted !== false
     ) {
       return null;
     }
 
-    const parsed = parseSignedQortalGeneralChatBytes(base58Decode(transaction.data));
+    const data = base58Decode(transaction.data);
+    const parsed = parseSignedQortalGeneralChatBytes(data);
     const { recipientAddress, senderKeyPair } = await deriveQortalGeneralWrapperKeys(parsed.signature);
 
     if (
       base58Encode(senderKeyPair.publicKey) !== wrapperPublicKey58 ||
       recipientAddress !== recipient
     ) {
+      return null;
+    }
+
+    const outerBytes = stampQortalGeneralChatNonce(
+      buildUnsignedQortalGeneralWrapperBytes({
+        data,
+        lastReference: getFixedBase58Bytes(transaction.reference, 'Wrapper reference', 64),
+        recipient,
+        senderPublicKey: senderKeyPair.publicKey,
+        timestamp: outerTimestamp,
+      }),
+      nonce,
+    );
+    if (!nacl.sign.detached.verify(outerBytes, getFixedBase58Bytes(transaction.signature, 'Wrapper signature', 64), senderKeyPair.publicKey)) {
       return null;
     }
 

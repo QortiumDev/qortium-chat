@@ -2,6 +2,7 @@ import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { base58Decode, base58Encode } from './base58';
+import liveWrapperFixture from './fixtures/qortal-general-chat-wrapper-v1.json';
 import {
   buildUnsignedQortalGeneralChatBytes,
   buildUnsignedQortalGeneralWrapperBytes,
@@ -35,6 +36,41 @@ function signedGeneralChat(message = '{"version":3,"messageText":"hello"}') {
   return { bytes: new Uint8Array([...stamped, ...signature]), keyPair, signature };
 }
 
+// A complete, signed wrapper row as the node's unconfirmed feed reports it
+// (2.0.22 verifies the outer MESSAGE too).
+async function wrapperRow(bytes: Uint8Array, signature: Uint8Array, overrides: Record<string, unknown> = {}) {
+  const { recipientAddress, senderKeyPair } = await deriveQortalGeneralWrapperKeys(signature);
+  const reference = new Uint8Array(64).fill(21);
+  const timestamp = 1_700_000_000_100;
+  const nonce = 4242;
+  const outer = stampQortalGeneralChatNonce(
+    buildUnsignedQortalGeneralWrapperBytes({
+      data: bytes,
+      lastReference: reference,
+      recipient: recipientAddress,
+      senderPublicKey: senderKeyPair.publicKey,
+      timestamp,
+    }),
+    nonce,
+  );
+  return {
+    amount: '0.00000000',
+    data: base58Encode(bytes),
+    fee: '0.00000000',
+    isEncrypted: false,
+    isText: false,
+    nonce,
+    recipient: recipientAddress,
+    reference: base58Encode(reference),
+    senderPublicKey: base58Encode(senderKeyPair.publicKey),
+    signature: base58Encode(nacl.sign.detached(outer, senderKeyPair.secretKey)),
+    timestamp,
+    txGroupId: 0,
+    type: 'MESSAGE',
+    ...overrides,
+  };
+}
+
 describe('Qortal MESSAGE-wrapped General Chat', () => {
   beforeEach(() => {
     qortalRequestMock.mockReset();
@@ -65,17 +101,7 @@ describe('Qortal MESSAGE-wrapped General Chat', () => {
 
   it('derives and verifies the deterministic wrapper sender and recipient', async () => {
     const { bytes, keyPair, signature } = signedGeneralChat();
-    const { recipientAddress, senderKeyPair } = await deriveQortalGeneralWrapperKeys(signature);
-    const decoded = await decodeQortalGeneralWrappedMessage({
-      amount: 0,
-      data: base58Encode(bytes),
-      fee: 0,
-      isEncrypted: false,
-      isText: false,
-      recipient: recipientAddress,
-      senderPublicKey: base58Encode(senderKeyPair.publicKey),
-      txGroupId: 0,
-    });
+    const decoded = await decodeQortalGeneralWrappedMessage(await wrapperRow(bytes, signature));
 
     expect(decoded).toMatchObject({
       isEncrypted: false,
@@ -91,18 +117,25 @@ describe('Qortal MESSAGE-wrapped General Chat', () => {
       '{"version":3,"messageText":"hello"}',
     );
 
-    await expect(
-      decodeQortalGeneralWrappedMessage({
-        amount: 0,
-        data: base58Encode(bytes),
-        fee: 0,
-        isEncrypted: false,
-        isText: false,
-        recipient: recipientAddress,
-        senderPublicKey: base58Encode(new Uint8Array(32).fill(9)),
-        txGroupId: 0,
-      }),
-    ).resolves.toBeNull();
+    // Wrong wrapper key, tampered outer fields or a missing outer field: not a wrapper.
+    for (const overrides of [
+      { senderPublicKey: base58Encode(new Uint8Array(32).fill(9)) },
+      { nonce: 4243 },
+      { timestamp: 1_700_000_000_101 },
+      { signature: base58Encode(new Uint8Array(64).fill(1)) },
+      { reference: undefined },
+      { isText: undefined },
+      { type: 'CHAT' },
+    ]) {
+      await expect(decodeQortalGeneralWrappedMessage(await wrapperRow(bytes, signature, overrides))).resolves.toBeNull();
+    }
+  });
+
+  it('decodes a real wrapper as Qortal Hub 3.0.3 broadcast it (live fixture)', async () => {
+    const row = liveWrapperFixture;
+    const decoded = await decodeQortalGeneralWrappedMessage(row);
+    expect(decoded).toMatchObject({ sender: 'QeFmVbrEowbWeZK2paHdu7r5mbUi82ACMh', timestamp: 1789316804473 });
+    await expect(decodeQortalGeneralWrappedMessage({ ...row, nonce: row.nonce + 1 })).resolves.toBeNull();
   });
 
   it('serializes the outer fee-zero MESSAGE transaction with its nonce at the CHAT/MESSAGE offset', async () => {
@@ -129,32 +162,12 @@ describe('Qortal MESSAGE-wrapped General Chat', () => {
   it('reads only verified wrappers from the unconfirmed MESSAGE feed', async () => {
     const first = signedGeneralChat('first');
     const second = signedGeneralChat('second');
-    const firstWrapper = await deriveQortalGeneralWrapperKeys(first.signature);
-    const secondWrapper = await deriveQortalGeneralWrapperKeys(second.signature);
     qortalRequestMock.mockResolvedValueOnce({
       body: '',
       contentType: 'application/json',
       data: [
-        {
-          amount: 0,
-          data: base58Encode(first.bytes),
-          fee: 0,
-          isEncrypted: false,
-          isText: false,
-          recipient: firstWrapper.recipientAddress,
-          senderPublicKey: base58Encode(firstWrapper.senderKeyPair.publicKey),
-          txGroupId: 0,
-        },
-        {
-          amount: 0,
-          data: base58Encode(second.bytes),
-          fee: 0,
-          isEncrypted: false,
-          isText: false,
-          recipient: secondWrapper.recipientAddress,
-          senderPublicKey: base58Encode(new Uint8Array(32).fill(3)),
-          txGroupId: 0,
-        },
+        await wrapperRow(first.bytes, first.signature),
+        await wrapperRow(second.bytes, second.signature, { senderPublicKey: base58Encode(new Uint8Array(32).fill(3)) }),
       ],
       ok: true,
       status: 200,
