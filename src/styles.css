@@ -2815,7 +2815,7 @@ button.message__reply-preview:focus-visible {
   margin: 0;
 }
 
-/* 2.0.27 (D-G): a pasted/dropped image travelling inside the message —
+/* 2.0.26 (D-G): a pasted/dropped image travelling inside the message —
    thumbnail, byte count, "Attach instead" (when the file path is available),
    remove. Shares the attachment row's shell. */
 .composer__inline-image-preview {
