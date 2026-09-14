@@ -757,7 +757,8 @@ export const MessageList = memo(function MessageList({
 
     const escapedName = selfName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    return new RegExp(`@${escapedName}(?![\\w-])`, 'i');
+    // `@name` and the bracketed form Hub-authored mentions with spaces use.
+    return new RegExp(`@(?:${escapedName}(?![\\w-])|\\[${escapedName}\\])`, 'i');
   }, [selfName]);
   // Set when the user sends, so the message that lands a moment later scrolls into
   // view even if their scroll position was not at the bottom.

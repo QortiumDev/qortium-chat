@@ -190,7 +190,8 @@ export async function reconcileChatNotifications(
 
 function buildMentionPattern(name: string) {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`@${escapedName}(?![\\w-])`, 'i');
+  // `@name` and the bracketed form mentions with spaces use (richText.ts).
+  return new RegExp(`@(?:${escapedName}(?![\\w-])|\\[${escapedName}\\])`, 'i');
 }
 
 export type ChatAttentionKind = 'mention' | 'reply';

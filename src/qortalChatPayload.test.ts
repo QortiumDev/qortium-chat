@@ -56,11 +56,11 @@ describe('Qortal Hub group-chat payloads', () => {
       messageText: {
         content: [
           {
-            content: [
-              { text: 'Hello', type: 'text' },
-              { type: 'hardBreak' },
-              { text: 'Qortal', type: 'text' },
-            ],
+            content: [{ text: 'Hello', type: 'text' }],
+            type: 'paragraph',
+          },
+          {
+            content: [{ text: 'Qortal', type: 'text' }],
             type: 'paragraph',
           },
         ],

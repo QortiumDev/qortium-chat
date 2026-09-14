@@ -533,7 +533,8 @@ describe('machine messages', () => {
       decodeHubText('<script>one<style>two</script>three</style><p>visible</p>'),
     ).toBe('visible');
     expect(decodeHubText('<p>keep</p><script>drop<p>and this too')).toBe('keep');
-    expect(decodeHubText(`${'<b>'.repeat(256)}text${'</b>'.repeat(256)}`)).toBe('text');
+    // 2.0.19: marks become markup, but same-mark nesting emits one pair.
+    expect(decodeHubText(`${'<b>'.repeat(256)}text${'</b>'.repeat(256)}`)).toBe('**text**');
   });
 
   it('handles repeated and malformed comments without exposing their contents', () => {
@@ -548,7 +549,7 @@ describe('machine messages', () => {
         '2 < 3 <b>bold</b> <a title="1 > 0" href="qortal://APP/Test/default"><em>Go</em></a>' +
           ' <script data-value=">">hidden</script> End',
       ),
-    ).toBe('2 < 3 bold Go (qortal://APP/Test/default)  End');
+    ).toBe('2 < 3 **bold** *Go* (qortal://APP/Test/default)  End');
 
     // Entity-decoded markup is message text, not a second HTML parsing pass.
     expect(decodeHubText('&lt;script&gt;visible&lt;/script&gt; &amp;lt;b&amp;gt;')).toBe(

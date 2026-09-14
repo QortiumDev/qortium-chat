@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.18, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.19, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -132,6 +132,21 @@ For a publish pass, confirm the local Core is fully synchronized before running
 `http://127.0.0.1:24891/render/APP/Chat/Chat`,
 and the published resource should report `READY` at
 `/arbitrary/resource/status/APP/Chat/Chat?build=true`.
+
+## Formatting
+
+Messages support a small formatting subset (Chat 2.0.19): `**bold**`,
+`*italic*` or `_italic_`, `~~strike~~`, `` `code` ``, fenced ```` ``` ```` code
+blocks, `- ` bullet lists and `@name` mentions (`@[Name With Spaces]` for
+names containing spaces). The composer's B / I / S / `</>` buttons (or
+Ctrl/Cmd+B, I, E) wrap the selection, and typing `@` offers the conversation's
+named members. A backslash makes a marker literal (`\*not bold\*`).
+
+On Qortium the message text carries this markup as written (Chat is the only
+reader there). On Qortal the same content is sent as the Tiptap document
+Qortal Hub's editor uses — marks, mentions, bullet lists and code blocks — so
+Hub renders it natively, and Hub-authored formatting (including headings,
+links and quotes) is read back into the same markup here.
 
 ## Current Limits
 

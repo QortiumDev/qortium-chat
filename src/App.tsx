@@ -2085,6 +2085,21 @@ export default function App() {
     return counts;
   }, [cachedGeneralChatMembers.length, generalChatMembersForUi.length, isSelectedGeneralChat]);
   const selectedGroupMembers = isSelectedGeneralChat ? generalChatMembersForUi : groupMembers.value;
+  // G1b: who the composer's `@` autocomplete offers — the group's named
+  // members (or every message sender in General Chat), or the DM peer.
+  const mentionCandidates = useMemo(() => {
+    if (selectedChat?.kind === 'direct') {
+      const name = selectedChat.direct.name;
+
+      return name ? [{ address: selectedChat.direct.address, name }] : [];
+    }
+
+    return selectedGroupMembers.flatMap((member) => {
+      const name = getGroupMemberRegisteredName(member);
+
+      return name ? [{ address: getGroupMemberAddress(member) ?? null, name }] : [];
+    });
+  }, [selectedChat, selectedGroupMembers]);
   const selectedGroupMembersPhase = isSelectedGeneralChat
     ? !hasSelectedMessages && messages.phase === 'ready'
       ? 'loading'
@@ -11541,6 +11556,14 @@ export default function App() {
               }
               draft={draft}
               emojiLabel={t('label.composer.emoji')}
+              formatLabels={{
+                bold: t('label.composer.bold'),
+                code: t('label.composer.code'),
+                italic: t('label.composer.italic'),
+                strike: t('label.composer.strike'),
+              }}
+              mentionCandidates={mentionCandidates}
+              mentionSuggestionsLabel={t('label.composer.mentions')}
               emojiOpen={isComposerEmojiOpen}
               loadingLabel={t('label.loading')}
               messageLabel={t('label.common.message')}
