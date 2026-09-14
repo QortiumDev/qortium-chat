@@ -17,10 +17,64 @@ import { AdminIcon, OwnerIcon } from './icons';
 import { type TranslateFunction } from './i18n';
 import { type GroupData, type GroupMember } from './types';
 
+// 2.0.20 (G3): which moderation actions the viewer may take on a member.
+// Owner-only operations (admin add/remove) and the rule that nobody
+// moderates the owner or themselves are decided here from the roles; the
+// host still prompts and Core still validates.
+export type MemberModerationKind = 'addAdmin' | 'ban' | 'kick' | 'removeAdmin';
+
+const MODERATION_BUTTON_KEYS = {
+  addAdmin: 'button.moderate.addAdmin',
+  ban: 'button.moderate.ban',
+  kick: 'button.moderate.kick',
+  removeAdmin: 'button.moderate.removeAdmin',
+} as const;
+
+const MODERATION_TITLE_KEYS = {
+  addAdmin: 'action.moderate.addAdmin',
+  ban: 'action.moderate.ban',
+  kick: 'action.moderate.kick',
+  removeAdmin: 'action.moderate.removeAdmin',
+} as const;
+
+export type MemberModeration = {
+  /** Kinds the host advertises (empty = no controls). */
+  available: ReadonlySet<MemberModerationKind>;
+  /** The member an action is in flight for. */
+  pendingAddress: string | null;
+  onModerate: (kind: MemberModerationKind, address: string, label: string) => void;
+  viewerAddress: string | null;
+  viewerRole: 'admin' | 'member' | 'owner';
+};
+
+export function getMemberModerationKinds(
+  moderation: MemberModeration,
+  memberAddress: string,
+  memberRole: 'admin' | 'member' | 'owner',
+): MemberModerationKind[] {
+  if (moderation.viewerRole === 'member' || memberRole === 'owner' || memberAddress === moderation.viewerAddress) {
+    return [];
+  }
+
+  const kinds: MemberModerationKind[] = [];
+
+  if (moderation.viewerRole === 'owner') {
+    kinds.push(memberRole === 'admin' ? 'removeAdmin' : 'addAdmin');
+  }
+
+  // Admins moderate ordinary members; only the owner moderates admins.
+  if (memberRole === 'member' || moderation.viewerRole === 'owner') {
+    kinds.push('kick', 'ban');
+  }
+
+  return kinds.filter((kind) => moderation.available.has(kind));
+}
+
 export function GroupMemberList({
   avatarProfiles,
   group,
   members,
+  moderation = null,
   onOpenAccount,
   onOpenAvatar,
   t,
@@ -28,6 +82,7 @@ export function GroupMemberList({
   avatarProfiles: AvatarProfilesByAddress;
   group: GroupData | null;
   members: GroupMember[];
+  moderation?: MemberModeration | null;
   onOpenAccount: (target: AccountInfoTarget) => void;
   onOpenAvatar: (image: AvatarLightboxImage) => void;
   t: TranslateFunction;
@@ -51,6 +106,8 @@ export function GroupMemberList({
         const role = getGroupMemberRole(member, ownerAddress);
         const roleLabel =
           role === 'owner' ? t('label.group.owner') : role === 'admin' ? t('label.group.admin') : '';
+        const moderationKinds = moderation && address ? getMemberModerationKinds(moderation, address, role) : [];
+        const moderationPending = !!moderation && moderation.pendingAddress === address;
 
         return (
           <li
@@ -98,6 +155,22 @@ export function GroupMemberList({
                 title={roleLabel}
               >
                 {role === 'owner' ? <OwnerIcon /> : <AdminIcon />}
+              </span>
+            ) : null}
+            {moderationKinds.length > 0 && address ? (
+              <span className="member-chip__moderation">
+                {moderationKinds.map((kind) => (
+                  <button
+                    className={`button button--secondary member-chip__moderate member-chip__moderate--${kind}`}
+                    disabled={moderationPending}
+                    key={kind}
+                    onClick={() => moderation?.onModerate(kind, address, label)}
+                    title={t(MODERATION_TITLE_KEYS[kind], { member: label })}
+                    type="button"
+                  >
+                    {moderationPending ? t('button.working') : t(MODERATION_BUTTON_KEYS[kind])}
+                  </button>
+                ))}
               </span>
             ) : null}
           </li>

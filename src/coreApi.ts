@@ -1717,6 +1717,87 @@ export async function leaveGroup(groupId: number, network: ChatNetwork = 'qortiu
   });
 }
 
+// 2.0.20 (G3): member-level moderation. Field names follow Qortal Hub's
+// qortalRequest contract (`qortalAddress`, `inviteeAddress`/`inviteTime`,
+// `reason`, `banTime`); Home 2 accepts the same names as aliases on both
+// chains (electron/home-v2-group-admin-actions.ts memberKeys), so one wrapper
+// serves T1/T2/T3. Every one of these prompts in the host and rides Chat's
+// tracked-transaction flow like approve/leave.
+export type GroupModerationKind =
+  | 'addAdmin'
+  | 'ban'
+  | 'cancelInvite'
+  | 'invite'
+  | 'kick'
+  | 'removeAdmin'
+  | 'unban';
+
+export const GROUP_MODERATION_ACTIONS: Readonly<Record<GroupModerationKind, QdnAction>> = {
+  addAdmin: 'ADD_GROUP_ADMIN',
+  ban: 'BAN_FROM_GROUP',
+  cancelInvite: 'CANCEL_GROUP_INVITE',
+  invite: 'INVITE_TO_GROUP',
+  kick: 'KICK_FROM_GROUP',
+  removeAdmin: 'REMOVE_GROUP_ADMIN',
+  unban: 'CANCEL_GROUP_BAN',
+};
+
+export async function moderateGroupMember(
+  kind: GroupModerationKind,
+  groupId: number,
+  address: string,
+  network: ChatNetwork = 'qortium',
+  options: { reason?: string } = {},
+) {
+  const reason = (options.reason ?? '').trim();
+  const request =
+    kind === 'invite'
+      ? { action: 'INVITE_TO_GROUP', groupId, inviteeAddress: address, inviteTime: 0 }
+      : kind === 'cancelInvite'
+        ? { action: 'CANCEL_GROUP_INVITE', groupId, inviteeAddress: address, qortalAddress: address }
+        : kind === 'ban'
+          ? { action: 'BAN_FROM_GROUP', groupId, qortalAddress: address, reason, banTime: 0 }
+          : kind === 'unban'
+            ? { action: 'CANCEL_GROUP_BAN', groupId, qortalAddress: address }
+            : kind === 'kick'
+              ? { action: 'KICK_FROM_GROUP', groupId, qortalAddress: address, reason }
+              : kind === 'addAdmin'
+                ? { action: 'ADD_GROUP_ADMIN', groupId, qortalAddress: address }
+                : { action: 'REMOVE_GROUP_ADMIN', groupId, qortalAddress: address };
+
+  return bridgeRequest<GroupMembershipActionResult>(network, request);
+}
+
+// 2.0.20 (G2): the newest confirmed transactions of the given types. Both
+// Home 2 and Hub cap `limit` (Home at 100) and require an explicit
+// confirmation status. The group filter is applied by the caller
+// (groupEvents.ts) — Core's search has none for membership transactions.
+export async function searchRecentTransactions(
+  network: ChatNetwork,
+  txTypes: readonly string[],
+  limit: number,
+  actions?: QdnAction[],
+): Promise<unknown[]> {
+  if (!hasBridgeAction(actions, 'SEARCH_TRANSACTIONS')) {
+    return [];
+  }
+
+  const result = await bridgeRequest<unknown>(network, {
+    action: 'SEARCH_TRANSACTIONS',
+    confirmationStatus: 'CONFIRMED',
+    limit,
+    reverse: true,
+    txType: [...txTypes],
+  });
+
+  if (Array.isArray(result)) return result;
+  if (result && typeof result === 'object' && Array.isArray((result as { transactions?: unknown }).transactions)) {
+    return (result as { transactions: unknown[] }).transactions;
+  }
+
+  return [];
+}
+
 // `joiner` is an accepted alias for `memberAddress` in Home 2's validator, so
 // the existing field name keeps working unchanged. `timeToLive` is required
 // by Home 2 (schema doc "Approve group join request"); 0 means no expiry.

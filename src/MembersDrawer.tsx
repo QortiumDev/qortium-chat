@@ -1,8 +1,8 @@
-import type { RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 
 import { getShortAddress, type AccountInfoTarget, type AvatarProfilesByAddress } from './accountDisplay';
 import type { AvatarLightboxImage } from './AvatarLightbox';
-import { GroupMemberList } from './GroupMemberList';
+import { GroupMemberList, type MemberModeration } from './GroupMemberList';
 import type { TranslateFunction } from './i18n';
 import { LoadingRows } from './LoadingRows';
 import type { GroupData, GroupJoinRequest, GroupMember } from './types';
@@ -20,6 +20,11 @@ export function MembersDrawer({
   hasAccount,
   isOverlay,
   members,
+  moderation = null,
+  onInvite = null,
+  invitePending = false,
+  manageHref = null,
+  onOpenManage = null,
   membersCloseRef,
   membersError,
   membersLabel,
@@ -44,6 +49,14 @@ export function MembersDrawer({
   hasAccount: boolean;
   isOverlay: boolean;
   members: GroupMember[];
+  /** 2.0.20 (G3): moderation controls per member; null hides them. */
+  moderation?: MemberModeration | null;
+  /** Invite by address, when the host advertises INVITE_TO_GROUP for a viewer who may invite. */
+  onInvite?: ((address: string) => void) | null;
+  invitePending?: boolean;
+  /** Link to the full group manager app for create/edit/avatar (D-B: link out). */
+  manageHref?: string | null;
+  onOpenManage?: (() => void) | null;
   membersCloseRef: RefObject<HTMLButtonElement | null>;
   membersError: string;
   membersLabel: string;
@@ -55,6 +68,7 @@ export function MembersDrawer({
   pendingJoinRequests: GroupJoinRequest[];
   t: TranslateFunction;
 }) {
+  const [inviteAddress, setInviteAddress] = useState('');
   return (
     <>
       <button
@@ -96,11 +110,56 @@ export function MembersDrawer({
             avatarProfiles={avatarProfiles}
             group={group}
             members={members}
+            moderation={moderation}
             onOpenAccount={onOpenAccount}
             onOpenAvatar={onOpenAvatar}
             t={t}
           />
         )}
+        {onInvite ? (
+          <form
+            className="members-drawer__invite"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const value = inviteAddress.trim();
+
+              if (value) {
+                onInvite(value);
+                setInviteAddress('');
+              }
+            }}
+          >
+            <label>
+              <span>{t('label.invite.address')}</span>
+              <input
+                autoComplete="off"
+                disabled={invitePending}
+                maxLength={64}
+                onChange={(event) => setInviteAddress(event.target.value)}
+                placeholder={t('placeholder.invite.address')}
+                spellCheck={false}
+                value={inviteAddress}
+              />
+            </label>
+            <button className="button button--secondary" disabled={invitePending || !inviteAddress.trim()} type="submit">
+              {invitePending ? t('button.working') : t('button.invite')}
+            </button>
+          </form>
+        ) : null}
+        {onOpenManage && manageHref ? (
+          <p className="members-drawer__manage">
+            <a
+              href={manageHref}
+              onClick={(event) => {
+                event.preventDefault();
+                onOpenManage();
+              }}
+              rel="noopener noreferrer"
+            >
+              {t('action.openGroupManager')}
+            </a>
+          </p>
+        ) : null}
         {pendingJoinRequests.length > 0 ? (
           <div className="join-requests" aria-label={t('title.joinRequests')}>
             <div className="join-requests__header">

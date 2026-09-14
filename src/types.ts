@@ -588,7 +588,19 @@ export type GroupApprovalVote = {
 // A chat-driven transaction the UI tracks to confirmation, surfaced inline in the
 // transcript as a system message (joins, leaves, approvals, reward shares).
 export type TrackedTransaction = {
-  action: 'approve' | 'groupApproval' | 'join' | 'leave' | 'rewardshare';
+  action:
+    | 'addAdmin'
+    | 'approve'
+    | 'ban'
+    | 'cancelInvite'
+    | 'groupApproval'
+    | 'invite'
+    | 'join'
+    | 'kick'
+    | 'leave'
+    | 'removeAdmin'
+    | 'rewardshare'
+    | 'unban';
   groupId: number;
   groupName: string;
   id: string;

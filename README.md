@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.19, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.20, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -147,6 +147,17 @@ reader there). On Qortal the same content is sent as the Tiptap document
 Qortal Hub's editor uses — marks, mentions, bullet lists and code blocks — so
 Hub renders it natively, and Hub-authored formatting (including headings,
 links and quotes) is read back into the same markup here.
+
+## Group events and moderation
+
+Since Chat 2.0.20 the group feed interleaves everyone's confirmed group
+events from the last 24 hours — joins, join requests and approvals, leaves,
+invitations, removals, bans, admin changes and group updates — read through
+the host's `SEARCH_TRANSACTIONS` and filtered to the open group. Owners and
+admins moderate from the members drawer: remove or ban a member, and (owner)
+make or remove admins; admins can invite by address. Creating or editing a
+group and setting its avatar stay in the Groups app, linked from the drawer.
+Every action goes through the host's own approval prompt.
 
 ## Current Limits
 

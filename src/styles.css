@@ -3216,6 +3216,62 @@ button.message__reply-preview:focus-visible,
   white-space: inherit;
 }
 
+/* 2.0.20 (G2): everyone's group events, interleaved in the feed. */
+.message--system {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 8px;
+  font-size: 0.85em;
+  color: var(--qc-color-text-muted, inherit);
+  opacity: 0.85;
+}
+
+.message__system-time {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+/* 2.0.20 (G3): moderation controls in the members drawer. */
+.member-chip__moderation {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.member-chip__moderate {
+  padding: 2px 8px;
+  font-size: 0.8em;
+}
+
+.members-drawer__invite {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 12px;
+}
+
+.members-drawer__invite label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.85em;
+}
+
+.members-drawer__invite input {
+  min-width: 0;
+}
+
+.members-drawer__manage {
+  margin-top: 12px;
+  font-size: 0.85em;
+}
+
 /* 2.0.19 rich text (G1): inline marks, lists and mentions. */
 .message__inline-code {
   padding: 0 4px;
