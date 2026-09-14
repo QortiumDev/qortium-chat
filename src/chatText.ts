@@ -964,7 +964,7 @@ function hasReadableEncryptedPayload(message: DecodableChatMessage) {
   return message.decryptionStatus === 'DECRYPTED' || message.status === 'DECRYPTED';
 }
 
-function hasMissingPrivateGroupKey(message: DecodableChatMessage) {
+export function hasMissingPrivateGroupKey(message: DecodableChatMessage) {
   return message.status === 'MISSING_KEY';
 }
 

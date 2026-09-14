@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.25, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.26, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -195,6 +195,14 @@ stream. Since Chat 2.0.24 open Qortal groups inside Qortal Hub do too, over the
 Hub's own render origin (a Qortal node). Everything else — Qortal chats on
 Home 2, everything on Android, closed groups and direct chats — polls: every
 6 seconds while the tab is visible, every 30 seconds while hidden.
+
+## Closed-group history and joining later
+
+Private-group (QPGC) messages are encrypted to the group key in force when they
+were sent. A member who joins later holds only the current key, so older
+messages show as "Sent before you joined" (since 2.0.26) rather than as a
+missing key. A per-group "share history with new members" setting is planned
+(owner decision D-I); until then this is by design.
 
 ## Current Limits
 
