@@ -692,6 +692,7 @@ export const MessageList = memo(function MessageList({
   onOpenImage,
   onReact,
   onReply,
+  onOpenWebLink,
   onRetryMessage,
   onRetryRevision,
   onScrollPositionChange,
@@ -734,6 +735,8 @@ export const MessageList = memo(function MessageList({
   onRetryMessage: (localId: string) => void;
   onRetryRevision: (localId: string) => void;
   onScrollPositionChange: (chatKey: string, position: ChatScrollPosition) => void;
+  /** 2.0.22 (D-E): host-mediated web-link open; null keeps links copy-only. */
+  onOpenWebLink?: ((network: ChatNetwork, url: string) => void) | null;
   pendingReactionKeys: ReadonlySet<string>;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
   pendingSendByLocalId: ReadonlyMap<string, PendingSend>;
@@ -2138,6 +2141,10 @@ export const MessageList = memo(function MessageList({
                   {decoded.body ? (
                     renderMessageTextWithAppLinks(decoded.body, t, network, {
                       canOpenQortalAppLinks: hasResourceAction('qortal', 'OPEN_NEW_TAB'),
+                      openWebLink:
+                        onOpenWebLink && hasResourceAction(network, 'OPEN_EXTERNAL_LINK')
+                          ? (url) => onOpenWebLink(network, url)
+                          : null,
                     })
                   ) : imageResources.length > 0 ? null : (
                     <span className="message__body-placeholder">

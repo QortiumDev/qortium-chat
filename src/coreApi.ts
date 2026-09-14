@@ -15,6 +15,7 @@ import {
 import {
   getQortalGeneralChatMessages,
   rememberQortalGeneralChatAccount,
+  rememberQortalGeneralChatHostActions,
   sendQortalGeneralChatDelete,
   sendQortalGeneralChatEdit,
   sendQortalGeneralChatMessage,
@@ -1789,6 +1790,20 @@ export async function moderateGroupMember(
 // Home 2 and Hub cap `limit` (Home at 100) and require an explicit
 // confirmation status. The group filter is applied by the caller
 // (groupEvents.ts) — Core's search has none for membership transactions.
+// 2.0.22 (D-E): web links open through the host, never from the app. Home
+// 2.1 validates the URL, asks the user with the site and full link shown, and
+// hands it to the system browser (OPEN_EXTERNAL_LINK); a host without the
+// action keeps links copy-only. A denial is an ordinary rejection.
+export async function openExternalLink(network: ChatNetwork, url: string, actions?: QdnAction[]) {
+  if (!hasBridgeAction(actions, 'OPEN_EXTERNAL_LINK')) {
+    throw new Error('This host cannot open web links.');
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('Only http and https links can be opened.');
+  }
+  return bridgeRequest<unknown>(network, { action: 'OPEN_EXTERNAL_LINK', url });
+}
+
 export async function searchRecentTransactions(
   network: ChatNetwork,
   txTypes: readonly string[],
@@ -2272,6 +2287,7 @@ export async function getQortalUserAccount(actions?: QdnAction[]): Promise<Qorta
     action: 'GET_USER_ACCOUNT',
   });
   rememberQortalGeneralChatAccount({ address: account.address, publicKey: account.publicKey ?? null });
+  rememberQortalGeneralChatHostActions(actions);
   let name: string | null = null;
 
   if (hasBridgeAction(actions, 'GET_PRIMARY_NAME')) {

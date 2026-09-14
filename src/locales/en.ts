@@ -275,6 +275,7 @@ export const EN_STRINGS = {
   'status.moderation.submitted': '{action} submitted',
   'status.moderation.confirmed': 'Group action confirmed',
   'status.loadingError.moderate': 'Unable to complete the group action.',
+  'status.loadingError.openLink': 'Unable to open the link.',
   'system.group.joined': '{actor} joined the group',
   'system.group.left': '{actor} left the group',
   'system.group.joinRequested': '{actor} asked to join',

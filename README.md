@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.21, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.22, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -158,6 +158,17 @@ admins moderate from the members drawer: remove or ban a member, and (owner)
 make or remove admins; admins can invite by address. Creating or editing a
 group and setting its avatar stay in the Groups app, linked from the drawer.
 Every action goes through the host's own approval prompt.
+
+## Web links and Qortal General Chat on Home
+
+Since Chat 2.0.22, an `http(s)` link in a message opens through the host when
+it advertises `OPEN_EXTERNAL_LINK` (Qortium Home 2.1+): the host checks the
+address, shows the site and the full link, and only on approval hands it to
+the device's browser — Chat never navigates and a host without the action
+keeps links copy-only. On the same hosts Qortal's General Chat is listed and
+writable through `SEND_QORTAL_GENERAL_CHAT`, which builds the MESSAGE-wrapped
+group-0 message Hub and the Classic UI read; Qortal Hub keeps its
+`SIGN_TRANSACTION` path.
 
 ## Current Limits
 

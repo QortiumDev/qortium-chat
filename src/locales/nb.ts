@@ -273,6 +273,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} sendt',
   'status.moderation.confirmed': 'Gruppehandling bekreftet',
   'status.loadingError.moderate': 'Kunne ikke fullføre gruppehandlingen.',
+  'status.loadingError.openLink': 'Kunne ikke åpne lenken.',
   'system.group.joined': '{actor} ble med i gruppen',
   'system.group.left': '{actor} forlot gruppen',
   'system.group.joinRequested': '{actor} ba om å bli med',

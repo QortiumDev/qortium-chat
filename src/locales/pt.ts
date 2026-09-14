@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} enviado',
   'status.moderation.confirmed': 'Ação de grupo confirmada',
   'status.loadingError.moderate': 'Não foi possível concluir a ação de grupo.',
+  'status.loadingError.openLink': 'Não foi possível abrir o link.',
   'system.group.joined': '{actor} entrou no grupo',
   'system.group.left': '{actor} saiu do grupo',
   'system.group.joinRequested': '{actor} pediu para entrar',

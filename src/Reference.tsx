@@ -451,7 +451,13 @@ export default function Reference({ appVersion }: { appVersion: string }) {
                 wrapper (≤ {formatBytes(WRAPPER_FETCH_MAX_BYTES)} per fetch), dedupe by signature.
               </li>
               <li>
-                Send: requires <code>WHICH_UI</code> of <code>HUB_ELECTRON</code> or <code>HUB_WEB</code> and a{' '}
+                Send on Qortium Home 2.1+: the host advertises <code>SEND_QORTAL_GENERAL_CHAT</code> and does the
+                whole wrap itself (<code>{'{ message, chatReference? }'}</code> in, the inner CHAT signature out);
+                Chat never sees a signing action. Edits, deletes and reactions ride the same action with{' '}
+                <code>chatReference</code>.
+              </li>
+              <li>
+                Send on Qortal Hub: requires <code>WHICH_UI</code> of <code>HUB_ELECTRON</code> or <code>HUB_WEB</code> and a{' '}
                 <code>GET_USER_ACCOUNT</code> answer with <code>publicKey</code>. Chat builds the unsigned CHAT bytes,
                 runs Core-compatible MemoryPoW ({formatBytes(POW_BUFFER_WORDS * 8)} buffer, difficulty{' '}
                 {CHAT_POW_DIFFICULTY} for the CHAT at byte offset {CHAT_NONCE_OFFSET}, {MESSAGE_POW_DIFFICULTY} for the

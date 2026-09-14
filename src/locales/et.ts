@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} esitatud',
   'status.moderation.confirmed': 'Grupi toiming kinnitatud',
   'status.loadingError.moderate': 'Grupi toimingut ei õnnestunud lõpetada.',
+  'status.loadingError.openLink': 'Linki ei õnnestunud avada.',
   'system.group.joined': '{actor} liitus grupiga',
   'system.group.left': '{actor} lahkus grupist',
   'system.group.joinRequested': '{actor} soovis liituda',

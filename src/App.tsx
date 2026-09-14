@@ -29,6 +29,7 @@ import {
   approveGroupJoinRequest,
   hasGroupModerationAction,
   moderateGroupMember,
+  openExternalLink,
   searchRecentTransactions,
   type GroupModerationKind,
   getActiveChats,
@@ -3090,8 +3091,12 @@ export default function App() {
   // affordance itself is derived separately below (isJoinableQortalGroup /
   // canSubmitQortalJoin) now that Home 2 advertises JOIN_GROUP/LEAVE_GROUP on
   // the Qortal bridge too.
+  // General Chat on Qortal rides the MESSAGE-wrapper protocol: Hub lets Chat
+  // build it through SIGN_TRANSACTION, Home 2.1 builds it host-side behind
+  // SEND_QORTAL_GENERAL_CHAT (2.0.22, D-D).
   const canSendQortalGroupChat = isSelectedQortalGeneralChat
-    ? isQortalHub && hasAction(qortalBridge.value.actions, 'SIGN_TRANSACTION')
+    ? (isQortalHub && hasAction(qortalBridge.value.actions, 'SIGN_TRANSACTION')) ||
+      hasAction(qortalBridge.value.actions, 'SEND_QORTAL_GENERAL_CHAT')
     : hasAction(qortalBridge.value.actions, 'SEND_CHAT_MESSAGE');
   // P3 safety routing counterpart of canSendPrivateGroupChat above.
   const canSendQortalPrivateGroupChat = hasAction(qortalBridge.value.actions, 'SEND_PRIVATE_GROUP_CHAT_MESSAGE');
@@ -4262,7 +4267,10 @@ export default function App() {
       setQortalMemberGroups({ phase: 'ready', value: snapshot.memberGroups });
       setQortalGroups({
         phase: 'ready',
-        value: isQortalHub
+        // General Chat is listed wherever it can be read AND written: Hub
+        // (SIGN_TRANSACTION) or a host with SEND_QORTAL_GENERAL_CHAT (Home
+        // 2.1); the wrapper feed itself is read through FETCH_NODE_API.
+        value: isQortalHub || hasAction(actionList, 'SEND_QORTAL_GENERAL_CHAT')
           ? withGeneralChatGroup(snapshot.memberGroups, '', t)
           : snapshot.memberGroups.filter((group) => group.groupId !== GENERAL_CHAT_GROUP_ID),
       });
@@ -6509,6 +6517,18 @@ export default function App() {
   // 2.0.20 (G3): member-level moderation from the members drawer. Mirrors
   // handleApproveJoinRequest per network: the host prompts and signs, Chat
   // tracks the transaction and reloads the member list on confirmation.
+  // 2.0.22 (D-E): web links open through the host's OPEN_EXTERNAL_LINK (Home
+  // 2.1 validates, asks the user, then hands the URL to the system browser).
+  // A denial is the user's answer, not an error; anything else is surfaced.
+  function handleOpenWebLink(network: ChatNetwork, url: string) {
+    const actionList = network === 'qortal' ? qortalBridge.value.actions : actions;
+    void openExternalLink(network, url, actionList).catch((error) => {
+      const message = getBridgeErrorMessage(error, t('status.loadingError.openLink'), t);
+      if (/denied|declined|rejected|cancel/i.test(message)) return;
+      setWriteError(message);
+    });
+  }
+
   async function handleModerateMember(kind: GroupModerationKind, address: string, label: string) {
     if (!selectedGroup || moderationPendingAddress) {
       return;
@@ -11640,6 +11660,7 @@ export default function App() {
                 onOpenImage={setAvatarLightboxImage}
                 onReact={handleReactToMessage}
                 onReply={handleStartReply}
+                onOpenWebLink={handleOpenWebLink}
                 onRetryMessage={handleRetryMessage}
                 onRetryRevision={handleRetryRevision}
                 onScrollPositionChange={handleScrollPositionChange}

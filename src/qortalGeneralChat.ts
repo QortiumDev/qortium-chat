@@ -30,13 +30,23 @@ type RawMessageTransaction = {
   fee?: number | string;
   isEncrypted?: boolean;
   isText?: boolean;
+  nonce?: number | string;
   recipient?: string | null;
   recipientAddress?: string | null;
+  reference?: string;
   senderPublicKey?: string;
+  signature?: string;
   timestamp?: number;
   txGroupId?: number;
   txGroupID?: number;
+  type?: string;
 };
+
+function numberField(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^-?\d+$/.test(value)) return Number(value);
+  return null;
+}
 
 type ParsedGeneralChat = {
   chatReference: string | null;
@@ -59,9 +69,26 @@ type QortalGeneralChatAccount = {
 };
 
 let cachedAccount: QortalGeneralChatAccount | null = null;
+let cachedHostActions: readonly string[] = [];
 
 export function rememberQortalGeneralChatAccount(account: QortalGeneralChatAccount) {
   cachedAccount = account;
+}
+
+// Home 2.1 (2026-09) does the wrapper itself: `SEND_QORTAL_GENERAL_CHAT` takes
+// the opaque Hub envelope (+ chatReference for a revision), builds and proves
+// the group-0 CHAT, signs it with the account, seals it in the MESSAGE
+// wrapper and broadcasts — the account key never leaves the host, and Chat
+// never needs SIGN_TRANSACTION. Remembered from the bridge's advertised
+// action list so the send path can prefer it over Hub's raw-signing route.
+export const QORTAL_GENERAL_CHAT_HOST_ACTION = 'SEND_QORTAL_GENERAL_CHAT';
+
+export function rememberQortalGeneralChatHostActions(actions: readonly string[] | null | undefined) {
+  cachedHostActions = Array.isArray(actions) ? actions : [];
+}
+
+export function hasQortalGeneralChatHostAction(actions: readonly string[] | null | undefined = cachedHostActions) {
+  return !!actions && actions.includes(QORTAL_GENERAL_CHAT_HOST_ACTION);
 }
 
 function concatBytes(...chunks: Uint8Array[]) {
@@ -445,32 +472,58 @@ function bytesToBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+// 2.0.22: the OUTER MESSAGE is verified too (rebuilt from the row's reference,
+// nonce and timestamp and checked against the row's signature under the
+// derived wrapper key), so a feed row that merely carries someone's valid
+// inner CHAT is not accepted as a wrapper. Same rule as Home 2.1's reader.
 export async function decodeQortalGeneralWrappedMessage(transaction: RawMessageTransaction): Promise<ChatMessage | null> {
   try {
     const txGroupId = transaction.txGroupId ?? transaction.txGroupID;
     const wrapperPublicKey58 = transaction.senderPublicKey ?? transaction.creatorPublicKey;
     const recipient = transaction.recipient ?? transaction.recipientAddress;
+    const nonce = numberField(transaction.nonce);
+    const outerTimestamp = numberField(transaction.timestamp);
 
     if (
+      (transaction.type !== undefined && transaction.type !== 'MESSAGE') ||
       Number(txGroupId) !== GENERAL_CHAT_GROUP_ID ||
       typeof transaction.data !== 'string' ||
+      typeof transaction.reference !== 'string' ||
+      typeof transaction.signature !== 'string' ||
+      nonce === null || nonce < 0 || nonce > 0xffffffff ||
+      outerTimestamp === null || outerTimestamp <= 0 ||
       !wrapperPublicKey58 ||
       !recipient ||
       Number(transaction.amount) !== 0 ||
-      (transaction.fee !== undefined && Number(transaction.fee) !== 0) ||
-      (transaction.isText !== undefined && transaction.isText !== false) ||
-      (transaction.isEncrypted !== undefined && transaction.isEncrypted !== false)
+      Number(transaction.fee ?? 0) !== 0 ||
+      transaction.isText !== false ||
+      transaction.isEncrypted !== false
     ) {
       return null;
     }
 
-    const parsed = parseSignedQortalGeneralChatBytes(base58Decode(transaction.data));
+    const data = base58Decode(transaction.data);
+    const parsed = parseSignedQortalGeneralChatBytes(data);
     const { recipientAddress, senderKeyPair } = await deriveQortalGeneralWrapperKeys(parsed.signature);
 
     if (
       base58Encode(senderKeyPair.publicKey) !== wrapperPublicKey58 ||
       recipientAddress !== recipient
     ) {
+      return null;
+    }
+
+    const outerBytes = stampQortalGeneralChatNonce(
+      buildUnsignedQortalGeneralWrapperBytes({
+        data,
+        lastReference: getFixedBase58Bytes(transaction.reference, 'Wrapper reference', 64),
+        recipient,
+        senderPublicKey: senderKeyPair.publicKey,
+        timestamp: outerTimestamp,
+      }),
+      nonce,
+    );
+    if (!nacl.sign.detached.verify(outerBytes, getFixedBase58Bytes(transaction.signature, 'Wrapper signature', 64), senderKeyPair.publicKey)) {
       return null;
     }
 
@@ -565,7 +618,38 @@ async function processWrapper(signedBytes: Uint8Array) {
   }
 }
 
+// Home's answer shape for every chat send: `{ signature, timestamp }`, or a
+// signed unknown-outcome record when the broadcast itself failed after
+// signing (`errorType: 'BROADCAST_OUTCOME_UNKNOWN'`). The signature is the
+// inner CHAT's — the same id Hub and the wrapper feed use.
+function normalizeHostGeneralChatResult(value: unknown): ChatSendResult {
+  const record = (value ?? {}) as Record<string, unknown>;
+  const signature = typeof record.signature === 'string' ? record.signature : '';
+  if (!signature) throw new Error('Home did not return the General Chat signature.');
+  const timestamp = typeof record.timestamp === 'number' ? record.timestamp : Date.now();
+  if (typeof record.errorType === 'string' && record.errorType) {
+    return {
+      error: typeof record.error === 'string' && record.error ? record.error : record.errorType,
+      errorType: record.errorType,
+      outcome: 'ambiguous',
+      signature,
+      timestamp,
+    };
+  }
+  return { signature, timestamp };
+}
+
 async function sendQortalGeneralChatPayload(wireMessage: string, chatReference?: string): Promise<ChatSendResult> {
+  if (hasQortalGeneralChatHostAction()) {
+    return normalizeHostGeneralChatResult(
+      await qortalRequest<unknown>({
+        action: 'SEND_QORTAL_GENERAL_CHAT',
+        message: wireMessage,
+        ...(chatReference ? { chatReference } : {}),
+      }),
+    );
+  }
+
   const ui = await qortalRequest<unknown>({ action: 'WHICH_UI' });
   if (ui !== 'HUB_ELECTRON' && ui !== 'HUB_WEB') {
     throw new Error('Qortal General Chat is currently available through Qortal Hub.');

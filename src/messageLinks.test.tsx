@@ -297,6 +297,32 @@ describe('message link helpers', () => {
     expect(html).not.toContain('href="qortal://APP/Q-Tube"');
   });
 
+  it('opens web links through the host when openWebLink is supplied, keeping copy beside them (D-E)', () => {
+    const opened: string[] = [];
+    const html = renderToStaticMarkup(
+      <>
+        {renderMessageTextWithAppLinks('see https://example.com/page now', undefined, 'qortium', {
+          openWebLink: (url) => opened.push(url),
+        })}
+      </>,
+    );
+
+    expect(html).toContain('message__web-link--open');
+    expect(html).toContain('message__web-link--copy');
+    expect(html).toContain('>Open</span>');
+    expect(html).toContain('>Copy</span>');
+    expect(html).toContain('title="Open: https://example.com/page"');
+    expect(html).not.toContain('href="https://example.com/page"');
+
+    // Without the callback the link stays copy-only (older hosts, Hub, gateway).
+    const copyOnly = renderToStaticMarkup(
+      <>{renderMessageTextWithAppLinks('see https://example.com/page now', undefined, 'qortium', { openWebLink: null })}</>,
+    );
+    expect(copyOnly).not.toContain('message__web-link--open');
+    expect(copyOnly).toContain('>Copy</span>');
+    expect(opened).toEqual([]);
+  });
+
   it('renders Qortal app links as anchors only when that network advertises OPEN_NEW_TAB', () => {
     const html = renderToStaticMarkup(
       <>
