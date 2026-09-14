@@ -1,4 +1,6 @@
 import { filterBlockedMessages, type BlockControls } from './blockList';
+import { messageMatchesSearch, parseSearchQuery } from './messageSearch';
+import { stripRichTextMarkup } from './richText';
 import {
   Fragment,
   lazy,
@@ -695,6 +697,8 @@ export const MessageList = memo(function MessageList({
   onReply,
   blockedAddresses = null,
   blocking = null,
+  onSearchMatches,
+  searchQuery = '',
   onOpenWebLink,
   onRetryMessage,
   onRetryRevision,
@@ -744,6 +748,10 @@ export const MessageList = memo(function MessageList({
   blockedAddresses?: ReadonlySet<string> | null;
   /** 2.0.23 (G5): Block action on other people's messages; null hides it. */
   blocking?: BlockControls | null;
+  /** 2.0.25 (G11): filter the loaded history to messages matching this query. */
+  searchQuery?: string;
+  /** 2.0.25 (G11): reports the match count for the header while searching. */
+  onSearchMatches?: ((count: number) => void) | null;
   pendingReactionKeys: ReadonlySet<string>;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
   pendingSendByLocalId: ReadonlyMap<string, PendingSend>;
@@ -901,10 +909,24 @@ export const MessageList = memo(function MessageList({
     () => buildMessageReactionIndex(visibleMessages, selfAddress),
     [visibleMessages, selfAddress],
   );
-  const renderedThreads = useMemo(
-    () => threads.map((thread, index) => ({ key: getMessageKey(thread.original, index), thread })),
-    [threads],
-  );
+  // 2.0.25 (G11): while a search is active only matching threads render
+  // (matched on the latest revision's plain text and the sender label);
+  // group events and the unread divider stay out of the way.
+  const searchTerms = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);
+  const isSearching = searchTerms.length > 0;
+  const renderedThreads = useMemo(() => {
+    const all = threads.map((thread, index) => ({ key: getMessageKey(thread.original, index), thread }));
+    if (searchTerms.length === 0) return all;
+    return all.filter(({ thread }) => {
+      const decoded = decodeChatMessage(thread.latest, t);
+      const body = decoded.kind === 'text' ? stripRichTextMarkup(decoded.body) : '';
+      const profile = avatarProfiles.get(thread.original.sender);
+      return messageMatchesSearch(searchTerms, body, getMessageSenderLabel(thread.original, profile));
+    });
+  }, [avatarProfiles, searchTerms, t, threads]);
+  useEffect(() => {
+    if (onSearchMatches) onSearchMatches(isSearching ? renderedThreads.length : -1);
+  }, [isSearching, onSearchMatches, renderedThreads.length]);
   const threadTargetsBySignature = useMemo(() => {
     const bySignature = new Map<string, { key: string; thread: MessageThread }>();
 
@@ -1801,6 +1823,19 @@ export const MessageList = memo(function MessageList({
     return <p className="empty">{emptyHint ?? t('hint.noMessages')}</p>;
   }
 
+  if (isSearching && renderedThreads.length === 0) {
+    return (
+      <div className="empty message-list__search-empty">
+        <p>{t('status.search.none')}</p>
+        {!olderMessagesReachedStart && !olderMessagesLoading ? (
+          <button className="button button--secondary" onClick={handleLoadOlder} type="button">
+            {t('button.loadOlderMessages')}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
   // Walks the (time-sorted) group events once per render so each event is
   // emitted exactly once: before the first message that is not older, or at
   // the end.
@@ -1916,7 +1951,7 @@ export const MessageList = memo(function MessageList({
           {renderedThreads.map(({ key: threadKey, thread }, index) => {
             const { latest, original, revisions } = thread;
             // 2.0.20 (G2): group events that happened before this message.
-            const eventsBefore = groupEventCursor.take(original.timestamp);
+            const eventsBefore = isSearching ? [] : groupEventCursor.take(original.timestamp);
             const decoded = decodeChatMessage(latest, t);
             const isOwn = selfAddress !== null && original.sender === selfAddress;
             const isEdited = revisions.length > 0;
@@ -2109,7 +2144,7 @@ export const MessageList = memo(function MessageList({
                     </time>
                   </li>
                 ))}
-                {unreadDividerIndex === index ? (
+                {!isSearching && unreadDividerIndex === index ? (
                   <li className="message-list__unread-divider" ref={dividerRef} role="separator">
                     <span>{t('label.newMessages')}</span>
                   </li>
@@ -2254,7 +2289,7 @@ export const MessageList = memo(function MessageList({
               </Fragment>
             );
           })}
-          {groupEventCursor.rest().map((event) => (
+          {(isSearching ? [] : groupEventCursor.rest()).map((event) => (
             <li className={`message message--system message--system-${event.kind}`} key={`event-${event.id}`}>
               <span className="message__system-text">{event.text}</span>
               <time className="message__system-time" dateTime={new Date(event.timestamp).toISOString()}>
