@@ -376,8 +376,11 @@ export default function Reference({ appVersion }: { appVersion: string }) {
             <ul>
               <li>
                 New: <code>{'{images: [], isEdited: false, messageText: Tiptap doc, repliedTo: "" | signature, specialId: uuid, type: "", version: 3}'}</code>
-                . The Tiptap doc is one <code>paragraph</code> of <code>text</code>/<code>hardBreak</code> nodes; a plain
-                string or legacy HTML <code>messageText</code> is also read.
+                . The Tiptap doc uses Hub's editor schema: one <code>paragraph</code> per line with{' '}
+                <code>bold</code>/<code>italic</code>/<code>strike</code>/<code>code</code> marks,{' '}
+                <code>mention</code> nodes (<code>attrs.id</code> address, <code>attrs.label</code> name),{' '}
+                <code>bulletList</code>/<code>listItem</code> and <code>codeBlock</code> (since 2.0.19); a plain string or
+                legacy HTML <code>messageText</code> is also read.
               </li>
               <li>
                 Edit: same shape with <code>isEdited: true</code>, <code>type: "edit"</code>, <code>images: []</code>.

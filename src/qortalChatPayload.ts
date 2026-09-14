@@ -1,4 +1,4 @@
-import { buildParagraphHtmlFromPlainText } from './chatText';
+import { parseRichText, richTextToParagraphHtml, richTextToTiptapDoc } from './richText';
 
 type QortalOutgoingMessage = {
   /** Raw private-attachment candidates carried by Chat's own envelope, if
@@ -13,29 +13,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function buildTiptapDocFromPlainText(text: string) {
-  const content: Array<{ text?: string; type: 'hardBreak' | 'text' }> = [];
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
-
-  lines.forEach((line, index) => {
-    if (index > 0) {
-      content.push({ type: 'hardBreak' });
-    }
-
-    if (line) {
-      content.push({ text: line, type: 'text' });
-    }
-  });
-
-  return {
-    content: [
-      {
-        ...(content.length > 0 ? { content } : {}),
-        type: 'paragraph',
-      },
-    ],
-    type: 'doc',
-  };
+// The v3 envelope's messageText is a Tiptap document (Hub's editor schema).
+// Chat's composer text is the D-A markup (richText.ts): marks, mentions,
+// bullet lists and fenced code become the corresponding Tiptap nodes so Hub
+// renders them natively; plain text stays a one-text-node paragraph per line.
+function buildTiptapDocFromMarkup(text: string) {
+  return richTextToTiptapDoc(parseRichText(text));
 }
 
 /**
@@ -77,7 +60,7 @@ export function buildQortalHubGroupChatPayload(
   return JSON.stringify({
     images,
     isEdited: false,
-    messageText: buildTiptapDocFromPlainText(outgoing.text),
+    messageText: buildTiptapDocFromMarkup(outgoing.text),
     repliedTo: outgoing.repliedTo ?? '',
     specialId,
     type: '',
@@ -95,7 +78,7 @@ export function buildQortalHubGroupChatEditPayload(
   return JSON.stringify({
     images: [],
     isEdited: true,
-    messageText: buildTiptapDocFromPlainText(outgoing.text),
+    messageText: buildTiptapDocFromMarkup(outgoing.text),
     repliedTo: outgoing.repliedTo ?? '',
     specialId,
     type: 'edit',
@@ -154,7 +137,7 @@ export function buildQortalDirectChatPayload(
   }
 
   return JSON.stringify({
-    message: buildParagraphHtmlFromPlainText(outgoing.text),
+    message: richTextToParagraphHtml(parseRichText(outgoing.text)),
     version: 2,
     specialId,
     repliedTo: outgoing.repliedTo ?? '',
@@ -179,7 +162,7 @@ export function buildQortalDirectChatEditPayload(
 ) {
   return JSON.stringify({
     isEdited: true,
-    message: buildParagraphHtmlFromPlainText(outgoing.text),
+    message: richTextToParagraphHtml(parseRichText(outgoing.text)),
     repliedTo: outgoing.repliedTo ?? '',
     specialId,
     type: 'edit',

@@ -3216,6 +3216,35 @@ button.message__reply-preview:focus-visible,
   white-space: inherit;
 }
 
+/* 2.0.19 rich text (G1): inline marks, lists and mentions. */
+.message__inline-code {
+  padding: 0 4px;
+  background: var(--qc-color-surface-alt);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-sm);
+  font-size: 0.92em;
+}
+
+.message__list {
+  margin: 4px 0;
+  padding-left: 1.4em;
+}
+
+.message__list li {
+  margin: 2px 0;
+}
+
+.message__mention {
+  color: var(--qc-color-link);
+  font-weight: 600;
+}
+
+.message--mention .message__mention {
+  background: color-mix(in srgb, var(--qc-color-link) 18%, transparent);
+  border-radius: var(--qc-radius-sm);
+  padding: 0 3px;
+}
+
 .message__resource-cards {
   display: grid;
   gap: 6px;
@@ -3773,6 +3802,7 @@ button.message__reply-preview:focus-visible,
 }
 
 .composer {
+  position: relative;
   flex-wrap: wrap;
   align-items: flex-end;
   min-width: 0;
@@ -3786,6 +3816,68 @@ button.message__reply-preview:focus-visible,
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+}
+
+/* 2.0.19 (G1/G1b): formatting buttons and the `@` mention popover. */
+.composer__format {
+  font-weight: 700;
+  font-size: 0.85em;
+}
+
+.composer__format--italic {
+  font-style: italic;
+}
+
+.composer__format--strike {
+  text-decoration: line-through;
+}
+
+.composer__format--code {
+  font-family: var(--qc-font-mono, ui-monospace, monospace);
+  font-weight: 600;
+}
+
+.composer__mentions {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin: 0 0 6px;
+  padding: 4px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--qc-color-surface);
+  border: 1px solid var(--qc-color-border);
+  border-radius: var(--qc-radius-md, 10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.composer__mention {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--qc-radius-sm);
+  cursor: pointer;
+}
+
+.composer__mention--active,
+.composer__mention:hover {
+  background: var(--qc-color-surface-alt);
+}
+
+.composer__mention-name {
+  font-weight: 600;
+}
+
+.composer__mention-address {
+  font-size: 0.8em;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer__send {

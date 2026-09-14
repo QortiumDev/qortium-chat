@@ -1,6 +1,9 @@
 import {
   lazy,
   Suspense,
+  useEffect,
+  useMemo,
+  useState,
   type ClipboardEventHandler,
   type RefObject,
   type SubmitEvent,
@@ -8,7 +11,24 @@ import {
 import type { EmojiClickData, EmojiStyle, Theme } from 'emoji-picker-react';
 
 import { formatAttachmentSize, type StagedAttachment } from './attachments';
+import {
+  COMPOSER_MARK_TOKENS,
+  completeMention,
+  filterMentionCandidates,
+  findMentionQuery,
+  wrapSelection,
+  type ComposerMark,
+  type MentionCandidate,
+} from './composerFormatting';
 import { CloseIcon } from './icons';
+
+// Order and glyphs of the formatting buttons (G1); titles come from props.
+const COMPOSER_MARKS: ReadonlyArray<{ glyph: string; mark: ComposerMark }> = [
+  { glyph: 'B', mark: 'bold' },
+  { glyph: 'I', mark: 'italic' },
+  { glyph: 'S', mark: 'strike' },
+  { glyph: '</>', mark: 'code' },
+];
 
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
@@ -41,6 +61,9 @@ export function ChatComposer({
   draft,
   emojiLabel,
   emojiOpen,
+  formatLabels,
+  mentionCandidates,
+  mentionSuggestionsLabel,
   loadingLabel,
   messageLabel,
   messagePlaceholder,
@@ -84,6 +107,11 @@ export function ChatComposer({
   draft: string;
   emojiLabel: string;
   emojiOpen: boolean;
+  /** Titles for the formatting buttons, keyed by mark (2.0.19, G1). */
+  formatLabels: Readonly<Record<ComposerMark, string>>;
+  /** Members (or the DM peer) offered by the `@` autocomplete (G1b). */
+  mentionCandidates: readonly MentionCandidate[];
+  mentionSuggestionsLabel: string;
   loadingLabel: string;
   messageLabel: string;
   messagePlaceholder: string;
@@ -121,6 +149,53 @@ export function ChatComposer({
   showAttachment: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }) {
+  // `@` autocomplete: the query is re-derived from the draft + caret on every
+  // change; the popover shows while a query is open and something matches.
+  const [mentionCaret, setMentionCaret] = useState<number | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionQuery = mentionCaret === null ? null : findMentionQuery(draft, mentionCaret);
+  const mentionMatches = useMemo(
+    () => (mentionQuery ? filterMentionCandidates(mentionCandidates, mentionQuery.query) : []),
+    [mentionCandidates, mentionQuery?.query],
+  );
+  const mentionOpen = mentionMatches.length > 0;
+
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mentionQuery?.query, mentionQuery?.start]);
+
+  function applyEdit(edit: { end: number; start: number; value: string }) {
+    onDraftChange(edit.value);
+    requestAnimationFrame(() => {
+      const element = textareaRef.current;
+
+      if (element) {
+        element.focus();
+        element.setSelectionRange(edit.start, edit.end);
+      }
+    });
+  }
+
+  function applyMark(mark: ComposerMark) {
+    const element = textareaRef.current;
+    const start = element?.selectionStart ?? draft.length;
+    const end = element?.selectionEnd ?? draft.length;
+
+    applyEdit(wrapSelection(draft, start, end, mark));
+  }
+
+  function chooseMention(candidate: MentionCandidate) {
+    if (mentionCaret === null) return;
+    const edit = completeMention(draft, mentionCaret, candidate);
+
+    setMentionCaret(null);
+    if (edit) applyEdit(edit);
+  }
+
+  function syncMentionCaret(element: HTMLTextAreaElement) {
+    setMentionCaret(element.selectionStart === element.selectionEnd ? element.selectionStart : null);
+  }
+
   return (
     <form className="composer" onSubmit={onSubmit}>
       {emojiOpen ? (
@@ -178,16 +253,73 @@ export function ChatComposer({
           </button>
         </div>
       ) : null}
+      {mentionOpen ? (
+        <ul aria-label={mentionSuggestionsLabel} className="composer__mentions" role="listbox">
+          {mentionMatches.map((candidate, index) => (
+            <li
+              aria-selected={index === mentionIndex}
+              className={index === mentionIndex ? 'composer__mention composer__mention--active' : 'composer__mention'}
+              key={`${candidate.name}:${candidate.address ?? ''}`}
+              onMouseDown={(event) => {
+                // mousedown, so the textarea keeps focus and the caret survives.
+                event.preventDefault();
+                chooseMention(candidate);
+              }}
+              role="option"
+            >
+              <span className="composer__mention-name">@{candidate.name}</span>
+              {candidate.address ? <span className="composer__mention-address">{candidate.address}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <textarea
+        aria-activedescendant={undefined}
+        aria-autocomplete={mentionCandidates.length > 0 ? 'list' : undefined}
+        aria-expanded={mentionCandidates.length > 0 ? mentionOpen : undefined}
         aria-label={messageLabel}
         disabled={!canCompose}
         maxLength={4000}
-        onChange={(event) => onDraftChange(event.target.value)}
+        onBlur={() => setMentionCaret(null)}
+        onChange={(event) => {
+          onDraftChange(event.target.value);
+          syncMentionCaret(event.target);
+        }}
+        onClick={(event) => syncMentionCaret(event.currentTarget)}
         onKeyDown={(event) => {
+          if (mentionOpen) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              setMentionIndex((current) => (current + (event.key === 'ArrowDown' ? 1 : mentionMatches.length - 1)) % mentionMatches.length);
+              return;
+            }
+            if (event.key === 'Enter' || event.key === 'Tab') {
+              event.preventDefault();
+              chooseMention(mentionMatches[mentionIndex] ?? mentionMatches[0]!);
+              return;
+            }
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              setMentionCaret(null);
+              return;
+            }
+          }
+          if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+            const mark = event.key === 'b' ? 'bold' : event.key === 'i' ? 'italic' : event.key === 'e' ? 'code' : null;
+
+            if (mark) {
+              event.preventDefault();
+              applyMark(mark);
+              return;
+            }
+          }
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
             event.currentTarget.form?.requestSubmit();
           }
+        }}
+        onKeyUp={(event) => {
+          if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') syncMentionCaret(event.currentTarget);
         }}
         onPaste={onPaste}
         placeholder={messagePlaceholder}
@@ -244,6 +376,23 @@ export function ChatComposer({
             <span aria-hidden="true">🔗</span>
           </button>
         ) : null}
+        {COMPOSER_MARKS.map(({ glyph, mark }) => (
+          <button
+            aria-label={formatLabels[mark]}
+            className={`icon-button composer__format composer__format--${mark}`}
+            disabled={!canCompose}
+            key={mark}
+            onMouseDown={(event) => {
+              // Keep the textarea selection: a click must not move focus first.
+              event.preventDefault();
+              applyMark(mark);
+            }}
+            title={`${formatLabels[mark]} (${COMPOSER_MARK_TOKENS[mark]})`}
+            type="button"
+          >
+            <span aria-hidden="true">{glyph}</span>
+          </button>
+        ))}
         <button
           aria-expanded={emojiOpen}
           aria-label={emojiLabel}

@@ -1,3 +1,4 @@
+import { escapeRichText, richTextToMarkup, stripRichTextMarkup, tiptapDocToRichText } from './richText';
 import type { ChatMessage } from './types';
 import type { TranslateFunction } from './i18n';
 
@@ -399,22 +400,64 @@ function getHtmlAttribute(attributes: string, wantedName: string) {
   return null;
 }
 
-function htmlToPlainText(value: string) {
+// Inline HTML elements that map onto rich-text markup tokens (rich mode).
+const HTML_MARK_TOKENS: Readonly<Record<string, string>> = {
+  b: '**',
+  code: '`',
+  del: '~~',
+  em: '*',
+  i: '*',
+  s: '~~',
+  strike: '~~',
+  strong: '**',
+};
+
+function htmlToPlainText(value: string, options: { rich?: boolean } = {}) {
   const output: string[] = [];
   const discardedTagDepth = new Map<string, number>();
   let discardedDepth = 0;
   let activeAnchor: { address: string | null; label: string[] } | null = null;
+  // Rich mode: open mark tags (as markup tokens) so a closer only emits when
+  // its opener did; an unclosed mark is closed at the end. Text inside <code>
+  // or <pre> is not escaped (a code span holds it literally) and inside <pre>
+  // becomes a fenced block; <li> lines get the bullet prefix; Hub's mention
+  // spans become @mentions.
+  const rich = options.rich === true;
+  const openMarks: string[] = [];
+  // Same-mark nesting (<b><b>…</b></b>, or a malformed run of openers) emits
+  // one token pair; the depth counter keeps the closer paired with the outer
+  // opener so a hostile payload cannot spray markers.
+  const markDepth = new Map<string, number>();
+  let codeDepth = 0;
+  let preDepth = 0;
+  let mentionDepth = 0;
+  let atLineStart = true;
+  let listItemPending = false;
 
   function appendText(text: string) {
     if (!text || discardedDepth > 0) {
       return;
     }
 
-    if (activeAnchor) {
-      activeAnchor.label.push(text);
-    } else {
-      output.push(text);
+    if (rich && listItemPending && text.trim()) {
+      listItemPending = false;
     }
+
+    const rendered = rich && codeDepth === 0 && preDepth === 0 && mentionDepth === 0 ? escapeRichText(text) : text;
+
+    if (activeAnchor) {
+      activeAnchor.label.push(rendered);
+    } else {
+      output.push(rendered);
+    }
+
+    atLineStart = text.endsWith('\n');
+  }
+
+  function appendToken(token: string) {
+    if (discardedDepth > 0) return;
+    if (activeAnchor) activeAnchor.label.push(token);
+    else output.push(token);
   }
 
   function closeAnchor() {
@@ -500,6 +543,57 @@ function htmlToPlainText(value: string) {
       };
     } else if (tag.closing && tag.name === 'a') {
       closeAnchor();
+    } else if (rich && tag.name === 'pre') {
+      if (!tag.closing) {
+        preDepth += 1;
+        appendToken(atLineStart ? '```\n' : '\n```\n');
+      } else if (preDepth > 0) {
+        preDepth -= 1;
+        appendToken(atLineStart ? '```\n' : '\n```\n');
+        atLineStart = true;
+      }
+    } else if (rich && preDepth === 0 && HTML_MARK_TOKENS[tag.name]) {
+      const token = HTML_MARK_TOKENS[tag.name];
+
+      const depth = markDepth.get(token) ?? 0;
+
+      if (!tag.closing) {
+        markDepth.set(token, depth + 1);
+        if (tag.name === 'code') codeDepth += 1;
+        if (depth === 0) {
+          openMarks.push(token);
+          appendToken(token);
+        }
+      } else if (depth > 0) {
+        markDepth.set(token, depth - 1);
+        if (tag.name === 'code') codeDepth -= 1;
+        if (depth === 1) {
+          openMarks.splice(openMarks.lastIndexOf(token), 1);
+          appendToken(token);
+        }
+      }
+    } else if (rich && tag.name === 'span' && !tag.closing && isHubMentionSpan(tag.attributes)) {
+      mentionDepth += 1;
+      const label = getHtmlAttribute(tag.attributes, 'data-label');
+
+      if (label !== null) {
+        appendToken(formatMentionMarkup(decodeHtmlEntities(label)));
+        discardedTagDepth.set('span', (discardedTagDepth.get('span') ?? 0) + 1);
+        discardedDepth += 1;
+      }
+    } else if (rich && tag.name === 'span' && tag.closing && mentionDepth > 0) {
+      mentionDepth -= 1;
+      const pending = discardedTagDepth.get('span') ?? 0;
+
+      if (pending > 0) {
+        discardedTagDepth.set('span', pending - 1);
+        discardedDepth -= 1;
+      }
+    } else if (rich && !tag.closing && tag.name === 'li') {
+      if (!atLineStart) appendToken('\n');
+      appendToken('- ');
+      listItemPending = true;
+      atLineStart = false;
     } else if (!tag.closing && HTML_BREAK_TAGS.has(tag.name)) {
       appendText('\n');
     } else if (tag.closing && HTML_BLOCK_END_TAGS.has(tag.name)) {
@@ -508,18 +602,47 @@ function htmlToPlainText(value: string) {
   }
 
   closeAnchor();
+
+  if (rich) {
+    while (openMarks.length > 0) {
+      appendToken(openMarks.pop()!);
+    }
+    if (preDepth > 0) appendToken('\n```\n');
+  }
+
   return output.join('');
+}
+
+function isHubMentionSpan(attributes: string) {
+  const type = getHtmlAttribute(attributes, 'data-type');
+  const className = getHtmlAttribute(attributes, 'class') ?? '';
+
+  return type === 'mention' || /(?:^|\s)mention(?:\s|$)/.test(className);
+}
+
+function formatMentionMarkup(label: string) {
+  const name = label.replace(/^@/, '').trim();
+
+  if (!name) return '';
+
+  return /^[A-Za-z0-9._-]{1,40}$/.test(name) ? `@${name}` : `@[${name.replace(/[\]\n]/g, ' ').slice(0, 40)}]`;
 }
 
 // Hub history contains messageText as Tiptap JSON, plain strings, and legacy
 // HTML strings. Convert the latter to text without ever passing it to React as
 // HTML. Script/style/template contents are discarded rather than displayed.
+// 2.0.19: Hub documents keep their formatting — marks, mentions, lists and
+// code blocks become Chat's rich-text markup (richText.ts) instead of being
+// flattened, so Hub-authored formatting renders here and edits round-trip.
+// Link hrefs still pass through getSafeLinkedAddress. Legacy HTML strings
+// (older Hub messages and direct messages) go through the hardened tokenizer
+// below in rich mode for the same result.
 function extractSafeHubText(value: unknown) {
   if (typeof value !== 'string') {
-    return extractTiptapText(value);
+    return richTextToMarkup(tiptapDocToRichText(value, getSafeLinkedAddress));
   }
 
-  return htmlToPlainText(value);
+  return htmlToPlainText(value, { rich: true });
 }
 
 function normalizeExtractedHubText(value: string) {
@@ -558,7 +681,7 @@ export function buildParagraphHtmlFromPlainText(text: string): string {
 // already go through via extractSafeHubText, so there is exactly one HTML
 // parser in this file rather than a second one grown for direct messages.
 export function extractPlainTextFromParagraphHtml(html: string): string {
-  return normalizeExtractedHubText(htmlToPlainText(html));
+  return normalizeExtractedHubText(htmlToPlainText(html, { rich: true }));
 }
 
 function getQortalHubImageRefs(value: unknown): QortalHubImageRef[] {
@@ -1066,8 +1189,9 @@ export function getSenderLabel(message: Pick<ChatMessage, 'sender' | 'senderName
 
 // Single-line preview of a message body for reply previews and sidebar snippets.
 export function getMessageSnippet(message: DecodableChatMessage, t: TranslateFunction, maxLength = 140) {
-  const body = decodeChatMessage(message, t).body || t('message.empty');
-  const flattened = body.replace(/\s+/g, ' ').trim();
+  const body = decodeChatMessage(message, t).body;
+  // Snippets and notifications show the words, not the markup (2.0.19).
+  const flattened = (body ? stripRichTextMarkup(body) : t('message.empty')).replace(/\s+/g, ' ').trim();
 
   return flattened.length > maxLength ? `${flattened.slice(0, maxLength - 1)}…` : flattened;
 }

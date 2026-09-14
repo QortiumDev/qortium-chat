@@ -255,6 +255,28 @@ describe('message link helpers', () => {
     expect(qdnRequestMock).not.toHaveBeenCalled();
   });
 
+  it('renders rich-text markup with links intact inside marks (G1)', () => {
+    const html = renderToStaticMarkup(
+      <>
+        {renderMessageTextWithAppLinks(
+          '**bold https://example.com** *it* ~~no~~ `x*y` @alice\nline two\n- item\n```js\ncode\n```',
+          undefined,
+          'qortium',
+        )}
+      </>,
+    );
+
+    expect(html).toContain('<strong>bold <button');
+    expect(html).toContain('message__web-link');
+    expect(html).toContain('<em>it</em>');
+    expect(html).toContain('<s>no</s>');
+    expect(html).toContain('<code class="message__inline-code">x*y</code>');
+    expect(html).toContain('<span class="message__mention">@alice</span>');
+    expect(html).toContain('\nline two');
+    expect(html).toContain('<ul class="message__list"><li>item</li></ul>');
+    expect(html).toContain('<pre class="message__code-block"><code data-lang="js">code</code></pre>');
+  });
+
   it('renders HTTP and unavailable Qortal app links as visibly copy-only buttons', () => {
     const html = renderToStaticMarkup(
       <>

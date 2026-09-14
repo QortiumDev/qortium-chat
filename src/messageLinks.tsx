@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useRef, useState } from 'react';
 import { copyTextToClipboard } from './clipboard';
+import { parseRichText, type RichInline } from './richText';
 import { saveQdnResource as saveQdnResourceCoreApi } from './coreApi';
 import { type TranslateFunction } from './i18n';
 import { qdnRequest } from './qdnRequest';
@@ -1470,26 +1471,71 @@ export function renderMessageTextWithAppLinks(
   const copiedLabel = translate ? translate('button.copied') : 'Copied';
   const copyLabel = translate ? translate('button.copy') : 'Copy';
   const pollLabel = translate ? translate('label.pollEmbed') : 'Poll';
+  const canOpenQortalAppLinks = options.canOpenQortalAppLinks === true;
 
-  return getMessageSegments(text).map((segment, segmentIndex) => {
-    if (segment.kind === 'code') {
+  // 2.0.19 (G1): the body is rich-text markup (richText.ts). Text runs still
+  // go through the link splitter, so QDN/app/web links render exactly as
+  // before inside bold/italic/list content; the body keeps `white-space:
+  // pre-wrap`, so paragraphs are joined with newline text.
+  const renderInlines = (inlines: RichInline[], keyPrefix: string) =>
+    inlines.map((inline, inlineIndex) => {
+      const key = `${keyPrefix}-${inlineIndex}`;
+
+      if (inline.kind === 'mention') {
+        return (
+          <span className="message__mention" key={key} title={inline.address ?? undefined}>
+            @{inline.name}
+          </span>
+        );
+      }
+
+      if (inline.marks.code) {
+        return (
+          <code className="message__inline-code" key={key}>
+            {inline.text}
+          </code>
+        );
+      }
+
+      let node: ReactNode = getMessageTextParts(inline.text).map((part, partIndex) =>
+        renderTextPart(part, `${key}-${partIndex}`, copiedLabel, copyLabel, pollLabel, conversationNetwork, canOpenQortalAppLinks),
+      );
+
+      if (inline.marks.strike) node = <s>{node}</s>;
+      if (inline.marks.italic) node = <em>{node}</em>;
+      if (inline.marks.bold) node = <strong>{node}</strong>;
+
+      return <Fragment key={key}>{node}</Fragment>;
+    });
+
+  const blocks = parseRichText(text);
+
+  return blocks.map((block, blockIndex) => {
+    const separator = blockIndex > 0 && block.kind === 'paragraph' && blocks[blockIndex - 1]?.kind === 'paragraph' ? '\n' : null;
+
+    if (block.kind === 'codeBlock') {
       return (
-        <pre className="message__code-block" key={`code-${segmentIndex}`}>
-          <code data-lang={segment.lang || undefined}>{segment.content}</code>
+        <pre className="message__code-block" key={`code-${blockIndex}`}>
+          <code data-lang={block.lang || undefined}>{block.text}</code>
         </pre>
       );
     }
 
-    return getMessageTextParts(segment.text).map((part, partIndex) =>
-      renderTextPart(
-        part,
-        `${segmentIndex}-${partIndex}`,
-        copiedLabel,
-        copyLabel,
-        pollLabel,
-        conversationNetwork,
-        options.canOpenQortalAppLinks === true,
-      ),
+    if (block.kind === 'bulletList') {
+      return (
+        <ul className="message__list" key={`list-${blockIndex}`}>
+          {block.items.map((item, itemIndex) => (
+            <li key={itemIndex}>{renderInlines(item, `${blockIndex}-${itemIndex}`)}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    return (
+      <Fragment key={`p-${blockIndex}`}>
+        {separator}
+        {renderInlines(block.inlines, `${blockIndex}`)}
+      </Fragment>
     );
   });
 }
