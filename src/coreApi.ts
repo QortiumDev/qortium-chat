@@ -1732,24 +1732,41 @@ export type GroupModerationKind =
   | 'removeAdmin'
   | 'unban';
 
-export const GROUP_MODERATION_ACTIONS: Readonly<Record<GroupModerationKind, QdnAction>> = {
-  addAdmin: 'ADD_GROUP_ADMIN',
-  ban: 'BAN_FROM_GROUP',
-  cancelInvite: 'CANCEL_GROUP_INVITE',
-  invite: 'INVITE_TO_GROUP',
-  kick: 'KICK_FROM_GROUP',
-  removeAdmin: 'REMOVE_GROUP_ADMIN',
-  unban: 'CANCEL_GROUP_BAN',
+// Home 2 advertises kick/ban under Core's transaction names (GROUP_KICK,
+// GROUP_BAN) while Hub uses KICK_FROM_GROUP / BAN_FROM_GROUP; Home accepts
+// both. The first entry is sent when the host advertises neither name
+// explicitly; `getGroupModerationAction` picks whichever the host lists.
+export const GROUP_MODERATION_ACTIONS: Readonly<Record<GroupModerationKind, readonly QdnAction[]>> = {
+  addAdmin: ['ADD_GROUP_ADMIN'],
+  ban: ['BAN_FROM_GROUP', 'GROUP_BAN'],
+  cancelInvite: ['CANCEL_GROUP_INVITE'],
+  invite: ['INVITE_TO_GROUP'],
+  kick: ['KICK_FROM_GROUP', 'GROUP_KICK'],
+  removeAdmin: ['REMOVE_GROUP_ADMIN'],
+  unban: ['CANCEL_GROUP_BAN'],
 };
+
+export function getGroupModerationAction(kind: GroupModerationKind, actions?: QdnAction[]): QdnAction {
+  const names = GROUP_MODERATION_ACTIONS[kind];
+
+  return names.find((name) => hasBridgeAction(actions, name)) ?? names[0]!;
+}
+
+export function hasGroupModerationAction(kind: GroupModerationKind, actions?: QdnAction[]) {
+  return GROUP_MODERATION_ACTIONS[kind].some((name) => hasBridgeAction(actions, name));
+}
 
 export async function moderateGroupMember(
   kind: GroupModerationKind,
   groupId: number,
   address: string,
   network: ChatNetwork = 'qortium',
-  options: { reason?: string } = {},
+  options: { actions?: QdnAction[]; reason?: string } = {},
 ) {
   const reason = (options.reason ?? '').trim();
+  const action = getGroupModerationAction(kind, options.actions);
+  // Literal names below keep the Developers reference roster honest; the
+  // sent name is whichever alias the host advertises.
   const request =
     kind === 'invite'
       ? { action: 'INVITE_TO_GROUP', groupId, inviteeAddress: address, inviteTime: 0 }
@@ -1765,7 +1782,7 @@ export async function moderateGroupMember(
                 ? { action: 'ADD_GROUP_ADMIN', groupId, qortalAddress: address }
                 : { action: 'REMOVE_GROUP_ADMIN', groupId, qortalAddress: address };
 
-  return bridgeRequest<GroupMembershipActionResult>(network, request);
+  return bridgeRequest<GroupMembershipActionResult>(network, { ...request, action });
 }
 
 // 2.0.20 (G2): the newest confirmed transactions of the given types. Both
