@@ -1386,6 +1386,47 @@ function CopyOnlyLink({
   );
 }
 
+// 2.0.22 (D-E): when the host offers OPEN_EXTERNAL_LINK the link text opens
+// through the host (which validates the URL and asks the user first, showing
+// the site and the full link); the copy affordance stays beside it. Still a
+// button, never an anchor — the app itself never navigates anywhere.
+function OpenableWebLink({
+  copiedLabel,
+  copyLabel,
+  onOpen,
+  openLabel,
+  text,
+  url,
+}: {
+  copiedLabel: string;
+  copyLabel: string;
+  onOpen: (url: string) => void;
+  openLabel: string;
+  text: string;
+  url: string;
+}): ReactNode {
+  return (
+    <span className="message__web-link-group">
+      <button
+        className="message__web-link message__web-link--open"
+        onClick={() => onOpen(url)}
+        title={`${openLabel}: ${url}`}
+        type="button"
+      >
+        {text}
+        <span className="message__web-link-copied">{openLabel}</span>
+      </button>
+      <CopyOnlyLink
+        className="message__web-link message__web-link--copy"
+        copiedLabel={copiedLabel}
+        copyLabel={copyLabel}
+        text=""
+        url={url}
+      />
+    </span>
+  );
+}
+
 function renderTextPart(
   part: MessageTextPart,
   key: string,
@@ -1394,12 +1435,27 @@ function renderTextPart(
   pollLabel: string,
   conversationNetwork: ChatNetwork,
   canOpenQortalAppLinks: boolean,
+  openWebLink: ((url: string) => void) | null,
+  openLabel: string,
 ): ReactNode {
   if (part.kind === 'text') {
     return part.text;
   }
 
   if (part.kind === 'web-link') {
+    if (openWebLink) {
+      return (
+        <OpenableWebLink
+          copiedLabel={copiedLabel}
+          copyLabel={copyLabel}
+          key={key}
+          onOpen={openWebLink}
+          openLabel={openLabel}
+          text={part.text}
+          url={part.url}
+        />
+      );
+    }
     return (
       <CopyOnlyLink
         className="message__web-link"
@@ -1466,12 +1522,14 @@ export function renderMessageTextWithAppLinks(
   text: string,
   translate?: TranslateFunction,
   conversationNetwork: ChatNetwork = 'qortium',
-  options: { canOpenQortalAppLinks?: boolean } = {},
+  options: { canOpenQortalAppLinks?: boolean; openWebLink?: ((url: string) => void) | null } = {},
 ): ReactNode {
   const copiedLabel = translate ? translate('button.copied') : 'Copied';
   const copyLabel = translate ? translate('button.copy') : 'Copy';
+  const openLabel = translate ? translate('button.open') : 'Open';
   const pollLabel = translate ? translate('label.pollEmbed') : 'Poll';
   const canOpenQortalAppLinks = options.canOpenQortalAppLinks === true;
+  const openWebLink = options.openWebLink ?? null;
 
   // 2.0.19 (G1): the body is rich-text markup (richText.ts). Text runs still
   // go through the link splitter, so QDN/app/web links render exactly as
@@ -1498,7 +1556,17 @@ export function renderMessageTextWithAppLinks(
       }
 
       let node: ReactNode = getMessageTextParts(inline.text).map((part, partIndex) =>
-        renderTextPart(part, `${key}-${partIndex}`, copiedLabel, copyLabel, pollLabel, conversationNetwork, canOpenQortalAppLinks),
+        renderTextPart(
+          part,
+          `${key}-${partIndex}`,
+          copiedLabel,
+          copyLabel,
+          pollLabel,
+          conversationNetwork,
+          canOpenQortalAppLinks,
+          openWebLink,
+          openLabel,
+        ),
       );
 
       if (inline.marks.strike) node = <s>{node}</s>;

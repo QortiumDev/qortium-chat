@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '已提交：{action}',
   'status.moderation.confirmed': '群組操作已確認',
   'status.loadingError.moderate': '無法完成群組操作。',
+  'status.loadingError.openLink': '無法開啟連結。',
   'system.group.joined': '{actor} 加入了群組',
   'system.group.left': '{actor} 離開了群組',
   'system.group.joinRequested': '{actor} 請求加入',

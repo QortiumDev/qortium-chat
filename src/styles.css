@@ -3186,6 +3186,19 @@ button.message__reply-preview:focus-visible,
   border-radius: 2px;
 }
 
+.message__web-link-group {
+  display: inline;
+}
+
+.message__web-link--open {
+  cursor: pointer;
+}
+
+.message__web-link--copy {
+  margin-left: 0.15em;
+  text-decoration: none;
+}
+
 .message__web-link-copied {
   margin-left: 0.4em;
   padding: 0 0.4em;

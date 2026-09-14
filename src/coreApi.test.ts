@@ -112,6 +112,7 @@ vi.mock('./qortalRequest', () => ({
 vi.mock('./qortalGeneralChat', () => ({
   getQortalGeneralChatMessages: qortalGeneralChatMessagesMock,
   rememberQortalGeneralChatAccount: rememberQortalGeneralChatAccountMock,
+  rememberQortalGeneralChatHostActions: vi.fn(),
   sendQortalGeneralChatDelete: qortalGeneralChatDeleteMock,
   sendQortalGeneralChatEdit: qortalGeneralChatEditMock,
   sendQortalGeneralChatMessage: qortalGeneralChatMessageMock,

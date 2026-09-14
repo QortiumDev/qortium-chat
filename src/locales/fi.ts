@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} lähetetty',
   'status.moderation.confirmed': 'Ryhmätoiminto vahvistettu',
   'status.loadingError.moderate': 'Ryhmätoimintoa ei voitu suorittaa.',
+  'status.loadingError.openLink': 'Linkkiä ei voitu avata.',
   'system.group.joined': '{actor} liittyi ryhmään',
   'system.group.left': '{actor} poistui ryhmästä',
   'system.group.joinRequested': '{actor} pyysi liittyä',

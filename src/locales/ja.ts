@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} を送信しました',
   'status.moderation.confirmed': 'グループ操作が確認されました',
   'status.loadingError.moderate': 'グループ操作を完了できません。',
+  'status.loadingError.openLink': 'リンクを開けません。',
   'system.group.joined': '{actor} がグループに参加しました',
   'system.group.left': '{actor} がグループを退出しました',
   'system.group.joinRequested': '{actor} が参加をリクエストしました',

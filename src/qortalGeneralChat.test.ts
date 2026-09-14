@@ -8,7 +8,9 @@ import {
   decodeQortalGeneralWrappedMessage,
   deriveQortalGeneralWrapperKeys,
   getQortalGeneralChatMessages,
+  hasQortalGeneralChatHostAction,
   parseSignedQortalGeneralChatBytes,
+  rememberQortalGeneralChatHostActions,
   sendQortalGeneralChatMessage,
   stampQortalGeneralChatNonce,
 } from './qortalGeneralChat';
@@ -181,6 +183,40 @@ describe('Qortal MESSAGE-wrapped General Chat', () => {
         timestamp: 1_700_000_000_000,
       }),
     ).toThrow('Message is too large for Qortal General Chat.');
+  });
+
+  it('prefers the host wrapper action when Home advertises SEND_QORTAL_GENERAL_CHAT (D-D)', async () => {
+    rememberQortalGeneralChatHostActions(['SEND_CHAT_MESSAGE', 'SEND_QORTAL_GENERAL_CHAT']);
+    qortalRequestMock.mockImplementation(async (request: Record<string, unknown>) => {
+      if (request.action === 'SEND_QORTAL_GENERAL_CHAT') return { signature: 'sig-inner', timestamp: 1_700_000_000_500 };
+      throw new Error(`Unexpected Qortal request: ${String(request.action)}`);
+    });
+
+    const result = await sendQortalGeneralChatMessage('hello home', 'ref-original');
+    expect(result).toEqual({ signature: 'sig-inner', timestamp: 1_700_000_000_500 });
+    expect(qortalRequestMock).toHaveBeenCalledTimes(1);
+    const [request] = qortalRequestMock.mock.calls[0];
+    expect(request.action).toBe('SEND_QORTAL_GENERAL_CHAT');
+    expect(request.chatReference).toBe('ref-original');
+    expect(JSON.parse(String(request.message))).toMatchObject({ version: 3 });
+
+    // Home's signed unknown-outcome record maps to Chat's ambiguous outcome.
+    qortalRequestMock.mockResolvedValueOnce({
+      accepted: false,
+      error: 'Qortal General Chat broadcast failed.',
+      errorType: 'BROADCAST_OUTCOME_UNKNOWN',
+      signature: 'sig-2',
+      timestamp: 5,
+    });
+    await expect(sendQortalGeneralChatMessage('again')).resolves.toMatchObject({
+      errorType: 'BROADCAST_OUTCOME_UNKNOWN',
+      outcome: 'ambiguous',
+      signature: 'sig-2',
+    });
+    expect(qortalRequestMock.mock.calls.at(-1)?.[0]).not.toHaveProperty('chatReference');
+
+    rememberQortalGeneralChatHostActions([]);
+    expect(hasQortalGeneralChatHostAction()).toBe(false);
   });
 
   it('asks Hub to sign only the inner CHAT and posts a MESSAGE containing those signed bytes', async () => {

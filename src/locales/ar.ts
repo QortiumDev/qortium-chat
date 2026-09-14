@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': 'تم إرسال: {action}',
   'status.moderation.confirmed': 'تم تأكيد إجراء المجموعة',
   'status.loadingError.moderate': 'تعذر إكمال إجراء المجموعة.',
+  'status.loadingError.openLink': 'تعذر فتح الرابط.',
   'system.group.joined': 'انضم {actor} إلى المجموعة',
   'system.group.left': 'غادر {actor} المجموعة',
   'system.group.joinRequested': 'طلب {actor} الانضمام',

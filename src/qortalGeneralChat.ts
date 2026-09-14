@@ -59,9 +59,26 @@ type QortalGeneralChatAccount = {
 };
 
 let cachedAccount: QortalGeneralChatAccount | null = null;
+let cachedHostActions: readonly string[] = [];
 
 export function rememberQortalGeneralChatAccount(account: QortalGeneralChatAccount) {
   cachedAccount = account;
+}
+
+// Home 2.1 (2026-09) does the wrapper itself: `SEND_QORTAL_GENERAL_CHAT` takes
+// the opaque Hub envelope (+ chatReference for a revision), builds and proves
+// the group-0 CHAT, signs it with the account, seals it in the MESSAGE
+// wrapper and broadcasts — the account key never leaves the host, and Chat
+// never needs SIGN_TRANSACTION. Remembered from the bridge's advertised
+// action list so the send path can prefer it over Hub's raw-signing route.
+export const QORTAL_GENERAL_CHAT_HOST_ACTION = 'SEND_QORTAL_GENERAL_CHAT';
+
+export function rememberQortalGeneralChatHostActions(actions: readonly string[] | null | undefined) {
+  cachedHostActions = Array.isArray(actions) ? actions : [];
+}
+
+export function hasQortalGeneralChatHostAction(actions: readonly string[] | null | undefined = cachedHostActions) {
+  return !!actions && actions.includes(QORTAL_GENERAL_CHAT_HOST_ACTION);
 }
 
 function concatBytes(...chunks: Uint8Array[]) {
@@ -565,7 +582,38 @@ async function processWrapper(signedBytes: Uint8Array) {
   }
 }
 
+// Home's answer shape for every chat send: `{ signature, timestamp }`, or a
+// signed unknown-outcome record when the broadcast itself failed after
+// signing (`errorType: 'BROADCAST_OUTCOME_UNKNOWN'`). The signature is the
+// inner CHAT's — the same id Hub and the wrapper feed use.
+function normalizeHostGeneralChatResult(value: unknown): ChatSendResult {
+  const record = (value ?? {}) as Record<string, unknown>;
+  const signature = typeof record.signature === 'string' ? record.signature : '';
+  if (!signature) throw new Error('Home did not return the General Chat signature.');
+  const timestamp = typeof record.timestamp === 'number' ? record.timestamp : Date.now();
+  if (typeof record.errorType === 'string' && record.errorType) {
+    return {
+      error: typeof record.error === 'string' && record.error ? record.error : record.errorType,
+      errorType: record.errorType,
+      outcome: 'ambiguous',
+      signature,
+      timestamp,
+    };
+  }
+  return { signature, timestamp };
+}
+
 async function sendQortalGeneralChatPayload(wireMessage: string, chatReference?: string): Promise<ChatSendResult> {
+  if (hasQortalGeneralChatHostAction()) {
+    return normalizeHostGeneralChatResult(
+      await qortalRequest<unknown>({
+        action: 'SEND_QORTAL_GENERAL_CHAT',
+        message: wireMessage,
+        ...(chatReference ? { chatReference } : {}),
+      }),
+    );
+  }
+
   const ui = await qortalRequest<unknown>({ action: 'WHICH_UI' });
   if (ui !== 'HUB_ELECTRON' && ui !== 'HUB_WEB') {
     throw new Error('Qortal General Chat is currently available through Qortal Hub.');

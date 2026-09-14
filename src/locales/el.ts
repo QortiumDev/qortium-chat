@@ -273,6 +273,7 @@ export const STRINGS = {
   'status.moderation.submitted': 'Υποβλήθηκε: {action}',
   'status.moderation.confirmed': 'Η ενέργεια ομάδας επιβεβαιώθηκε',
   'status.loadingError.moderate': 'Δεν ήταν δυνατή η ολοκλήρωση της ενέργειας ομάδας.',
+  'status.loadingError.openLink': 'Δεν ήταν δυνατό το άνοιγμα του συνδέσμου.',
   'system.group.joined': 'Ο/Η {actor} εντάχθηκε στην ομάδα',
   'system.group.left': 'Ο/Η {actor} αποχώρησε από την ομάδα',
   'system.group.joinRequested': 'Ο/Η {actor} ζήτησε να ενταχθεί',

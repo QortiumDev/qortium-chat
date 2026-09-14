@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} trimis',
   'status.moderation.confirmed': 'Acțiune de grup confirmată',
   'status.loadingError.moderate': 'Acțiunea de grup nu a putut fi finalizată.',
+  'status.loadingError.openLink': 'Linkul nu a putut fi deschis.',
   'system.group.joined': '{actor} s-a alăturat grupului',
   'system.group.left': '{actor} a părăsit grupul',
   'system.group.joinRequested': '{actor} a cerut să se alăture',

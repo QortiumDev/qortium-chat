@@ -273,6 +273,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} भेजा गया',
   'status.moderation.confirmed': 'समूह क्रिया की पुष्टि हुई',
   'status.loadingError.moderate': 'समूह क्रिया पूरी नहीं हो सकी।',
+  'status.loadingError.openLink': 'लिंक नहीं खोला जा सका।',
   'system.group.joined': '{actor} समूह में शामिल हुए',
   'system.group.left': '{actor} ने समूह छोड़ दिया',
   'system.group.joinRequested': '{actor} ने शामिल होने का अनुरोध किया',

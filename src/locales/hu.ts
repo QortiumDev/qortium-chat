@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} elküldve',
   'status.moderation.confirmed': 'Csoportművelet megerősítve',
   'status.loadingError.moderate': 'A csoportművelet nem hajtható végre.',
+  'status.loadingError.openLink': 'A hivatkozás nem nyitható meg.',
   'system.group.joined': '{actor} csatlakozott a csoporthoz',
   'system.group.left': '{actor} kilépett a csoportból',
   'system.group.joinRequested': '{actor} csatlakozást kért',

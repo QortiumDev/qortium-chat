@@ -258,6 +258,7 @@ export const STRINGS = {
   'status.moderation.submitted': '{action} 제출됨',
   'status.moderation.confirmed': '그룹 작업 확인됨',
   'status.loadingError.moderate': '그룹 작업을 완료할 수 없습니다.',
+  'status.loadingError.openLink': '링크를 열 수 없습니다.',
   'system.group.joined': '{actor} 님이 그룹에 참여했습니다',
   'system.group.left': '{actor} 님이 그룹을 나갔습니다',
   'system.group.joinRequested': '{actor} 님이 참여를 요청했습니다',
