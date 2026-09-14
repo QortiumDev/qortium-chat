@@ -20,6 +20,7 @@ import {
   formatTimeAgo,
   formatTimestamp,
   getMessageSnippet,
+  hasMissingPrivateGroupKey,
 } from './chatText';
 import {
   buildMessageThreads,
@@ -699,6 +700,7 @@ export const MessageList = memo(function MessageList({
   blocking = null,
   onSearchMatches,
   searchQuery = '',
+  viewerJoinedAt = null,
   onOpenWebLink,
   onRetryMessage,
   onRetryRevision,
@@ -752,6 +754,12 @@ export const MessageList = memo(function MessageList({
   searchQuery?: string;
   /** 2.0.25 (G11): reports the match count for the header while searching. */
   onSearchMatches?: ((count: number) => void) | null;
+  /**
+   * 2.0.26 (D-I): when the viewer joined this closed group. A message from
+   * before then that cannot be decrypted is "sent before you joined" (QPGC
+   * keys are per epoch), not a missing-key fault.
+   */
+  viewerJoinedAt?: number | null;
   pendingReactionKeys: ReadonlySet<string>;
   pendingRevisionBySignature: ReadonlyMap<string, PendingRevision>;
   pendingSendByLocalId: ReadonlyMap<string, PendingSend>;
@@ -2195,7 +2203,14 @@ export const MessageList = memo(function MessageList({
                   )
                 ) : null}
                 <div className="message__body">
-                  {decoded.body ? (
+                  {decoded.kind === 'encrypted' &&
+                  viewerJoinedAt !== null &&
+                  original.timestamp < viewerJoinedAt &&
+                  hasMissingPrivateGroupKey(original) ? (
+                    <span className="message__body-placeholder" title={t('hint.sentBeforeJoin')}>
+                      {t('message.sentBeforeJoin')}
+                    </span>
+                  ) : decoded.body ? (
                     renderMessageTextWithAppLinks(decoded.body, t, network, {
                       canOpenQortalAppLinks: hasResourceAction('qortal', 'OPEN_NEW_TAB'),
                       openWebLink:

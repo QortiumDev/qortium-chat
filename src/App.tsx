@@ -2179,6 +2179,14 @@ export default function App() {
   // 2.0.20 (G3): the viewer's role in the selected group, from the member
   // list (owner from the group record, admins from the membership flag).
   const selectedGroupViewerAddress = selectedChat?.network === 'qortal' ? qortalAccount?.address ?? null : account?.address ?? null;
+  // 2.0.26 (D-I): the viewer's own join time in the selected closed group,
+  // from the member list, so undecryptable history from before it is labelled
+  // "sent before you joined" rather than as a missing key.
+  const selectedGroupViewerJoinedAt = useMemo(() => {
+    if (!selectedGroupViewerAddress || selectedChat?.kind !== 'group' || selectedChat.group.isOpen !== false) return null;
+    const me = selectedGroupMembers.find((member) => getGroupMemberAddress(member) === selectedGroupViewerAddress);
+    return typeof me?.joined === 'number' && me.joined > 0 ? me.joined : null;
+  }, [selectedChat, selectedGroupMembers, selectedGroupViewerAddress]);
   const selectedGroupViewerRole: 'admin' | 'member' | 'owner' = useMemo(() => {
     if (!selectedGroup || !selectedGroupViewerAddress) return 'member';
     if (selectedGroup.owner === selectedGroupViewerAddress) return 'owner';
@@ -11840,6 +11848,7 @@ export default function App() {
                 blocking={selectedBlockControls}
                 onSearchMatches={setChatSearchMatches}
                 searchQuery={chatSearchOpen ? chatSearchQuery : ''}
+                viewerJoinedAt={selectedGroupViewerJoinedAt}
                 onOpenWebLink={handleOpenWebLink}
                 onRetryMessage={handleRetryMessage}
                 onRetryRevision={handleRetryRevision}
