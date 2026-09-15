@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "مفتاح المجموعة الخاصة مفقود. اطلب من مسؤول المجموعة نشره.",
   "status.privateGroupKey.publishing": "جارٍ نشر مفتاح المجموعة…",
   "status.privateGroupKey.published": "تم نشر حزمة مفتاح المجموعة.",
+  "status.privateGroupKey.publishUnknown": "تم توقيع حزمة المفاتيح لكن نشرها لم يكتمل؛ راجع إشعار المعاملات المعلقة قبل المحاولة مجددًا.",
   "status.loadingError.privateGroupState": "تعذّر تحميل حالة دردشة المجموعة الخاصة.",
   "button.privateGroup.publishKey": "نشر مفتاح المجموعة",
   "label.composer.privateGroupBytesRemaining": "تبقّى {remaining} من {max} بايت",

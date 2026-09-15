@@ -426,6 +426,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Den private gruppenøkkelen mangler. Be en gruppeadministrator publisere den.",
   "status.privateGroupKey.publishing": "Publiserer gruppenøkkel…",
   "status.privateGroupKey.published": "Gruppenøkkelpakke publisert.",
+  "status.privateGroupKey.publishUnknown": "Nøkkelpakken ble signert, men publiseringen ble ikke fullført; sjekk varselet om ventende transaksjoner før du prøver igjen.",
   "status.loadingError.privateGroupState": "Kan ikke laste inn status for privat gruppechat.",
   "button.privateGroup.publishKey": "Publiser gruppenøkkel",
   "label.composer.privateGroupBytesRemaining": "{remaining} av {max} byte gjenstår",

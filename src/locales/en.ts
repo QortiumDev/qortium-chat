@@ -430,6 +430,7 @@ export const EN_STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "The private group key is missing. Ask a group admin to publish it.",
   "status.privateGroupKey.publishing": "Publishing group key…",
   "status.privateGroupKey.published": "Group key bundle published.",
+  "status.privateGroupKey.publishUnknown": "The key bundle was signed but its publication did not complete; check the pending transactions notice before trying again.",
   "status.loadingError.privateGroupState": "Unable to load private group chat state.",
   "button.privateGroup.publishKey": "Publish group key",
   "label.composer.privateGroupBytesRemaining": "{remaining} of {max} bytes remaining",

@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.26, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.27, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -231,7 +231,12 @@ built-in public-node restriction anymore — if a node operator disables a
 required capability, the send is attempted and the host's exact capability
 error (for example a missing-capability or unavailable-route notice) is
 shown. Ambiguous broadcast outcomes are reconciled through Home 2's
-restart-safe pending-transaction journal when the host provides it. Browser
+restart-safe pending-transaction journal when the host provides it. Since
+Chat 2.0.27 sends and revisions go out one at a time per network, so a
+message typed while the previous one is still computing its proof-of-work
+waits its turn instead of racing the host; a proof-of-work refusal, timeout
+or cancellation (`QDN_POW_BUSY`, `QDN_POW_TIMEOUT`, `QDN_POW_CANCELLED`) is
+a definite pre-signing rejection and keeps the Retry button. Browser
 development remains read-only and cannot decrypt or send direct private chat
 without Home. On Home 2, notifications are foreground-only: Chat must be
 running (in a tab) to detect activity and ask Home to show a notification —

@@ -79,6 +79,7 @@ import {
 import { getBlockListCapability, isBlockListUnavailableError, isBlockedSender } from './blockList';
 import { encodeInlineImage, inlineImageBudget, isInlineImageCandidate, type InlineImageResult } from './inlineImage';
 import { dispatchChatSendEntry, dispatchChatRevisionEntry } from './chatDispatch';
+import { createDispatchChain } from './dispatchChain';
 import { getPrivateGroupComposerMaxPlaintextBytes, getUtf8ByteLength } from './privateGroupComposer';
 import { PrivateActiveChatsRequestCoordinator } from './privateActiveChatsRequest';
 import { mergePrivateGroupActiveChats } from './privateGroupActiveChats';
@@ -1749,6 +1750,8 @@ export default function App() {
   // persistence design exists.
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
   const pendingSendsRef = useRef<PendingSend[]>(pendingSends);
+  // 2.0.27: sends/revisions go out one at a time per network (dispatchChain.ts).
+  const dispatchChainRef = useRef(createDispatchChain());
   const [pendingRevisions, setPendingRevisions] = useState<PendingRevision[]>([]);
   const pendingRevisionsRef = useRef<PendingRevision[]>(pendingRevisions);
   const [writeError, setWriteError] = useState('');
@@ -5396,9 +5399,23 @@ export default function App() {
     setPrivateGroupKeyStatus(t('status.privateGroupKey.publishing'));
 
     try {
-      await resolvePrivateGroupChatKeyRequests(group.groupId, qortalBridge.value.actions, 20, 'qortal');
+      const outcome = await resolvePrivateGroupChatKeyRequests(group.groupId, qortalBridge.value.actions, 20, 'qortal');
 
       if (selectedChatKeyRef.current !== chatKey) {
+        return;
+      }
+
+      // B16: Home answers an ambiguous or failed broadcast as a publication
+      // result with `accepted: false` (and its journal entry) rather than by
+      // throwing — that is not a success and must not read as one.
+      if (outcome.kind === 'publication' && outcome.accepted === false) {
+        setPrivateGroupKeyStatus('');
+        setPrivateGroupKeyError(
+          typeof outcome.error === 'string' && outcome.error
+            ? outcome.error
+            : t('status.privateGroupKey.publishUnknown'),
+        );
+        void fetchPendingJournal('qortal');
         return;
       }
 
@@ -6033,7 +6050,7 @@ export default function App() {
         }
       }
 
-      const result = await dispatchChatSend(entry);
+      const result = await dispatchChainRef.current.run(network, () => dispatchChatSend(entry));
 
       if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;
@@ -6156,7 +6173,7 @@ export default function App() {
     const attemptUpdatedAt = entry.delivery.updatedAt;
 
     try {
-      const result = await dispatchChatRevision(entry);
+      const result = await dispatchChainRef.current.run(network, () => dispatchChatRevision(entry));
 
       if (!isCurrentOrRefreshingPendingOwner(entry.target, entry.accountAddress)) {
         return;

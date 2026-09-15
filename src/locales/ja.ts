@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "プライベートグループキーがありません。グループの管理者に公開を依頼してください。",
   "status.privateGroupKey.publishing": "グループキーを公開中…",
   "status.privateGroupKey.published": "グループキーバンドルを公開しました。",
+  "status.privateGroupKey.publishUnknown": "鍵バンドルは署名されましたが公開が完了しませんでした。再試行する前に保留中トランザクションの通知を確認してください。",
   "status.loadingError.privateGroupState": "プライベートグループチャットの状態を読み込めません。",
   "button.privateGroup.publishKey": "グループキーを公開",
   "label.composer.privateGroupBytesRemaining": "{max}バイト中{remaining}バイト残り",

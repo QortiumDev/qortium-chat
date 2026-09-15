@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "비공개 그룹 키가 없습니다. 그룹 관리자에게 게시를 요청하세요.",
   "status.privateGroupKey.publishing": "그룹 키 게시 중…",
   "status.privateGroupKey.published": "그룹 키 번들이 게시되었습니다.",
+  "status.privateGroupKey.publishUnknown": "키 번들은 서명되었지만 게시가 완료되지 않았습니다. 다시 시도하기 전에 보류 중인 트랜잭션 알림을 확인하세요.",
   "status.loadingError.privateGroupState": "비공개 그룹 채팅 상태를 불러올 수 없습니다.",
   "button.privateGroup.publishKey": "그룹 키 게시",
   "label.composer.privateGroupBytesRemaining": "{max} 중 {remaining}바이트 남음",

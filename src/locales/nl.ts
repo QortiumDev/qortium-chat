@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "De privégroepssleutel ontbreekt. Vraag een groepsbeheerder om deze te publiceren.",
   "status.privateGroupKey.publishing": "Groepssleutel wordt gepubliceerd…",
   "status.privateGroupKey.published": "Groepssleutelbundel gepubliceerd.",
+  "status.privateGroupKey.publishUnknown": "De sleutelbundel is ondertekend maar de publicatie is niet voltooid; controleer de melding over openstaande transacties voordat je het opnieuw probeert.",
   "status.loadingError.privateGroupState": "Kan de status van de privégroepschat niet laden.",
   "button.privateGroup.publishKey": "Groepssleutel publiceren",
   "label.composer.privateGroupBytesRemaining": "{remaining} van {max} bytes resterend",

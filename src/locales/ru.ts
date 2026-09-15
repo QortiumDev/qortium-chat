@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Отсутствует ключ приватной группы. Попросите администратора группы опубликовать его.",
   "status.privateGroupKey.publishing": "Публикация ключа группы…",
   "status.privateGroupKey.published": "Пакет ключа группы опубликован.",
+  "status.privateGroupKey.publishUnknown": "Пакет ключей подписан, но его публикация не завершилась; проверьте уведомление об ожидающих транзакциях, прежде чем повторять.",
   "status.loadingError.privateGroupState": "Не удалось загрузить состояние приватного группового чата.",
   "button.privateGroup.publishKey": "Опубликовать ключ группы",
   "label.composer.privateGroupBytesRemaining": "Осталось {remaining} из {max} байт",

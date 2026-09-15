@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Yksityinen ryhmäavain puuttuu. Pyydä ryhmän ylläpitäjää julkaisemaan se.",
   "status.privateGroupKey.publishing": "Julkaistaan ryhmäavainta…",
   "status.privateGroupKey.published": "Ryhmäavainpaketti julkaistu.",
+  "status.privateGroupKey.publishUnknown": "Avainpaketti allekirjoitettiin, mutta sen julkaisu ei valmistunut; tarkista odottavien tapahtumien ilmoitus ennen uutta yritystä.",
   "status.loadingError.privateGroupState": "Yksityisen ryhmäkeskustelun tilaa ei voitu ladata.",
   "button.privateGroup.publishKey": "Julkaise ryhmäavain",
   "label.composer.privateGroupBytesRemaining": "{remaining}/{max} tavua jäljellä",
