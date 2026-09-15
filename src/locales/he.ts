@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "מפתח הקבוצה הפרטית חסר. בקש ממנהל הקבוצה לפרסם אותו.",
   "status.privateGroupKey.publishing": "מפרסם מפתח קבוצה…",
   "status.privateGroupKey.published": "חבילת מפתח הקבוצה פורסמה.",
+  "status.privateGroupKey.publishUnknown": "חבילת המפתחות נחתמה אך פרסומה לא הושלם; בדוק את הודעת העסקאות הממתינות לפני ניסיון נוסף.",
   "status.loadingError.privateGroupState": "לא ניתן לטעון את מצב הצ׳אט הקבוצתי הפרטי.",
   "button.privateGroup.publishKey": "פרסום מפתח קבוצה",
   "label.composer.privateGroupBytesRemaining": "{remaining} מתוך {max} בייטים נותרו",

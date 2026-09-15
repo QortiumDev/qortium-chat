@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "缺少私有群组密钥。请群组管理员发布该密钥。",
   "status.privateGroupKey.publishing": "正在发布群组密钥…",
   "status.privateGroupKey.published": "群组密钥包已发布。",
+  "status.privateGroupKey.publishUnknown": "密钥包已签名但发布未完成；重试前请先查看待处理交易提示。",
   "status.loadingError.privateGroupState": "无法加载私密群组聊天状态。",
   "button.privateGroup.publishKey": "发布群组密钥",
   "label.composer.privateGroupBytesRemaining": "剩余 {remaining}/{max} 字节",

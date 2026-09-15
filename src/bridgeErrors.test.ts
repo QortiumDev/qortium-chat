@@ -9,8 +9,8 @@ import {
 } from './bridgeErrors';
 
 describe('bridgeErrors', () => {
-  it('lists the 11 documented structured error codes', () => {
-    expect(BRIDGE_ERROR_CODES).toHaveLength(11);
+  it('lists the 14 documented structured error codes', () => {
+    expect(BRIDGE_ERROR_CODES).toHaveLength(14);
     expect(BRIDGE_ERROR_CODES).toEqual([
       'ACCOUNT_LOCKED',
       'HOME_BRIDGE_ERROR',
@@ -19,6 +19,9 @@ describe('bridgeErrors', () => {
       'MISSING_RECIPIENT_PUBLIC_KEY',
       'NOT_GROUP_MEMBER',
       'PENDING_TRANSACTION_RECONCILIATION_REQUIRED',
+      'QDN_POW_BUSY',
+      'QDN_POW_CANCELLED',
+      'QDN_POW_TIMEOUT',
       'ROUTE_UNAVAILABLE',
       'STALE_CONTEXT',
       'USER_CANCELLED',
@@ -114,6 +117,18 @@ describe('bridgeErrors', () => {
     // Home 2 refuses to prompt while the app view is hidden — nothing signed.
     expect(isDefiniteChatMutationRejection(
       new Error('Open this app tab to review the requested permission.'),
+    )).toBe(true);
+    // Proof-of-work refusals happen before signing (busy worker, timeout,
+    // context change) — retry is always safe, even from an older Home whose
+    // error lost its code across the bridge.
+    expect(isDefiniteChatMutationRejection({ code: 'QDN_POW_BUSY' })).toBe(true);
+    expect(isDefiniteChatMutationRejection({ code: 'QDN_POW_TIMEOUT' })).toBe(true);
+    expect(isDefiniteChatMutationRejection({ code: 'QDN_POW_CANCELLED' })).toBe(true);
+    expect(isDefiniteChatMutationRejection(
+      new Error('Another proof-of-work computation is already running. Please retry.'),
+    )).toBe(true);
+    expect(isDefiniteChatMutationRejection(
+      new Error('Too many proof-of-work computations are waiting. Please retry in a moment.'),
     )).toBe(true);
   });
 

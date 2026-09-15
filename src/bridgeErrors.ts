@@ -17,6 +17,9 @@ export const BRIDGE_ERROR_CODES = [
   'MISSING_RECIPIENT_PUBLIC_KEY',
   'NOT_GROUP_MEMBER',
   'PENDING_TRANSACTION_RECONCILIATION_REQUIRED',
+  'QDN_POW_BUSY',
+  'QDN_POW_CANCELLED',
+  'QDN_POW_TIMEOUT',
   'ROUTE_UNAVAILABLE',
   'STALE_CONTEXT',
   'USER_CANCELLED',
@@ -76,6 +79,13 @@ const DEFINITE_PRE_BROADCAST_CHAT_ERROR_CODES = new Set<BridgeErrorCode>([
   'MISSING_GROUP_KEY',
   'MISSING_RECIPIENT_PUBLIC_KEY',
   'NOT_GROUP_MEMBER',
+  // Home computes the CHAT proof-of-work BEFORE signing, so a busy, timed-out
+  // or cancelled PoW never reached the wire (older Homes said "Another
+  // proof-of-work computation is already running" for a second back-to-back
+  // send and Chat wrongly showed it as an unknown outcome, 2026-09-15).
+  'QDN_POW_BUSY',
+  'QDN_POW_CANCELLED',
+  'QDN_POW_TIMEOUT',
   'ROUTE_UNAVAILABLE',
   'STALE_CONTEXT',
   'USER_CANCELLED',
@@ -119,6 +129,12 @@ export function isDefiniteChatMutationRejection(error: unknown): boolean {
   // been signed or sent at that point, so the attempt is a plain rejection —
   // not the ambiguous "outcome unknown" notice observed live on 2026-09-13.
   if (/Open this app tab to review the requested permission/i.test(message)) {
+    return true;
+  }
+
+  // Older Home builds refuse a second proof-of-work with a bare coded error
+  // whose properties may not survive the bridge; the message is exact.
+  if (/proof-of-work computation(?:s are waiting| is already running)/i.test(message)) {
     return true;
   }
 

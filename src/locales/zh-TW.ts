@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "缺少私人群組金鑰。請群組管理員發布該金鑰。",
   "status.privateGroupKey.publishing": "正在發布群組金鑰…",
   "status.privateGroupKey.published": "群組金鑰包已發布。",
+  "status.privateGroupKey.publishUnknown": "金鑰包已簽署但發佈未完成；重試前請先查看待處理交易提示。",
   "status.loadingError.privateGroupState": "無法載入私人群組聊天狀態。",
   "button.privateGroup.publishKey": "發布群組金鑰",
   "label.composer.privateGroupBytesRemaining": "剩餘 {remaining}/{max} 位元組",

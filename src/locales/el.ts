@@ -426,6 +426,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Λείπει το ιδιωτικό κλειδί ομάδας. Ζητήστε από έναν διαχειριστή της ομάδας να το δημοσιεύσει.",
   "status.privateGroupKey.publishing": "Δημοσίευση κλειδιού ομάδας…",
   "status.privateGroupKey.published": "Το πακέτο κλειδιού ομάδας δημοσιεύτηκε.",
+  "status.privateGroupKey.publishUnknown": "Το πακέτο κλειδιών υπογράφηκε, αλλά η δημοσίευσή του δεν ολοκληρώθηκε· ελέγξτε την ειδοποίηση εκκρεμών συναλλαγών πριν δοκιμάσετε ξανά.",
   "status.loadingError.privateGroupState": "Δεν ήταν δυνατή η φόρτωση της κατάστασης της ιδιωτικής ομαδικής συνομιλίας.",
   "button.privateGroup.publishKey": "Δημοσίευση κλειδιού ομάδας",
   "label.composer.privateGroupBytesRemaining": "{remaining} από {max} bytes απομένουν",

@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Hiányzik a privát csoportkulcs. Kérd meg a csoport egyik adminját, hogy tegye közzé.",
   "status.privateGroupKey.publishing": "Csoportkulcs közzététele…",
   "status.privateGroupKey.published": "A csoportkulcs-csomag közzétéve.",
+  "status.privateGroupKey.publishUnknown": "A kulcscsomagot aláírtuk, de a közzététele nem fejeződött be; az újrapróbálás előtt nézd meg a függő tranzakciók értesítését.",
   "status.loadingError.privateGroupState": "Nem sikerült betölteni a privát csoportos csevegés állapotát.",
   "button.privateGroup.publishKey": "Csoportkulcs közzététele",
   "label.composer.privateGroupBytesRemaining": "{remaining}/{max} bájt van hátra",

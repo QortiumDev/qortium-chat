@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Privaatgrupi võti puudub. Palu rühma administraatoril see avaldada.",
   "status.privateGroupKey.publishing": "Rühma võtme avaldamine…",
   "status.privateGroupKey.published": "Rühma võtmepakett avaldatud.",
+  "status.privateGroupKey.publishUnknown": "Võtmepakett allkirjastati, kuid selle avaldamine ei lõppenud; vaata enne uuesti proovimist ootel tehingute teadet.",
   "status.loadingError.privateGroupState": "Privaatrühma vestluse olekut ei õnnestunud laadida.",
   "button.privateGroup.publishKey": "Avalda rühma võti",
   "label.composer.privateGroupBytesRemaining": "{remaining}/{max} baiti jäänud",

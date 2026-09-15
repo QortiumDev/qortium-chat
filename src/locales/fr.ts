@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "La clé du groupe privé est manquante. Demandez à un administrateur du groupe de la publier.",
   "status.privateGroupKey.publishing": "Publication de la clé du groupe…",
   "status.privateGroupKey.published": "Ensemble de clés du groupe publié.",
+  "status.privateGroupKey.publishUnknown": "Le paquet de clés a été signé mais sa publication n'a pas abouti ; vérifiez l'avis de transactions en attente avant de réessayer.",
   "status.loadingError.privateGroupState": "Impossible de charger l'état du chat de groupe privé.",
   "button.privateGroup.publishKey": "Publier la clé du groupe",
   "label.composer.privateGroupBytesRemaining": "{remaining} sur {max} octets restants",

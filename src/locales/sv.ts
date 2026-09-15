@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Den privata gruppnyckeln saknas. Be en gruppadministratör att publicera den.",
   "status.privateGroupKey.publishing": "Publicerar gruppnyckel…",
   "status.privateGroupKey.published": "Gruppnyckelpaketet publicerat.",
+  "status.privateGroupKey.publishUnknown": "Nyckelpaketet signerades men publiceringen slutfördes inte; kontrollera meddelandet om väntande transaktioner innan du försöker igen.",
   "status.loadingError.privateGroupState": "Det gick inte att läsa in den privata gruppchattens status.",
   "button.privateGroup.publishKey": "Publicera gruppnyckel",
   "label.composer.privateGroupBytesRemaining": "{remaining} av {max} byte kvar",

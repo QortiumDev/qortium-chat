@@ -428,6 +428,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "Cheia grupului privat lipsește. Cere unui administrator al grupului să o publice.",
   "status.privateGroupKey.publishing": "Se publică cheia grupului…",
   "status.privateGroupKey.published": "Pachetul cheii grupului a fost publicat.",
+  "status.privateGroupKey.publishUnknown": "Pachetul de chei a fost semnat, dar publicarea nu s-a finalizat; verifică notificarea tranzacțiilor în așteptare înainte de a reîncerca.",
   "status.loadingError.privateGroupState": "Nu s-a putut încărca starea chatului de grup privat.",
   "button.privateGroup.publishKey": "Publică cheia grupului",
   "label.composer.privateGroupBytesRemaining": "{remaining} din {max} octeți rămași",

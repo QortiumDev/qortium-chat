@@ -426,6 +426,7 @@ export const STRINGS = {
   "status.privateGroupKey.missingAskAdmin": "निजी समूह कुंजी गुम है। समूह के व्यवस्थापक से इसे प्रकाशित करने के लिए कहें।",
   "status.privateGroupKey.publishing": "समूह कुंजी प्रकाशित की जा रही है…",
   "status.privateGroupKey.published": "समूह कुंजी बंडल प्रकाशित हुआ।",
+  "status.privateGroupKey.publishUnknown": "कुंजी बंडल पर हस्ताक्षर हो गए लेकिन उसका प्रकाशन पूरा नहीं हुआ; फिर से प्रयास करने से पहले लंबित लेन-देन की सूचना देखें।",
   "status.loadingError.privateGroupState": "निजी समूह चैट की स्थिति लोड नहीं की जा सकी।",
   "button.privateGroup.publishKey": "समूह कुंजी प्रकाशित करें",
   "label.composer.privateGroupBytesRemaining": "{max} में से {remaining} बाइट शेष",
