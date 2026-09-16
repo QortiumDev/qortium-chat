@@ -54,12 +54,14 @@ import {
   type QdnMediaResource,
 } from './messageLinks';
 import { formatAttachmentSize } from './attachments';
+import { inlineImageToFile, type InlineImageFile } from './inlineImageFile';
 import { copyTextToClipboard } from './clipboard';
 import {
   getChatAttachmentStreamUrl,
   isPrivateAttachmentDescriptor,
   openChatAttachmentViewer,
   saveChatAttachment,
+  saveFileBytes,
 } from './coreApi';
 import {
   getMessageSenderLabel,
@@ -1871,6 +1873,16 @@ export const MessageList = memo(function MessageList({
 
   // A public image embed opens in Home's shared viewer the way a document
   // does (OPEN_QDN_RESOURCE_VIEWER accepts every non-archive service).
+  function saveInlineImage(imageNetwork: ChatNetwork, file: InlineImageFile) {
+    void saveFileBytes(
+      imageNetwork,
+      file,
+      imageNetwork === 'qortal' ? qortalResourceActions : qortiumResourceActions,
+    ).catch((error) => {
+      console.warn('Unable to save inline image.', error);
+    });
+  }
+
   function openImageResource(resource: QdnImageResource) {
     void openQdnImageViewer(resource).catch((error) => {
       console.warn('Unable to open QDN resource viewer.', error);
@@ -2287,9 +2299,18 @@ export const MessageList = memo(function MessageList({
                         onOpenWebLink && hasResourceAction(network, 'OPEN_EXTERNAL_LINK')
                           ? (url) => onOpenWebLink(network, url)
                           : null,
-                      // Inline (data:) images are not QDN resources, so the
-                      // lightbox carries no Open/Save for them.
-                      openInlineImage: (image) => onOpenImage({ alt: image.alt, name: image.alt, src: image.src }),
+                      // Inline (data:) images are not QDN resources: no Home
+                      // viewer, and Save only where the host takes app-held
+                      // bytes (SAVE_FILE_BYTES, Home 2.1.0-beta.12+).
+                      openInlineImage: (image) => {
+                        const file = hasResourceAction(network, 'SAVE_FILE_BYTES') ? inlineImageToFile(image.src, image.alt) : null;
+                        onOpenImage({
+                          actions: file ? { onSave: () => saveInlineImage(network, file) } : undefined,
+                          alt: image.alt,
+                          name: image.alt,
+                          src: image.src,
+                        });
+                      },
                     })
                   ) : imageResources.length > 0 ? null : (
                     <span className="message__body-placeholder">
