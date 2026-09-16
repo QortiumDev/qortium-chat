@@ -12,6 +12,7 @@ import {
   getAttachmentServiceFromMime,
   getFirstTransferFile,
   isSourceAttachmentExpired,
+  prepareLocalAttachment,
   shouldClearStagedAttachmentOnAccountLock,
 } from './attachments';
 
@@ -159,5 +160,38 @@ describe('attachment helpers', () => {
         }),
       ).toBe(false);
     });
+  });
+});
+
+describe('prepareLocalAttachment', () => {
+  it('publishes the dropped file exactly as given — no WebP re-encode, no rename (2.0.30)', async () => {
+    // vitest runs in node: give the module the FileReader it expects, reading
+    // the blob through the standard Blob API so the bytes are exact.
+    const originalFileReader = globalThis.FileReader;
+    class NodeFileReader {
+      result: string | null = null;
+      error: Error | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL(blob: Blob) {
+        void blob.arrayBuffer().then((buffer) => {
+          this.result = `data:${blob.type};base64,${btoa(String.fromCharCode(...new Uint8Array(buffer)))}`;
+          this.onload?.();
+        });
+      }
+    }
+    (globalThis as { FileReader?: unknown }).FileReader = NodeFileReader;
+    try {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
+      const png = new File([bytes], 'polar-drag.png', { type: 'image/png' });
+      const staged = await prepareLocalAttachment(png);
+      expect(staged.fileName).toBe('polar-drag.png');
+      expect(staged.mimeType).toBe('image/png');
+      expect(staged.service).toBe('IMAGE');
+      expect(staged.size).toBe(8);
+      expect(staged.dataBase64).toBe(btoa(String.fromCharCode(...bytes)));
+    } finally {
+      (globalThis as { FileReader?: unknown }).FileReader = originalFileReader;
+    }
   });
 });
