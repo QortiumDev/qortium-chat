@@ -10,8 +10,6 @@ import { ACCOUNT_UNLOCK_STATE_CHANGE_TIMEOUT_MS } from './accountUnlockTransitio
 import {
   ATTACHMENT_FILE_MAX_BYTES,
   ATTACHMENT_IMAGE_MAX_BYTES,
-  IMAGE_COMPRESSION_MAX_WIDTH,
-  IMAGE_COMPRESSION_QUALITY,
   QDN_PUBLISH_SOURCE_MAX_BYTES,
   SOURCE_TOKEN_EXPIRY_MS,
 } from './attachments';
@@ -498,7 +496,7 @@ export default function Reference({ appVersion }: { appVersion: string }) {
             ['Attachment file / image', `${formatBytes(ATTACHMENT_FILE_MAX_BYTES)} / ${formatBytes(ATTACHMENT_IMAGE_MAX_BYTES)}`, 'Chat'],
             ['Publish source selection', formatBytes(QDN_PUBLISH_SOURCE_MAX_BYTES), 'Home (mirrored by Chat)'],
             ['Publish source token lifetime', formatDuration(SOURCE_TOKEN_EXPIRY_MS), 'Home (mirrored by Chat)'],
-            ['Inline image re-encode (non-GIF)', `WebP, max width ${IMAGE_COMPRESSION_MAX_WIDTH}, quality ${IMAGE_COMPRESSION_QUALITY}`, 'Chat'],
+            ['Image re-encoding', 'None — an image is published, inlined or attached exactly as given', 'Chat'],
             ['Publish name', `${QDN_PUBLISH_NAME_MAX_BYTES.qortium} bytes Qortium / ${QDN_PUBLISH_NAME_MAX_BYTES.qortal} bytes Qortal`, 'Chat'],
             ['Publish identifier / title / description / category', `${QDN_PUBLISH_IDENTIFIER_MAX_BYTES} / ${QDN_PUBLISH_TITLE_MAX_BYTES} / ${QDN_PUBLISH_DESCRIPTION_MAX_BYTES} / ${QDN_PUBLISH_CATEGORY_MAX_BYTES} bytes`, 'Chat'],
             ['Publish tags', `≤ ${QDN_PUBLISH_TAGS_MAX_COUNT} tags of ≤ ${QDN_PUBLISH_TAG_MAX_BYTES} bytes`, 'Chat'],

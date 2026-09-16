@@ -11,8 +11,6 @@ import { ACCOUNT_UNLOCK_STATE_CHANGE_TIMEOUT_MS } from './accountUnlockTransitio
 import {
   ATTACHMENT_FILE_MAX_BYTES,
   ATTACHMENT_IMAGE_MAX_BYTES,
-  IMAGE_COMPRESSION_MAX_WIDTH,
-  IMAGE_COMPRESSION_QUALITY,
   QDN_PUBLISH_SOURCE_MAX_BYTES,
   SOURCE_TOKEN_EXPIRY_MS,
 } from './attachments';
@@ -404,7 +402,7 @@ describe('Reference — limits are bound to implementation constants', () => {
     expect(html).toContain(`<code>${formatBytes(ATTACHMENT_FILE_MAX_BYTES)} / ${formatBytes(ATTACHMENT_IMAGE_MAX_BYTES)}</code>`);
     expect(html).toContain(`<code>${formatBytes(QDN_PUBLISH_SOURCE_MAX_BYTES)}</code>`);
     expect(html).toContain(`<code>${formatDuration(SOURCE_TOKEN_EXPIRY_MS)}</code>`);
-    expect(html).toContain(`max width ${IMAGE_COMPRESSION_MAX_WIDTH}, quality ${IMAGE_COMPRESSION_QUALITY}`);
+    expect(html).toContain('published, inlined or attached exactly as given');
     expect(html).toContain(`${QDN_PUBLISH_NAME_MAX_BYTES.qortium} bytes Qortium / ${QDN_PUBLISH_NAME_MAX_BYTES.qortal} bytes Qortal`);
     expect(html).toContain(
       `${QDN_PUBLISH_IDENTIFIER_MAX_BYTES} / ${QDN_PUBLISH_TITLE_MAX_BYTES} / ${QDN_PUBLISH_DESCRIPTION_MAX_BYTES} / ${QDN_PUBLISH_CATEGORY_MAX_BYTES} bytes`,

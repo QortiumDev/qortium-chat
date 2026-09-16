@@ -9,11 +9,13 @@
 //   publishChatAttachment (private conversations). The app never sees bytes.
 // - StagedLocalAttachment (attachments-matrix A1, Home 1.x / Home 2 Android /
 //   Qortal Hub): the app reads a browser File itself — from the paperclip's
-//   <input type="file">, a clipboard paste, or a drag-drop — compresses images
-//   to WebP (Hub's parameters: max width 1200, quality 0.6), base64-encodes,
-//   and publishes inline through publishQdnResourceBytes. This is the pre-P4
-//   flow kept as the fallback for every host that still accepts inline bytes,
-//   and the only way paste/drop can stage anything. Open groups only.
+//   <input type="file">, a clipboard paste, or a drag-drop — base64-encodes
+//   it and publishes inline through publishQdnResourceBytes. This is the
+//   pre-P4 flow kept as the fallback for every host that still accepts inline
+//   bytes, and the only way paste/drop can stage anything. Open groups only.
+//   Until 2.0.30 this path re-encoded images to WebP (Hub's max width 1200 /
+//   quality 0.6); Chat now publishes exactly the bytes the user gave it —
+//   nothing is resized, re-encoded or stripped (owner rule, 2026-09-16).
 //
 // Either way the message carries a qdn:// link: the inbound pipeline already
 // inline-previews IMAGE links and offers viewer/save for ATTACHMENT links, and
@@ -34,8 +36,6 @@ export const QDN_PUBLISH_SOURCE_MAX_BYTES = 100 * 1024 * 1024;
 // it, so the "select the file again" notice can appear immediately.
 export const SOURCE_TOKEN_EXPIRY_MS = 30 * 60 * 1000;
 
-export const IMAGE_COMPRESSION_MAX_WIDTH = 1200;
-export const IMAGE_COMPRESSION_QUALITY = 0.6;
 
 export type AttachmentService = 'ATTACHMENT' | 'IMAGE';
 
@@ -172,70 +172,18 @@ function fileToBase64(payload: Blob) {
   });
 }
 
-// Best-effort canvas re-encode to WebP (this also drops EXIF/metadata, as
-// Hub's own chat-image pipeline does). Returns null whenever the original
-// bytes should be published instead: GIFs (a canvas would freeze the
-// animation), undecodable images, environments without WebP encoding, or a
-// "compressed" result that came out larger than the source.
-async function compressImage(file: File): Promise<Blob | null> {
-  if (file.type === 'image/gif') {
-    return null;
-  }
-
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, IMAGE_COMPRESSION_MAX_WIDTH / bitmap.width);
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement('canvas');
-
-    canvas.width = width;
-    canvas.height = height;
-
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      return null;
-    }
-
-    context.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/webp', IMAGE_COMPRESSION_QUALITY),
-    );
-
-    return blob && blob.type === 'image/webp' && blob.size < file.size ? blob : null;
-  } catch {
-    return null;
-  }
-}
-
-// Bytes path: route to IMAGE/ATTACHMENT, compress images, base64-encode.
-// The caller checks the returned `size` against getAttachmentMaxBytes.
+// Bytes path: route to IMAGE/ATTACHMENT and base64-encode the file exactly
+// as given. The caller checks the returned `size` against
+// getAttachmentMaxBytes; an image over the IMAGE cap is the user's to shrink,
+// never Chat's.
 export async function prepareLocalAttachment(file: File): Promise<StagedLocalAttachment> {
-  const service = getAttachmentServiceFromFile(file);
-  let payload: Blob = file;
-  let fileName = file.name || 'attachment';
-  let mimeType: string | null = file.type || null;
-
-  if (service === 'IMAGE') {
-    const compressed = await compressImage(file);
-
-    if (compressed) {
-      payload = compressed;
-      fileName = `${fileName.replace(/\.[^.]+$/, '') || 'image'}.webp`;
-      mimeType = 'image/webp';
-    }
-  }
-
   return {
-    dataBase64: await fileToBase64(payload),
-    fileName,
+    dataBase64: await fileToBase64(file),
+    fileName: file.name || 'attachment',
     kind: 'local',
-    mimeType,
-    service,
-    size: payload.size,
+    mimeType: file.type || null,
+    service: getAttachmentServiceFromFile(file),
+    size: file.size,
   };
 }
 

@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.30, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.31, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -163,7 +163,10 @@ place of the image; fixed in 2.0.30). Anything larger, or an image that no
 longer fits after the text grows, takes the ordinary attachment path with
 the original bytes (a QDN publish and link, see "Current Limits"), and the
 chip's "Attach instead" button switches a staged inline image to that path
-by hand. Qortal conversations keep
+by hand. The attachment path is equally faithful: since 2.0.31 a pasted or
+dropped image is published as the file it is (2.0.8–2.0.30 re-encoded it to
+WebP at up to 1200 px on hosts without Home's picker), so an image over the
+10 MiB IMAGE cap is the user's to shrink, never Chat's. Qortal conversations keep
 the attachment path only, since Qortal Hub carries images as QDN resources.
 
 Since Chat 2.0.28 every image in a message is clickable and opens the same
