@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.29, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.30, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -151,16 +151,19 @@ links and quotes) is read back into the same markup here.
 ## Inline images
 
 Since Chat 2.0.26 an image pasted or dropped into a Qortium conversation
-travels inside the message itself when a small preview of it fits under
-Core's 4 000-byte CHAT cap: the composer downscales it (WebP or JPEG, at most
-160 px on the long side), shows the preview and its byte count, and sends it
-as an `![alt](data:image/…;base64,…)` line that every Chat reader renders as
-a thumbnail. Room for the rest of the message is counted first — reply
-references, the typed text and the closed-group plaintext cap — so an image
-never pushes a message over the limit. A larger image, or one that no longer
-fits after the text grows, takes the ordinary attachment path (a QDN publish
-and link, see "Current Limits"), and the chip's "Attach instead" button
-switches a staged preview to that path by hand. Qortal conversations keep
+travels inside the message itself when the image, exactly as given, fits
+under Core's 4 000-byte CHAT cap (a WebP, JPEG or PNG of roughly 2.8 KB or
+less — an icon or a small sticker): the composer shows it with its byte
+count and sends it as an `![alt](data:image/…;base64,…)` line that every
+Chat reader renders. Room for the rest of the message is counted first —
+reply references, the typed text and the closed-group plaintext cap — so an
+image never pushes a message over the limit. Chat never resizes or
+re-encodes what was dropped (2.0.26–2.0.29 did, and sent a thumbnail in
+place of the image; fixed in 2.0.30). Anything larger, or an image that no
+longer fits after the text grows, takes the ordinary attachment path with
+the original bytes (a QDN publish and link, see "Current Limits"), and the
+chip's "Attach instead" button switches a staged inline image to that path
+by hand. Qortal conversations keep
 the attachment path only, since Qortal Hub carries images as QDN resources.
 
 Since Chat 2.0.28 every image in a message is clickable and opens the same
