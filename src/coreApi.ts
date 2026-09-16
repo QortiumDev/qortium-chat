@@ -1650,6 +1650,28 @@ export async function getQdnResourceStreamUrl(
   });
 }
 
+// Home 2.1.0-beta.12+: bytes the app already holds (an inline data: image),
+// written through Home's native save dialog. The host validates size (≤25 MiB),
+// file name (leaf only) and media type; the dialog is the consent.
+export async function saveFileBytes(
+  network: ChatNetwork,
+  file: { readonly bytesBase64: string; readonly fileName: string; readonly mimeType?: string },
+  actions?: QdnAction[],
+): Promise<{ canceled: boolean }> {
+  if (!hasBridgeAction(actions, 'SAVE_FILE_BYTES')) {
+    throw new Error('Saving a file requires a newer Qortium Home bridge.');
+  }
+
+  const raw = await bridgeRequest<{ canceled?: boolean }>(network, {
+    action: 'SAVE_FILE_BYTES',
+    bytesBase64: file.bytesBase64,
+    fileName: file.fileName,
+    ...(file.mimeType ? { mimeType: file.mimeType } : {}),
+  });
+
+  return { canceled: raw?.canceled === true };
+}
+
 export async function saveQdnResource(
   network: ChatNetwork,
   coordinate: QdnResourceCoordinate,
