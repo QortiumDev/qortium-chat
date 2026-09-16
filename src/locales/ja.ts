@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': '選択したファイルの有効期限が切れました。添付するにはもう一度選択してください。',
   'status.attachment.publishAmbiguous': '添付ファイルの公開結果が不明確です。再送信する前にQortium Homeを確認してください。',
   'status.attachment.preparing': 'Qortium Home 向けに添付ファイルを準備しています…',
-  'status.attachment.awaitingApproval': 'Qortium Home での公開の承認を待っています。大きなファイルでは、確認が表示されるまで少し時間がかかります。',
+  'status.attachment.awaitingApproval': 'Qortium Home での公開の承認を待っています。このタブに表示される確認をご覧ください。',
   'status.attachment.publishedNotSent': '添付ファイルは公開されましたが、メッセージは送信されませんでした。そのリンクは下書きにあります。もう一度送信を押してください。ファイルが二重に公開されることはありません。',
   'action.attachNeedsName': '公開グループでファイルを添付すると、登録済みの名前で公開されます — このアカウントにはまだ登録済みの名前がありません。',
   'action.attachUnavailable': 'ファイルを添付するには、Qortium Home、公開グループ用の登録済みの名前、またはこのチャットでのプライベート添付ファイルのサポートが必要です。',

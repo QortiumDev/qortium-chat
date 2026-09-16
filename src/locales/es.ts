@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'El archivo seleccionado ha caducado. Selecciónalo de nuevo para adjuntarlo.',
   'status.attachment.publishAmbiguous': 'El resultado de la publicación del adjunto no está claro. Revisa Qortium Home antes de volver a enviar.',
   'status.attachment.preparing': 'Preparando el adjunto para Qortium Home…',
-  'status.attachment.awaitingApproval': 'Esperando a que apruebes la publicación en Qortium Home. Con archivos grandes el aviso tarda un momento en aparecer.',
+  'status.attachment.awaitingApproval': 'Esperando a que apruebes la publicación en Qortium Home: busca su aviso en esta pestaña.',
   'status.attachment.publishedNotSent': 'El adjunto se publicó pero el mensaje no se envió. Su enlace está en el borrador: pulsa Enviar de nuevo; el archivo no se publicará dos veces.',
   'action.attachNeedsName': 'Adjuntar un archivo en un grupo abierto lo publica con tu nombre registrado — esta cuenta aún no tiene un nombre registrado.',
   'action.attachUnavailable': 'Adjuntar un archivo requiere Qortium Home, un nombre registrado para grupos abiertos, o compatibilidad con adjuntos privados en este chat.',

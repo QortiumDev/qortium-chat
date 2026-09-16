@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Fișierul selectat a expirat. Selectează-l din nou pentru a-l atașa.',
   'status.attachment.publishAmbiguous': 'Rezultatul publicării atașamentului nu este clar. Verifică Qortium Home înainte de a trimite din nou.',
   'status.attachment.preparing': 'Se pregătește atașamentul pentru Qortium Home…',
-  'status.attachment.awaitingApproval': 'Se așteaptă aprobarea publicării în Qortium Home. La fișiere mari, solicitarea apare după câteva momente.',
+  'status.attachment.awaitingApproval': 'Se așteaptă aprobarea publicării în Qortium Home — caută solicitarea pe această filă.',
   'status.attachment.publishedNotSent': 'Atașamentul a fost publicat, dar mesajul nu a fost trimis. Linkul lui este în ciornă — apasă din nou Trimite; fișierul nu va fi publicat de două ori.',
   'action.attachNeedsName': 'Atașarea unui fișier într-un grup deschis îl publică sub numele înregistrat al contului — acest cont nu are încă un nume înregistrat.',
   'action.attachUnavailable': 'Atașarea unui fișier necesită Qortium Home, un nume înregistrat pentru grupuri deschise, sau suport pentru atașamente private în această conversație.',

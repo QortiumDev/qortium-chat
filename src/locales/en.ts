@@ -97,7 +97,7 @@ export const EN_STRINGS = {
   'status.attachment.reselect': 'Your selected file has expired. Select it again to attach it.',
   'status.attachment.publishAmbiguous': "The attachment's publish result is unclear. Check Qortium Home before sending again.",
   'status.attachment.preparing': 'Preparing the attachment for Qortium Home…',
-  'status.attachment.awaitingApproval': 'Waiting for you to approve the publish in Qortium Home. Large files take a moment before the prompt appears.',
+  'status.attachment.awaitingApproval': 'Waiting for you to approve the publish in Qortium Home — look for its prompt on this tab.',
   'status.attachment.publishedNotSent': 'The attachment was published but the message was not sent. Its link is in the draft — press Send again; the file will not be published twice.',
   'action.attachNeedsName': 'Attaching a file in an open group publishes it under your registered name — this account has no registered name yet.',
   'action.attachUnavailable': 'Attaching a file needs Qortium Home, a registered name for open groups, or private-attachment support in this chat.',

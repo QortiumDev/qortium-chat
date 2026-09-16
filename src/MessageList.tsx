@@ -900,7 +900,17 @@ export const MessageList = memo(function MessageList({
   const dividerRef = useRef<HTMLLIElement>(null);
   const highlightTimeoutRef = useRef(0);
   const expandedTimeTimeoutRef = useRef(0);
-  const [openImagePreviews, setOpenImagePreviews] = useState<ReadonlySet<string>>(new Set());
+  // Image previews show by default (owner, 2026-09-16) — but only for
+  // messages in or near the viewport, and they are released as they scroll
+  // away. Data-URL previews retain both encoded and decoded image memory, so
+  // "visible ones only" is what keeps a long, image-heavy timeline bounded on
+  // Android instead of the old one-message-at-a-time click gate. "Hide" still
+  // lets the user collapse a message's previews; that choice is remembered
+  // per thread until the chat changes.
+  const [visibleImagePreviews, setVisibleImagePreviews] = useState<ReadonlySet<string>>(new Set());
+  const [hiddenImagePreviews, setHiddenImagePreviews] = useState<ReadonlySet<string>>(new Set());
+  const imagePreviewObserverRef = useRef<IntersectionObserver | null>(null);
+  const observedImageItemsRef = useRef(new Map<string, HTMLLIElement>());
   const [openReactionPickerKey, setOpenReactionPickerKey] = useState('');
   const [openReactionDetailsKey, setOpenReactionDetailsKey] = useState('');
   // G8: thread key whose text was just copied, so its Copy button reads
@@ -1823,10 +1833,76 @@ export const MessageList = memo(function MessageList({
   }
 
   function toggleImagePreview(threadKey: string) {
-    // Data-URL previews retain both encoded and decoded image memory. Keep one
-    // message's explicitly opened preview set at a time so repeatedly opening
-    // older messages cannot accumulate an unbounded Android renderer footprint.
-    setOpenImagePreviews((current) => current.has(threadKey) ? new Set() : new Set([threadKey]));
+    setHiddenImagePreviews((current) => {
+      const next = new Set(current);
+
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+
+      return next;
+    });
+  }
+
+  // One observer for every message that carries image previews. A margin of
+  // one viewport above and below keeps scrolling smooth without holding the
+  // whole timeline's images.
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') {
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisibleImagePreviews((current) => {
+          const next = new Set(current);
+
+          for (const entry of entries) {
+            const key = (entry.target as HTMLElement).dataset.imagePreviewKey;
+
+            if (!key) continue;
+
+            if (entry.isIntersecting) {
+              next.add(key);
+            } else {
+              next.delete(key);
+            }
+          }
+
+          return next;
+        });
+      },
+      { root: listRef.current, rootMargin: '100% 0px 100% 0px' },
+    );
+
+    imagePreviewObserverRef.current = observer;
+
+    for (const element of observedImageItemsRef.current.values()) {
+      observer.observe(element);
+    }
+
+    return () => {
+      observer.disconnect();
+      imagePreviewObserverRef.current = null;
+    };
+  }, []);
+
+  function observeImageItem(threadKey: string, element: HTMLLIElement | null) {
+    const observed = observedImageItemsRef.current;
+    const previous = observed.get(threadKey);
+
+    if (previous && previous !== element) {
+      imagePreviewObserverRef.current?.unobserve(previous);
+      observed.delete(threadKey);
+    }
+
+    if (element && previous !== element) {
+      observed.set(threadKey, element);
+      element.dataset.imagePreviewKey = threadKey;
+      imagePreviewObserverRef.current?.observe(element);
+    }
   }
 
   function closeReactionPopover() {
@@ -2095,10 +2171,15 @@ export const MessageList = memo(function MessageList({
               hasResourceAction(resource.network, 'SAVE_QDN_RESOURCE'),
             );
             const hasImagePreviews = imageResources.length > 0;
+            const areImagePreviewsOpen = hasImagePreviews && !hiddenImagePreviews.has(threadKey);
+            // Fetch and hold the preview bytes only while the message is near
+            // the viewport (or when there is no observer to tell us).
+            const shouldRenderImagePreviews =
+              areImagePreviewsOpen && (typeof IntersectionObserver === 'undefined' || visibleImagePreviews.has(threadKey));
             const hasMediaActions = mediaResources.length > 0;
             const hasDocumentViewerActions = viewableDocumentResources.length > 0;
             const hasDocumentSaveActions = saveableDocumentResources.length > 0;
-            const areImagePreviewsOpen = openImagePreviews.has(threadKey);
+
             const canReply = canCompose && !!original.signature;
             const isReactionPickerOpen = openReactionPickerKey === threadKey;
             const reactions = original.signature ? reactionsBySignature.get(original.signature) ?? [] : [];
@@ -2247,6 +2328,10 @@ export const MessageList = memo(function MessageList({
                   } else {
                     itemsRef.current.delete(threadKey);
                   }
+
+                  if (hasImagePreviews) {
+                    observeImageItem(threadKey, element);
+                  }
                 }}
               >
                 {isContinuation ? null : (
@@ -2319,7 +2404,7 @@ export const MessageList = memo(function MessageList({
                   )}
                 </div>
                 <MessageResourceCards resources={textResources} t={t} />
-                {areImagePreviewsOpen ? (
+                {shouldRenderImagePreviews ? (
                   <MessageImagePreviews
                     onOpenImage={onOpenImage}
                     onOpenResource={hasResourceAction(network, 'OPEN_QDN_RESOURCE_VIEWER') ? openImageResource : null}

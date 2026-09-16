@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'انتهت صلاحية الملف المحدد. حدده مرة أخرى لإرفاقه.',
   'status.attachment.publishAmbiguous': 'نتيجة نشر المرفق غير واضحة. تحقق من Qortium Home قبل الإرسال مرة أخرى.',
   'status.attachment.preparing': 'جارٍ تحضير المرفق لـ Qortium Home…',
-  'status.attachment.awaitingApproval': 'بانتظار موافقتك على النشر في Qortium Home. الملفات الكبيرة تستغرق لحظة قبل ظهور الطلب.',
+  'status.attachment.awaitingApproval': 'بانتظار موافقتك على النشر في Qortium Home — ابحث عن طلبه في هذه اللسان.',
   'status.attachment.publishedNotSent': 'تم نشر المرفق لكن الرسالة لم تُرسل. رابطه موجود في المسودة — اضغط إرسال مرة أخرى؛ لن يُنشر الملف مرتين.',
   'action.attachNeedsName': 'إرفاق ملف في مجموعة مفتوحة ينشره باسمك المسجل — لا يوجد لهذا الحساب اسم مسجل بعد.',
   'action.attachUnavailable': 'يتطلب إرفاق ملف Qortium Home، واسمًا مسجلًا للمجموعات المفتوحة، أو دعم المرفقات الخاصة في هذه المحادثة.',

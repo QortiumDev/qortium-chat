@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'O arquivo selecionado expirou. Selecione-o novamente para anexá-lo.',
   'status.attachment.publishAmbiguous': 'O resultado da publicação do anexo não está claro. Verifique o Qortium Home antes de enviar novamente.',
   'status.attachment.preparing': 'A preparar o anexo para o Qortium Home…',
-  'status.attachment.awaitingApproval': 'A aguardar que aproves a publicação no Qortium Home. Com ficheiros grandes, o pedido demora um momento a aparecer.',
+  'status.attachment.awaitingApproval': 'A aguardar que aproves a publicação no Qortium Home — procura o pedido neste separador.',
   'status.attachment.publishedNotSent': 'O anexo foi publicado, mas a mensagem não foi enviada. A ligação está no rascunho — prime Enviar de novo; o ficheiro não será publicado duas vezes.',
   'action.attachNeedsName': 'Anexar um arquivo em um grupo aberto o publica com o seu nome registrado — esta conta ainda não tem um nome registrado.',
   'action.attachUnavailable': 'Anexar um arquivo requer o Qortium Home, um nome registrado para grupos abertos, ou suporte a anexos privados nesta conversa.',

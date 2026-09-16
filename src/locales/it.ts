@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Il file selezionato è scaduto. Selezionalo di nuovo per allegarlo.',
   'status.attachment.publishAmbiguous': "Il risultato della pubblicazione dell'allegato non è chiaro. Controlla Qortium Home prima di inviare di nuovo.",
   'status.attachment.preparing': 'Preparazione dell’allegato per Qortium Home…',
-  'status.attachment.awaitingApproval': 'In attesa che tu approvi la pubblicazione in Qortium Home. Con file grandi la richiesta impiega un momento a comparire.',
+  'status.attachment.awaitingApproval': 'In attesa che tu approvi la pubblicazione in Qortium Home: la richiesta compare in questa scheda.',
   'status.attachment.publishedNotSent': 'L’allegato è stato pubblicato ma il messaggio non è stato inviato. Il suo link è nella bozza: premi di nuovo Invia; il file non verrà pubblicato due volte.',
   'action.attachNeedsName': 'Allegare un file in un gruppo aperto lo pubblica con il tuo nome registrato — questo account non ha ancora un nome registrato.',
   'action.attachUnavailable': 'Allegare un file richiede Qortium Home, un nome registrato per i gruppi aperti, o il supporto agli allegati privati in questa chat.',

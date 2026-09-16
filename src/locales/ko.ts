@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': '선택한 파일이 만료되었습니다. 첨부하려면 다시 선택하세요.',
   'status.attachment.publishAmbiguous': '첨부 파일의 게시 결과가 불분명합니다. 다시 보내기 전에 Qortium Home을 확인하세요.',
   'status.attachment.preparing': 'Qortium Home용 첨부 파일을 준비하는 중…',
-  'status.attachment.awaitingApproval': 'Qortium Home에서 게시를 승인하기를 기다리는 중입니다. 큰 파일은 확인 창이 나타나기까지 잠시 걸립니다.',
+  'status.attachment.awaitingApproval': 'Qortium Home에서 게시를 승인하기를 기다리는 중입니다. 이 탭에 표시된 확인 창을 확인하세요.',
   'status.attachment.publishedNotSent': '첨부 파일은 게시되었지만 메시지는 전송되지 않았습니다. 링크가 초안에 있습니다. 보내기를 다시 누르세요. 파일이 두 번 게시되지는 않습니다.',
   'action.attachNeedsName': '공개 그룹에서 파일을 첨부하면 등록된 이름으로 게시됩니다 — 이 계정에는 아직 등록된 이름이 없습니다.',
   'action.attachUnavailable': '파일을 첨부하려면 Qortium Home, 공개 그룹용 등록된 이름, 또는 이 채팅의 비공개 첨부 파일 지원이 필요합니다.',
