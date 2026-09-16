@@ -44,6 +44,7 @@ import {
   getQortalHubImageResources,
   MessageResourceCards,
   openQdnDocumentViewer,
+  openQdnImageViewer,
   openQdnMediaPlayer,
   renderMessageTextWithAppLinks,
   saveQdnResource,
@@ -112,10 +113,16 @@ type ImagePreviewState =
 
 function MessageImagePreviews({
   onOpenImage,
+  onOpenResource,
+  onSaveResource,
   resources,
   t,
 }: {
   onOpenImage: (image: AvatarLightboxImage) => void;
+  /** Home's shared viewer for the resource behind a preview, when the host offers it. */
+  onOpenResource: ((resource: QdnImageResource) => void) | null;
+  /** Home's native save dialog for that resource, when the host offers it. */
+  onSaveResource: ((resource: QdnImageResource) => void) | null;
   resources: QdnImageResource[];
   t: TranslateFunction;
 }) {
@@ -173,12 +180,23 @@ function MessageImagePreviews({
 
   return (
     <div className="message__image-previews">
-      {state.previews.map((preview) => (
+      {state.previews.map((preview) => {
+        // The preview's qdnUrl is the resource it was fetched for, so the
+        // lightbox can hand the SAME coordinate to Home's viewer and save.
+        const resource = resources.find((candidate) => candidate.qdnUrl === preview.qdnUrl) ?? null;
+        const actions = resource
+          ? {
+              onOpen: onOpenResource ? () => onOpenResource(resource) : undefined,
+              onSave: onSaveResource ? () => onSaveResource(resource) : undefined,
+            }
+          : undefined;
+
+        return (
         <figure className="message__image-preview" key={preview.qdnUrl}>
           <button
             aria-label={`${t('label.resource.public')}: ${t('button.viewImagePreview')}: ${preview.alt}`}
             className="message__image-preview-button"
-            onClick={() => onOpenImage({ alt: `${t('label.resource.public')}: ${preview.alt}`, name: preview.alt, src: preview.src })}
+            onClick={() => onOpenImage({ actions, alt: `${t('label.resource.public')}: ${preview.alt}`, name: preview.alt, src: preview.src })}
             title={preview.qdnUrl}
             type="button"
           >
@@ -191,7 +209,8 @@ function MessageImagePreviews({
           </button>
           <figcaption>{t('label.resource.public')} · {preview.alt}</figcaption>
         </figure>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -210,10 +229,18 @@ type PrivateAttachmentImageState =
 function MessagePrivateAttachmentImage({
   descriptor,
   network,
+  onOpen,
+  onOpenImage,
+  onSave,
   t,
 }: {
   descriptor: PrivateAttachmentDescriptor;
   network: ChatNetwork;
+  /** Home's attachment viewer (decrypts, zooms, saves) — null when the host lacks it. */
+  onOpen: (() => void) | null;
+  onOpenImage: (image: AvatarLightboxImage) => void;
+  /** Home's native save dialog for the attachment — null when the host lacks it. */
+  onSave: (() => void) | null;
   t: TranslateFunction;
 }) {
   const [state, setState] = useState<PrivateAttachmentImageState>({ phase: 'idle' });
@@ -249,9 +276,35 @@ function MessagePrivateAttachmentImage({
     return <div className="message__image-preview message__image-preview--error">{state.message}</div>;
   }
 
+  // Same affordances a file chip has: the image is clickable (lightbox, with
+  // Home's viewer and save behind it) and carries Open/Save of its own, so an
+  // image attachment is never less actionable than a file attachment.
+  const actions = { onOpen: onOpen ?? undefined, onSave: onSave ?? undefined };
+
   return (
     <figure className="message__image-preview">
-      <img alt={t('label.attachment.image')} src={state.url} />
+      <button
+        aria-label={`${t('button.viewImagePreview')}: ${t('label.attachment.image')}`}
+        className="message__image-preview-button"
+        onClick={() => onOpenImage({ actions, alt: t('label.attachment.image'), name: t('label.attachment.image'), src: state.url })}
+        type="button"
+      >
+        <img alt={t('label.attachment.image')} src={state.url} />
+      </button>
+      {onOpen || onSave ? (
+        <div className="message__image-preview-actions">
+          {onOpen ? (
+            <button onClick={onOpen} type="button">
+              {t('button.open')}
+            </button>
+          ) : null}
+          {onSave ? (
+            <button onClick={onSave} type="button">
+              {t('button.save')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </figure>
   );
 }
@@ -261,6 +314,7 @@ function MessagePrivateAttachments({
   hasAccess,
   network,
   onOpen,
+  onOpenImage,
   onSave,
   t,
 }: {
@@ -268,6 +322,7 @@ function MessagePrivateAttachments({
   hasAccess: { save: boolean; stream: boolean; viewer: boolean };
   network: ChatNetwork;
   onOpen: (descriptor: PrivateAttachmentDescriptor) => void;
+  onOpenImage: (image: AvatarLightboxImage) => void;
   onSave: (descriptor: PrivateAttachmentDescriptor) => void;
   t: TranslateFunction;
 }) {
@@ -283,7 +338,14 @@ function MessagePrivateAttachments({
           key={`${descriptor.resource.name}:${descriptor.resource.identifier}:${index}`}
         >
           {descriptor.resource.service === 'IMAGE' && hasAccess.stream ? (
-            <MessagePrivateAttachmentImage descriptor={descriptor} network={network} t={t} />
+            <MessagePrivateAttachmentImage
+              descriptor={descriptor}
+              network={network}
+              onOpen={hasAccess.viewer ? () => onOpen(descriptor) : null}
+              onOpenImage={onOpenImage}
+              onSave={hasAccess.save ? () => onSave(descriptor) : null}
+              t={t}
+            />
           ) : (
             <div className="message__attachment-chip">
               <span aria-hidden="true">📎</span>
@@ -1799,12 +1861,20 @@ export const MessageList = memo(function MessageList({
     });
   }
 
-  function saveResource(resource: QdnDocumentResource) {
+  function saveResource(resource: QdnDocumentResource | QdnImageResource) {
     void saveQdnResource(resource, resource.network === 'qortal' ? qortalResourceActions : qortiumResourceActions).catch(
       (error) => {
         console.warn('Unable to save QDN resource.', error);
       },
     );
+  }
+
+  // A public image embed opens in Home's shared viewer the way a document
+  // does (OPEN_QDN_RESOURCE_VIEWER accepts every non-archive service).
+  function openImageResource(resource: QdnImageResource) {
+    void openQdnImageViewer(resource).catch((error) => {
+      console.warn('Unable to open QDN resource viewer.', error);
+    });
   }
 
   function openPrivateAttachment(privateNetwork: ChatNetwork, descriptor: PrivateAttachmentDescriptor) {
@@ -2217,6 +2287,9 @@ export const MessageList = memo(function MessageList({
                         onOpenWebLink && hasResourceAction(network, 'OPEN_EXTERNAL_LINK')
                           ? (url) => onOpenWebLink(network, url)
                           : null,
+                      // Inline (data:) images are not QDN resources, so the
+                      // lightbox carries no Open/Save for them.
+                      openInlineImage: (image) => onOpenImage({ alt: image.alt, name: image.alt, src: image.src }),
                     })
                   ) : imageResources.length > 0 ? null : (
                     <span className="message__body-placeholder">
@@ -2226,13 +2299,20 @@ export const MessageList = memo(function MessageList({
                 </div>
                 <MessageResourceCards resources={textResources} t={t} />
                 {areImagePreviewsOpen ? (
-                  <MessageImagePreviews onOpenImage={onOpenImage} resources={imageResources} t={t} />
+                  <MessageImagePreviews
+                    onOpenImage={onOpenImage}
+                    onOpenResource={hasResourceAction(network, 'OPEN_QDN_RESOURCE_VIEWER') ? openImageResource : null}
+                    onSaveResource={hasResourceAction(network, 'SAVE_QDN_RESOURCE') ? saveResource : null}
+                    resources={imageResources}
+                    t={t}
+                  />
                 ) : null}
                 <MessagePrivateAttachments
                   descriptors={privateAttachments}
                   hasAccess={privateAttachmentAccess}
                   network={network}
                   onOpen={(descriptor) => openPrivateAttachment(network, descriptor)}
+                  onOpenImage={onOpenImage}
                   onSave={(descriptor) => savePrivateAttachment(network, descriptor)}
                   t={t}
                 />
