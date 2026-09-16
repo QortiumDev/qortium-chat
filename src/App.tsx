@@ -1712,6 +1712,11 @@ export default function App() {
   const [approvalActionSignature, setApprovalActionSignature] = useState<string | null>(null);
   const [approvePendingJoiner, setApprovePendingJoiner] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
+  // What the blocking part of a send is waiting on. A large attachment takes
+  // seconds to stage and hash before Home can even ask for approval, then the
+  // approval itself can sit unnoticed in Home chrome; "Sending" alone left the
+  // user (and the owner, 2026-09-16) unable to tell either from a hang.
+  const [sendPhase, setSendPhase] = useState<'idle' | 'preparing' | 'approval' | 'publishing'>('idle');
   const [accountRefreshPending, setAccountRefreshPending] = useState(false);
   const accountRefreshPendingRef = useRef(false);
   const accountRefreshGenerationRef = useRef(0);
@@ -6915,8 +6920,12 @@ export default function App() {
     const attachActions = attachNetwork === 'qortal' ? qortalBridge.value.actions : actions;
     let publishedLink = '';
     let attachmentDescriptor: PrivateAttachmentDescriptor | null = null;
+    // True once the message is queued on its pending bubble. Until then a
+    // published attachment is an orphan that a retry would publish again.
+    let dispatched = false;
 
     setSendPending(true);
+    setSendPhase(staged ? 'preparing' : 'idle');
     setWriteError('');
 
     try {
@@ -6973,6 +6982,11 @@ export default function App() {
               // approval prompt and signs; a rejection throws.
               service = staged.service;
 
+              // Home stages and hashes the bytes (seconds for a large image)
+              // before it can show its approval prompt, then publishes after
+              // approval; the composer names each wait so it never reads as
+              // a hang.
+              setSendPhase('approval');
               await publishQdnResourceBytes(
                 attachNetwork,
                 {
@@ -6986,11 +7000,16 @@ export default function App() {
               );
 
               if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
+                // The resource IS published; keep its link for the draft so a
+                // retry never publishes (and pays for) a duplicate.
+                publishedLink = buildAttachmentLink(service, publisherName, identifier);
+                setWriteError(t('status.attachment.publishedNotSent'));
                 return;
               }
             } else {
               service = getAttachmentServiceFromMime(staged.mimeType);
 
+              setSendPhase('approval');
               const outcome = await publishQdnResource(
                 attachNetwork,
                 { identifier, name: publisherName, service, sourceToken: staged.sourceToken },
@@ -6998,6 +7017,10 @@ export default function App() {
               );
 
               if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
+                if (outcome.accepted === true) {
+                  publishedLink = buildAttachmentLink(service, publisherName, identifier);
+                  setWriteError(t('status.attachment.publishedNotSent'));
+                }
                 return;
               }
 
@@ -7024,6 +7047,7 @@ export default function App() {
                 ? { kind: 'direct', otherAddress: chat.direct.address }
                 : { groupId: chat.group.groupId, kind: 'group' };
 
+            setSendPhase('approval');
             const outcome = await publishChatAttachment(attachNetwork, staged.sourceToken, conversation, attachActions);
 
             if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
@@ -7118,6 +7142,7 @@ export default function App() {
           }),
         ]);
         void runPendingRevision(localId, chat, selectedAccount);
+        dispatched = true;
       } else {
         const pendingSend = createPendingSend({
           accountAddress: pendingOwnerAddress,
@@ -7141,6 +7166,7 @@ export default function App() {
 
         updatePendingSends((current) => [...current, pendingSend]);
         void runPendingSend(localId, chat, selectedAccount);
+        dispatched = true;
       }
 
       // The sent text is consumed: drop any stashed draft for that chat, and
@@ -7163,20 +7189,22 @@ export default function App() {
     } catch (error) {
       setWriteError(getBridgeErrorMessage(error, t('status.loadingError.sendMessage'), t));
 
-      // The attachment published but something before the send was dispatched
-      // failed (unlock, or an unexpected throw building the pending entry):
-      // the resource exists on QDN either way, so fold its link into the
-      // draft and drop the staged file — resubmitting then re-sends the link
+    } finally {
+      // The attachment published but the message was never queued — a throw
+      // before dispatch (unlock, an unexpected error), a refused dispatch
+      // (account or chat changed under the send), or a duplicate in flight.
+      // The resource exists on QDN either way, so fold its link into the
+      // draft and drop the staged file: resubmitting then re-sends the link
       // without publishing (and paying for) a duplicate resource. Once
       // dispatched, a send failure surfaces on its own pending bubble instead
-      // of here (see runPendingSend).
-      if (publishedLink && selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+      // (see runPendingSend).
+      if (!dispatched && publishedLink && selectedChatKeyRef.current === getSelectedChatKey(chat)) {
         setDraft((current) =>
           current === submittedDraft ? `${submittedDraft ? `${submittedDraft}\n` : ''}${publishedLink}` : current,
         );
         setStagedAttachment(null);
         setAttachmentError('');
-      } else if (attachmentDescriptor && selectedChatKeyRef.current === getSelectedChatKey(chat)) {
+      } else if (!dispatched && attachmentDescriptor && selectedChatKeyRef.current === getSelectedChatKey(chat)) {
         // A private descriptor is not human-composable text, so there is no
         // equivalent draft-refill — the encrypted resource still exists;
         // only the notice can tell the user their message did not send.
@@ -7184,8 +7212,8 @@ export default function App() {
         setAttachmentError('');
         setWriteError(t('status.attachment.publishAmbiguous'));
       }
-    } finally {
       setSendPending(false);
+      setSendPhase('idle');
     }
   }
 
@@ -12087,7 +12115,20 @@ export default function App() {
               searchLabel={t('label.search')}
               sendLabel={t('button.send')}
               sendPending={sendPending}
-              sendPendingLabel={t('button.sending')}
+              sendPendingLabel={
+                sendPhase === 'approval'
+                  ? t('button.sending.approval')
+                  : sendPhase === 'preparing'
+                    ? t('button.sending.preparing')
+                    : t('button.sending')
+              }
+              sendPendingNotice={
+                sendPhase === 'approval'
+                  ? t('status.attachment.awaitingApproval')
+                  : sendPhase === 'preparing'
+                    ? t('status.attachment.preparing')
+                    : null
+              }
               sendTitle={
                 selectedChat?.kind === 'direct'
                   ? canComposeMessage

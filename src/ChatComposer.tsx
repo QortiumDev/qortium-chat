@@ -91,6 +91,7 @@ export function ChatComposer({
   sendLabel,
   sendPending,
   sendPendingLabel,
+  sendPendingNotice = null,
   sendTitle,
   showAttachment,
   textareaRef,
@@ -154,6 +155,8 @@ export function ChatComposer({
   sendLabel: string;
   sendPending: boolean;
   sendPendingLabel: string;
+  /** Shown under the composer while a send waits on Home (staging, approval). */
+  sendPendingNotice?: string | null;
   sendTitle: string;
   showAttachment: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -270,6 +273,11 @@ export function ChatComposer({
         </div>
       ) : null}
       {attachmentError ? <p className="error composer__attachment-error">{attachmentError}</p> : null}
+      {sendPending && sendPendingNotice ? (
+        <p aria-live="polite" className="muted composer__send-notice" role="status">
+          {sendPendingNotice}
+        </p>
+      ) : null}
       {context ? (
         <div className="composer__context">
           <div className="composer__context-text">

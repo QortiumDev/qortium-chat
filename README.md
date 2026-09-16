@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.31, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.32, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -166,7 +166,13 @@ chip's "Attach instead" button switches a staged inline image to that path
 by hand. The attachment path is equally faithful: since 2.0.31 a pasted or
 dropped image is published as the file it is (2.0.8–2.0.30 re-encoded it to
 WebP at up to 1200 px on hosts without Home's picker), so an image over the
-10 MiB IMAGE cap is the user's to shrink, never Chat's. Qortal conversations keep
+10 MiB IMAGE cap is the user's to shrink, never Chat's. Sending a large
+attachment is slow by nature — Home hashes the bytes before it can ask for
+approval, publishes after approval, then the message needs its own
+proof-of-work — so since 2.0.32 the Send button names each wait ("Preparing",
+"Waiting for approval") with a line under the composer explaining it, and if
+the attachment publishes but the message is not sent, its link is folded into
+the draft so pressing Send again never publishes the file twice. Qortal conversations keep
 the attachment path only, since Qortal Hub carries images as QDN resources.
 
 Since Chat 2.0.28 every image in a message is clickable and opens the same
