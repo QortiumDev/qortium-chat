@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Den valda filen har gått ut. Välj den igen för att bifoga den.',
   'status.attachment.publishAmbiguous': 'Publiceringsresultatet för bilagan är oklart. Kontrollera Qortium Home innan du skickar igen.',
   'status.attachment.preparing': 'Förbereder bilagan för Qortium Home…',
-  'status.attachment.awaitingApproval': 'Väntar på att du godkänner publiceringen i Qortium Home. För stora filer dröjer det en stund innan frågan visas.',
+  'status.attachment.awaitingApproval': 'Väntar på att du godkänner publiceringen i Qortium Home – frågan visas på den här fliken.',
   'status.attachment.publishedNotSent': 'Bilagan publicerades men meddelandet skickades inte. Länken finns i utkastet – tryck på Skicka igen; filen publiceras inte två gånger.',
   'action.attachNeedsName': 'Att bifoga en fil i en öppen grupp publicerar den under ditt registrerade namn — det här kontot har inget registrerat namn än.',
   'action.attachUnavailable': 'Att bifoga en fil kräver Qortium Home, ett registrerat namn för öppna grupper, eller stöd för privata bilagor i den här chatten.',

@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Valitud fail on aegunud. Vali see uuesti, et see manustada.',
   'status.attachment.publishAmbiguous': 'Manuse avaldamise tulemus on ebaselge. Kontrolli Qortium Home’i enne uuesti saatmist.',
   'status.attachment.preparing': 'Manuse ettevalmistamine Qortium Home’i jaoks…',
-  'status.attachment.awaitingApproval': 'Ootan, et kinnitaksid avaldamise Qortium Home’is. Suurte failide puhul võtab viiba ilmumine hetke.',
+  'status.attachment.awaitingApproval': 'Ootan, et kinnitaksid avaldamise Qortium Home’is — vaata selle viipa sellel vahekaardil.',
   'status.attachment.publishedNotSent': 'Manus avaldati, aga sõnumit ei saadetud. Selle link on mustandis — vajuta uuesti Saada; faili ei avaldata kaks korda.',
   'action.attachNeedsName': 'Faili manustamine avatud grupis avaldab selle sinu registreeritud nime all — sellel kontol pole veel registreeritud nime.',
   'action.attachUnavailable': 'Faili manustamiseks on vaja Qortium Home’i, registreeritud nime avatud gruppide jaoks või privaatsete manuste tuge selles vestluses.',

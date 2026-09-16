@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Het geselecteerde bestand is verlopen. Selecteer het opnieuw om het bij te voegen.',
   'status.attachment.publishAmbiguous': 'Het publicatieresultaat van de bijlage is onduidelijk. Controleer Qortium Home voordat u opnieuw verzendt.',
   'status.attachment.preparing': 'Bijlage voorbereiden voor Qortium Home…',
-  'status.attachment.awaitingApproval': 'Wacht tot je de publicatie goedkeurt in Qortium Home. Bij grote bestanden duurt het even voordat de vraag verschijnt.',
+  'status.attachment.awaitingApproval': 'Wacht tot je de publicatie goedkeurt in Qortium Home: de vraag staat op dit tabblad.',
   'status.attachment.publishedNotSent': 'De bijlage is gepubliceerd, maar het bericht is niet verzonden. De link staat in het concept: druk opnieuw op Verzenden; het bestand wordt niet twee keer gepubliceerd.',
   'action.attachNeedsName': 'Een bestand bijvoegen in een open groep publiceert het onder je geregistreerde naam — dit account heeft nog geen geregistreerde naam.',
   'action.attachUnavailable': 'Een bestand bijvoegen vereist Qortium Home, een geregistreerde naam voor open groepen, of ondersteuning voor privébijlagen in deze chat.',

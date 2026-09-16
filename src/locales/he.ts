@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'פג תוקף הקובץ שנבחר. בחרו אותו שוב כדי לצרפו.',
   'status.attachment.publishAmbiguous': 'תוצאת פרסום הקובץ המצורף אינה ברורה. בדקו את Qortium Home לפני שליחה חוזרת.',
   'status.attachment.preparing': 'מכין את הקובץ המצורף עבור Qortium Home…',
-  'status.attachment.awaitingApproval': 'ממתין לאישור הפרסום שלך ב‑Qortium Home. בקבצים גדולים לוקח רגע עד שהבקשה מופיעה.',
+  'status.attachment.awaitingApproval': 'ממתין לאישור הפרסום שלך ב‑Qortium Home — חפש את הבקשה בלשונית זו.',
   'status.attachment.publishedNotSent': 'הקובץ המצורף פורסם אך ההודעה לא נשלחה. הקישור שלו נמצא בטיוטה — לחץ שוב על שלח; הקובץ לא יפורסם פעמיים.',
   'action.attachNeedsName': 'צירוף קובץ בקבוצה פתוחה מפרסם אותו תחת שמך הרשום — לחשבון זה אין עדיין שם רשום.',
   'action.attachUnavailable': 'צירוף קובץ דורש את Qortium Home, שם רשום לקבוצות פתוחות, או תמיכה בקבצים מצורפים פרטיים בשיחה זו.',

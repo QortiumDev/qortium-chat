@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Valitun tiedoston voimassaolo on päättynyt. Valitse se uudelleen liittääksesi sen.',
   'status.attachment.publishAmbiguous': 'Liitteen julkaisutulos on epäselvä. Tarkista Qortium Home ennen uudelleenlähetystä.',
   'status.attachment.preparing': 'Valmistellaan liitettä Qortium Homea varten…',
-  'status.attachment.awaitingApproval': 'Odotetaan, että hyväksyt julkaisun Qortium Homessa. Suurilla tiedostoilla kehote ilmestyy hetken kuluttua.',
+  'status.attachment.awaitingApproval': 'Odotetaan, että hyväksyt julkaisun Qortium Homessa – kehote näkyy tässä välilehdessä.',
   'status.attachment.publishedNotSent': 'Liite julkaistiin, mutta viestiä ei lähetetty. Sen linkki on luonnoksessa – paina Lähetä uudelleen; tiedostoa ei julkaista kahdesti.',
   'action.attachNeedsName': 'Tiedoston liittäminen avoimessa ryhmässä julkaisee sen rekisteröidyllä nimelläsi — tällä tilillä ei ole vielä rekisteröityä nimeä.',
   'action.attachUnavailable': 'Tiedoston liittäminen vaatii Qortium Homen, rekisteröidyn nimen avoimille ryhmille tai yksityisten liitteiden tuen tässä keskustelussa.',

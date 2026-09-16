@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Wybrany plik wygasł. Wybierz go ponownie, aby go załączyć.',
   'status.attachment.publishAmbiguous': 'Wynik publikacji załącznika jest niejasny. Sprawdź Qortium Home przed ponownym wysłaniem.',
   'status.attachment.preparing': 'Przygotowywanie załącznika dla Qortium Home…',
-  'status.attachment.awaitingApproval': 'Oczekiwanie na zatwierdzenie publikacji w Qortium Home. Przy dużych plikach monit pojawia się po chwili.',
+  'status.attachment.awaitingApproval': 'Oczekiwanie na zatwierdzenie publikacji w Qortium Home — monit pojawia się na tej karcie.',
   'status.attachment.publishedNotSent': 'Załącznik został opublikowany, ale wiadomość nie została wysłana. Jego link jest w wersji roboczej — naciśnij Wyślij ponownie; plik nie zostanie opublikowany dwa razy.',
   'action.attachNeedsName': 'Załączenie pliku w grupie otwartej publikuje go pod zarejestrowaną nazwą konta — to konto nie ma jeszcze zarejestrowanej nazwy.',
   'action.attachUnavailable': 'Załączenie pliku wymaga Qortium Home, zarejestrowanej nazwy dla grup otwartych lub obsługi prywatnych załączników w tym czacie.',

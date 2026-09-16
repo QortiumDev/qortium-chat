@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Die ausgewählte Datei ist abgelaufen. Wählen Sie sie erneut aus, um sie anzuhängen.',
   'status.attachment.publishAmbiguous': 'Das Veröffentlichungsergebnis des Anhangs ist unklar. Überprüfen Sie Qortium Home, bevor Sie erneut senden.',
   'status.attachment.preparing': 'Anhang wird für Qortium Home vorbereitet…',
-  'status.attachment.awaitingApproval': 'Warte auf deine Freigabe der Veröffentlichung in Qortium Home. Bei großen Dateien dauert es einen Moment, bis die Abfrage erscheint.',
+  'status.attachment.awaitingApproval': 'Warte auf deine Freigabe der Veröffentlichung in Qortium Home – die Abfrage erscheint in diesem Tab.',
   'status.attachment.publishedNotSent': 'Der Anhang wurde veröffentlicht, die Nachricht aber nicht gesendet. Der Link steht im Entwurf – drücke erneut Senden; die Datei wird nicht doppelt veröffentlicht.',
   'action.attachNeedsName': 'Das Anhängen einer Datei in einer offenen Gruppe veröffentlicht sie unter deinem registrierten Namen — für dieses Konto ist noch kein Name registriert.',
   'action.attachUnavailable': 'Zum Anhängen einer Datei sind Qortium Home, ein registrierter Name für offene Gruppen oder Unterstützung für private Anhänge in diesem Chat erforderlich.',

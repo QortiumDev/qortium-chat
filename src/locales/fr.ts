@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Le fichier sélectionné a expiré. Sélectionnez-le à nouveau pour le joindre.',
   'status.attachment.publishAmbiguous': "Le résultat de la publication de la pièce jointe n'est pas clair. Vérifiez Qortium Home avant de renvoyer.",
   'status.attachment.preparing': 'Préparation de la pièce jointe pour Qortium Home…',
-  'status.attachment.awaitingApproval': 'En attente de votre approbation de la publication dans Qortium Home. Pour un gros fichier, l’invite met un moment à apparaître.',
+  'status.attachment.awaitingApproval': 'En attente de votre approbation de la publication dans Qortium Home — son invite s’affiche sur cet onglet.',
   'status.attachment.publishedNotSent': 'La pièce jointe a été publiée mais le message n’a pas été envoyé. Son lien est dans le brouillon — appuyez de nouveau sur Envoyer ; le fichier ne sera pas publié deux fois.',
   'action.attachNeedsName': 'Joindre un fichier dans un groupe ouvert le publie sous votre nom enregistré — ce compte n’a pas encore de nom enregistré.',
   'action.attachUnavailable': 'Joindre un fichier nécessite Qortium Home, un nom enregistré pour les groupes ouverts, ou la prise en charge des pièces jointes privées dans cette discussion.',

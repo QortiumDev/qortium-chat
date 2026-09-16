@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'A kiválasztott fájl lejárt. Válassza ki újra a csatoláshoz.',
   'status.attachment.publishAmbiguous': 'A melléklet közzétételének eredménye nem egyértelmű. Ellenőrizze a Qortium Home-ot, mielőtt újra küldi.',
   'status.attachment.preparing': 'A melléklet előkészítése a Qortium Home számára…',
-  'status.attachment.awaitingApproval': 'Várakozás a közzététel jóváhagyására a Qortium Home-ban. Nagy fájloknál a kérdés kicsit később jelenik meg.',
+  'status.attachment.awaitingApproval': 'Várakozás a közzététel jóváhagyására a Qortium Home-ban – a kérdés ezen a lapon jelenik meg.',
   'status.attachment.publishedNotSent': 'A melléklet közzé lett téve, de az üzenet nem ment el. A hivatkozása a piszkozatban van – nyomd meg újra a Küldést; a fájl nem lesz kétszer közzétéve.',
   'action.attachNeedsName': 'Ha fájlt csatolsz egy nyílt csoportban, az a regisztrált neved alatt jelenik meg — ehhez a fiókhoz még nincs regisztrált név.',
   'action.attachUnavailable': 'Fájl csatolásához Qortium Home, regisztrált név a nyílt csoportokhoz, vagy privát melléklet-támogatás szükséges ebben a csevegésben.',

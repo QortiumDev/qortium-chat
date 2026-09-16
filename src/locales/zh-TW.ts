@@ -93,7 +93,7 @@ export const STRINGS = {
   'status.attachment.reselect': '所選檔案已過期。請重新選擇以附加。',
   'status.attachment.publishAmbiguous': '附件的發布結果不明確。請在重新傳送前檢查 Qortium Home。',
   'status.attachment.preparing': '正在為 Qortium Home 準備附件…',
-  'status.attachment.awaitingApproval': '正在等待您在 Qortium Home 中核准發布。大型檔案需要片刻才會出現提示。',
+  'status.attachment.awaitingApproval': '正在等待您在 Qortium Home 中核准發布——請查看此分頁上的提示。',
   'status.attachment.publishedNotSent': '附件已發布，但訊息未送出。其連結已在草稿中——再按一次傳送；檔案不會被重複發布。',
   'action.attachNeedsName': '在公開群組中附加檔案會以您的已註冊名稱發布——此帳戶尚未有已註冊名稱。',
   'action.attachUnavailable': '附加檔案需要 Qortium Home、用於公開群組的已註冊名稱,或此聊天中的私密附件支援。',

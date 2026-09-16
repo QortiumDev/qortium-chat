@@ -95,7 +95,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'Den valgte filen er utløpt. Velg den på nytt for å legge den ved.',
   'status.attachment.publishAmbiguous': 'Publiseringsresultatet for vedlegget er uklart. Sjekk Qortium Home før du sender på nytt.',
   'status.attachment.preparing': 'Forbereder vedlegget for Qortium Home…',
-  'status.attachment.awaitingApproval': 'Venter på at du godkjenner publiseringen i Qortium Home. For store filer tar det et øyeblikk før spørsmålet vises.',
+  'status.attachment.awaitingApproval': 'Venter på at du godkjenner publiseringen i Qortium Home – se etter spørsmålet på denne fanen.',
   'status.attachment.publishedNotSent': 'Vedlegget ble publisert, men meldingen ble ikke sendt. Lenken ligger i utkastet – trykk Send igjen; filen blir ikke publisert to ganger.',
   'action.attachNeedsName': 'Å legge ved en fil i en åpen gruppe publiserer den under det registrerte navnet ditt — denne kontoen har ikke et registrert navn ennå.',
   'action.attachUnavailable': 'Å legge ved en fil krever Qortium Home, et registrert navn for åpne grupper, eller støtte for private vedlegg i denne chatten.',

@@ -95,7 +95,7 @@ export const STRINGS = {
   'status.attachment.reselect': 'चयनित फ़ाइल की समय-सीमा समाप्त हो गई है। इसे संलग्न करने के लिए फिर से चुनें।',
   'status.attachment.publishAmbiguous': 'अनुलग्नक के प्रकाशन का परिणाम स्पष्ट नहीं है। फिर से भेजने से पहले Qortium Home जाँचें।',
   'status.attachment.preparing': 'Qortium Home के लिए अटैचमेंट तैयार हो रहा है…',
-  'status.attachment.awaitingApproval': 'Qortium Home में प्रकाशन की आपकी स्वीकृति की प्रतीक्षा है। बड़ी फ़ाइलों के लिए प्रॉम्प्ट आने में थोड़ा समय लगता है।',
+  'status.attachment.awaitingApproval': 'Qortium Home में प्रकाशन की आपकी स्वीकृति की प्रतीक्षा है — इस टैब पर इसका प्रॉम्प्ट देखें।',
   'status.attachment.publishedNotSent': 'अटैचमेंट प्रकाशित हो गया लेकिन संदेश नहीं भेजा गया। उसका लिंक ड्राफ़्ट में है — फिर से भेजें दबाएँ; फ़ाइल दोबारा प्रकाशित नहीं होगी।',
   'action.attachNeedsName': 'किसी खुले समूह में फ़ाइल संलग्न करने से वह आपके पंजीकृत नाम के तहत प्रकाशित होती है — इस खाते का अभी तक कोई पंजीकृत नाम नहीं है।',
   'action.attachUnavailable': 'फ़ाइल संलग्न करने के लिए Qortium Home, खुले समूहों के लिए पंजीकृत नाम, या इस चैट में निजी अनुलग्नक समर्थन आवश्यक है।',
