@@ -323,6 +323,28 @@ describe('message link helpers', () => {
     expect(opened).toEqual([]);
   });
 
+  it('makes an inline image clickable when openInlineImage is supplied, like every other image (2.0.28)', () => {
+    const src = 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=';
+    const opened: { alt: string; src: string }[] = [];
+    const html = renderToStaticMarkup(
+      <>
+        {renderMessageTextWithAppLinks(`![a cat](${src})`, undefined, 'qortium', {
+          openInlineImage: (image) => opened.push(image),
+        })}
+      </>,
+    );
+
+    expect(html).toContain('message__inline-image-button');
+    expect(html).toContain('aria-label="Open: a cat"');
+    expect(html).toContain('class="message__inline-image"');
+
+    // Without the callback (older callers, gateway render) it stays a plain image.
+    const plain = renderToStaticMarkup(<>{renderMessageTextWithAppLinks(`![a cat](${src})`, undefined, 'qortium')}</>);
+    expect(plain).not.toContain('message__inline-image-button');
+    expect(plain).toContain('class="message__inline-image"');
+    expect(opened).toEqual([]);
+  });
+
   it('renders Qortal app links as anchors only when that network advertises OPEN_NEW_TAB', () => {
     const html = renderToStaticMarkup(
       <>

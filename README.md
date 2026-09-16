@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.27, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.28, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -162,6 +162,17 @@ fits after the text grows, takes the ordinary attachment path (a QDN publish
 and link, see "Current Limits"), and the chip's "Attach instead" button
 switches a staged preview to that path by hand. Qortal conversations keep
 the attachment path only, since Qortal Hub carries images as QDN resources.
+
+Since Chat 2.0.28 every image in a message is clickable and opens the same
+lightbox. For a public `IMAGE` embed and for a private image attachment the
+lightbox offers **Open** (Home's shared viewer, with zoom and its own save)
+and **Save** (Home's native save dialog) when the host advertises the
+matching actions — `OPEN_QDN_RESOURCE_VIEWER` / `SAVE_QDN_RESOURCE` for a
+public resource, `OPEN_CHAT_ATTACHMENT_VIEWER` / `SAVE_CHAT_ATTACHMENT` for a
+private attachment — and a private image preview also carries Open/Save
+buttons of its own, exactly like a file attachment's chip. An inline
+`data:` image is not a QDN resource, so its lightbox has no Open/Save; saving
+app-held bytes needs a host capability Home does not offer yet.
 
 
 ## Group events and moderation

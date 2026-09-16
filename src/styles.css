@@ -2846,6 +2846,29 @@ button.message__reply-preview:focus-visible {
   image-rendering: auto;
 }
 
+/* The inline image is clickable like every other image embed (lightbox). */
+.message__inline-image-button {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--qc-radius-sm);
+  cursor: zoom-in;
+}
+
+.message__inline-image-button:focus-visible {
+  outline: 2px solid var(--qc-color-accent);
+  outline-offset: 2px;
+}
+
+/* Open/Save under a private image preview: the same affordance a file chip has. */
+.message__image-preview-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
 /* P3: closed-group composer byte-remaining counter (see ChatComposer.tsx's
    remainingBytesLabel/remainingBytesOverLimit). */
 .composer__byte-counter {
@@ -3729,6 +3752,27 @@ button.message__reply-preview:focus-visible,
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.avatar-lightbox__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.avatar-lightbox__actions button {
+  padding: 6px 14px;
+  color: #ffffff;
+  font-size: var(--qc-text-small);
+  background: rgb(255 255 255 / 14%);
+  border: 1px solid rgb(255 255 255 / 34%);
+  border-radius: var(--qc-radius-sm);
+  cursor: pointer;
+}
+
+.avatar-lightbox__actions button:hover,
+.avatar-lightbox__actions button:focus-visible {
+  background: rgb(255 255 255 / 26%);
 }
 
 .avatar-lightbox__close {

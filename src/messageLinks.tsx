@@ -724,6 +724,16 @@ export async function openQdnDocumentViewer(resource: QdnDocumentResource) {
   });
 }
 
+// A public IMAGE embed in Home's shared viewer (zoom, save) — the same
+// surface a document opens in, through the generic resource-viewer action,
+// which accepts every non-archive service.
+export async function openQdnImageViewer(resource: QdnImageResource) {
+  return getResourceBridge<boolean>(resource.network, {
+    action: 'OPEN_QDN_RESOURCE_VIEWER',
+    ...getResourceRequest(resource),
+  });
+}
+
 // Home fetches the raw bytes and shows a save dialog (desktop) or download path
 // (mobile/web), returning { canceled } once the user decides.
 //
@@ -1522,7 +1532,12 @@ export function renderMessageTextWithAppLinks(
   text: string,
   translate?: TranslateFunction,
   conversationNetwork: ChatNetwork = 'qortium',
-  options: { canOpenQortalAppLinks?: boolean; openWebLink?: ((url: string) => void) | null } = {},
+  options: {
+    canOpenQortalAppLinks?: boolean;
+    openWebLink?: ((url: string) => void) | null;
+    /** Opens an inline (data:) image in the lightbox, like every other image. */
+    openInlineImage?: ((image: { alt: string; src: string }) => void) | null;
+  } = {},
 ): ReactNode {
   const copiedLabel = translate ? translate('button.copied') : 'Copied';
   const copyLabel = translate ? translate('button.copy') : 'Copy';
@@ -1602,15 +1617,29 @@ export function renderMessageTextWithAppLinks(
     // 2.0.26 (D-G): a tiny inline image carried in the message (data: URI,
     // already validated by the parser: webp/jpeg/png, base64, bounded).
     if (block.kind === 'image') {
-      return (
+      const image = (
         <img
           alt={block.alt || 'image'}
           className="message__inline-image"
           decoding="async"
-          key={`img-${blockIndex}`}
           loading="lazy"
           src={block.src}
         />
+      );
+      const openInlineImage = options.openInlineImage ?? null;
+
+      return openInlineImage ? (
+        <button
+          aria-label={`${openLabel}: ${block.alt || 'image'}`}
+          className="message__inline-image-button"
+          key={`img-${blockIndex}`}
+          onClick={() => openInlineImage({ alt: block.alt || 'image', src: block.src })}
+          type="button"
+        >
+          {image}
+        </button>
+      ) : (
+        <Fragment key={`img-${blockIndex}`}>{image}</Fragment>
       );
     }
 
