@@ -353,6 +353,11 @@ import {
 } from './mutedConversations';
 import { readPrivateGroupKeyRequestMemo, rememberPrivateGroupKeyRequest } from './privateGroupKeyRequestMemo';
 import { getJoinSendHoldMs, recordJoinSendHold, type JoinSendHolds } from './joinSendHold';
+import {
+  getSafetyPollIntervalMs,
+  hasBroadcastAwaitingConfirmation,
+  shouldSendKeepalive,
+} from './liveTranscriptSafetyNet';
 import type {
   ActiveChats,
   ActiveDirectChat,
@@ -2614,7 +2619,16 @@ export default function App() {
 
     updatePendingSends((current) => prunePendingSends(current, confirmedSignatures, confirmedEchoes));
     updatePendingRevisions((current) => prunePendingRevisions(current, confirmedSignatures, confirmedEchoes));
-  }, [messages.value, messagesChatKey, selectedChat, selectedChatKey]);
+    // 2.0.34: pendingSends/pendingRevisions are dependencies on purpose. Core
+    // notifies the group websocket from inside POST /transactions/process,
+    // before it writes the HTTP reply, so the confirmed row routinely lands in
+    // messages.value BEFORE Home's bridge reply stamps resolvedSignature. With
+    // messages.value alone as the trigger, that ordering ran the prune once
+    // (signature still null) and never again — the entry sat "Sending…" over
+    // an already-rendered row until the 120 s expiry, then blocked an
+    // identical resend. Both prune helpers return the same array when nothing
+    // changed, so re-running on every pending change is a no-op re-render.
+  }, [messages.value, messagesChatKey, pendingRevisions, pendingSends, selectedChat, selectedChatKey]);
   // Stable identities for every handler passed to the memoized GroupList /
   // DirectList / MessageList (the handlers themselves are re-declared each
   // render). With these, the shared 30s clock is the only prop that should
@@ -10422,6 +10436,13 @@ export default function App() {
           return;
         }
 
+        // Core answers the keepalive "ping" (below) with a bare "pong": proof
+        // the socket is alive, never a transcript frame.
+        if (event.data === 'pong') {
+          reconnectDelay = WS_RECONNECT_BASE_MS;
+          return;
+        }
+
         try {
           const nextMessages = parseChatMessages(event.data);
 
@@ -10491,8 +10512,56 @@ export default function App() {
 
     connect();
 
+    // 2.0.34: the socket is this chat's only confirmation input (see the
+    // reconcile effect), and it had no safety net — no keepalive, no poll, and
+    // a `close`-only recovery path. Core's live-push gate fails closed on a
+    // repository error and never retries, and a half-dead session never
+    // closes, so a just-sent message could sit "Sending…" until the 120 s
+    // expiry while re-opening the group (a plain REST read) confirmed it at
+    // once. Beside the socket now run (a) a keepalive ping every
+    // WS_KEEPALIVE_MS so a dead socket actually closes and reconnects, and (b)
+    // a quiet REST reload — every WS_SAFETY_POLL_IDLE_MS normally, tightening
+    // to WS_SAFETY_POLL_AWAITING_MS while this chat has a broadcast awaiting
+    // its confirmed row. Both wait for the initial batch (the close handler
+    // owns the REST fallback before it) and pause while the tab is hidden,
+    // like the socket's own reconnect. mergeMessages/retainChatMessagesWhenEqual
+    // keep an unchanged reload from re-rendering.
+    let lastSafetyPoll = Date.now();
+    let lastKeepalive = Date.now();
+    const safetyNet = window.setInterval(() => {
+      if (isDisposed || !receivedInitialMessages || selectedChatKeyRef.current !== chatKey) {
+        return;
+      }
+
+      const now = Date.now();
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const socketOpen = socket !== null && socket.readyState === WebSocket.OPEN;
+
+      if (shouldSendKeepalive({ hidden, lastPingAt: lastKeepalive, now, socketOpen })) {
+        lastKeepalive = now;
+        try {
+          socket?.send('ping');
+        } catch {
+          // A send that throws is a dead socket; its close event reconnects.
+        }
+      }
+
+      const awaitingConfirmation =
+        hasBroadcastAwaitingConfirmation(pendingSendsRef.current, chatKey) ||
+        hasBroadcastAwaitingConfirmation(pendingRevisionsRef.current, chatKey);
+      const interval = getSafetyPollIntervalMs({ awaitingConfirmation, hidden });
+
+      if (interval === null || now - lastSafetyPoll < interval) {
+        return;
+      }
+
+      lastSafetyPoll = now;
+      void loadMessages(chat, websocketActions, { quiet: true });
+    }, POLL_TICK_MS);
+
     return () => {
       isDisposed = true;
+      window.clearInterval(safetyNet);
       window.clearTimeout(reconnectTimeout);
 
       if (visibilityReconnect) {
