@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.33, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.34, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -174,6 +174,18 @@ proof-of-work — so since 2.0.32 the Send button names each wait ("Preparing",
 the attachment publishes but the message is not sent, its link is folded into
 the draft so pressing Send again never publishes the file twice. Qortal conversations keep
 the attachment path only, since Qortal Hub carries images as QDN resources.
+
+Since Chat 2.0.34 a sent message no longer sits on "Sending…" for two
+minutes and then fails while re-opening the group shows it confirmed. A
+send's only confirmation input is the open conversation's transcript, and
+on the websocket transport (open Qortium groups on Home 2 desktop) that
+transcript was fed by live frames alone — no keepalive, no poll — so a socket
+that stayed open but went quiet stranded the message. The socket now runs
+with a safety net: a keepalive ping every 20 s so a dead socket reconnects,
+and a quiet reload every 30 s that tightens to 5 s while a message is
+awaiting its confirmed row. The reconcile step also re-runs whenever the
+pending list changes, since Core pushes the confirmed row before Home
+returns the signature.
 
 Since Chat 2.0.33 a message's public image previews show without a click —
 for the messages in or near the viewport, released as they scroll away, so a
