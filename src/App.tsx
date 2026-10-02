@@ -7367,19 +7367,15 @@ export default function App() {
     }
   }
 
-  // Paperclip. Picker hosts: opens Home's native file picker
-  // (SELECT_QDN_PUBLISH_SOURCE) and stages the returned source token for the
-  // next send — the app never sees file bytes, only fileName/size/mimeType
-  // for display, and Home enforces the 1 byte–100 MiB source cap itself.
-  // Bytes hosts: opens the composer's hidden <input type="file">, whose
-  // selection lands in stageLocalFile. Replaces any previously staged file
-  // (one attachment per message).
+  // Use the same local File path as paste/drop wherever the host can stage
+  // bytes. This preserves MIME information and applies the same inline-image
+  // budget to all three inputs. Older token-only hosts keep their native picker.
   function attachFile() {
     if (!canAttach || stagedAttachment?.phase === 'selecting' || stagedAttachment?.phase === 'processing') {
       return;
     }
 
-    if (attachSource === 'bytes') {
+    if (canStageLocalFile) {
       attachmentInputRef.current?.click();
       return;
     }
@@ -7441,7 +7437,7 @@ export default function App() {
   }
 
   // Bytes path: stage a local File for the next send — route to
-  // IMAGE/ATTACHMENT, compress images, base64-encode, size-check. Fed by the
+  // IMAGE/ATTACHMENT, preserve original bytes, base64-encode, size-check. Fed by the
   // paperclip's hidden input, clipboard paste, and drag-drop. Replaces any
   // previously staged file (one attachment per message).
   function stageLocalFile(file: File) {
@@ -7451,9 +7447,8 @@ export default function App() {
 
     setAttachmentError('');
 
-    // Fail a hopeless file fast: non-image files publish as-is, so a raw size
-    // over the cap can never succeed (images may still shrink below their cap
-    // during compression, so they are checked after preparing).
+    // Files publish as-is. Reject oversized non-images before reading them;
+    // prepared attachments are also checked against their service-specific cap.
     if (getAttachmentServiceFromFile(file) === 'ATTACHMENT' && file.size > ATTACHMENT_FILE_MAX_BYTES) {
       setAttachmentError(
         t('status.attachment.tooLarge', { max: String(Math.round(ATTACHMENT_FILE_MAX_BYTES / 1024 / 1024)) }),
@@ -7466,6 +7461,7 @@ export default function App() {
     const network = selectedChatAttachNetwork;
     const attachActions = selectedChatAttachActions;
 
+    setStagedInlineImage(null);
     setStagedAttachment({ fileName: file.name || 'attachment', phase: 'processing' });
 
     void prepareLocalAttachment(file)
@@ -7599,21 +7595,31 @@ export default function App() {
 
   async function tryStageInlineImage(file: File) {
     if (!canInlineImage || !isInlineImageCandidate(file)) return false;
+    const chatKey = selectedChatKeyRef.current;
     const result = await encodeInlineImage(file, currentInlineImageBudget());
+    if (selectedChatKeyRef.current !== chatKey) return true;
     if (!result) return false;
+    setStagedAttachment(null);
     setStagedInlineImage({ ...result, file });
     setAttachmentError('');
     return true;
   }
 
   function stageFileOrInline(file: File) {
+    if (stagedAttachment?.phase === 'processing' || stagedAttachment?.phase === 'selecting') return;
+    const chatKey = selectedChatKeyRef.current;
     void tryStageInlineImage(file).then((inlined) => {
+      if (selectedChatKeyRef.current !== chatKey) return;
       if (inlined) return;
       if (canAttach && canStageLocalFile) {
         stageLocalFile(file);
         return;
       }
       setAttachmentError(t(canAttach ? 'status.attachment.usePicker' : 'status.inlineImage.tooLarge'));
+    }).catch((error) => {
+      if (selectedChatKeyRef.current === chatKey) {
+        setAttachmentError(getBridgeErrorMessage(error, t('status.attachment.error'), t));
+      }
     });
   }
 
@@ -12127,7 +12133,7 @@ export default function App() {
               messageLabel={t('label.common.message')}
               messagePlaceholder={t('placeholder.message')}
               onAttachClick={attachFile}
-              onAttachmentSelected={stageLocalFile}
+              onAttachmentSelected={stageFileOrInline}
               onLinkResourceClick={() => setLinkResourceOpen(true)}
               onCancelContext={cancelComposeContext}
               onClearAttachment={clearStagedAttachment}

@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Previzualizare",
+  "status.attachment.saved": "Atașament salvat.",
+  "status.attachment.saveCanceled": "Salvare anulată.",
+  "status.attachment.noImagePreview": "Acest fișier nu are previzualizare de imagine. Folosește Deschide sau Salvează.",
+
   'app.title': 'Chat Qortium',
   'aria.groupMembers': 'Membri grup',
   'aria.avatarLightbox': 'Imagine avatar',

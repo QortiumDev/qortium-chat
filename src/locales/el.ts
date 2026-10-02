@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Προεπισκόπηση",
+  "status.attachment.saved": "Το συνημμένο αποθηκεύτηκε.",
+  "status.attachment.saveCanceled": "Η αποθήκευση ακυρώθηκε.",
+  "status.attachment.noImagePreview": "Δεν υπάρχει προεπισκόπηση εικόνας. Χρησιμοποιήστε Άνοιγμα ή Αποθήκευση.",
+
   'app.title': 'Qortium Chat',
   'aria.groupMembers': 'Μέλη ομάδας',
   'aria.avatarLightbox': 'Εικόνα avatar',

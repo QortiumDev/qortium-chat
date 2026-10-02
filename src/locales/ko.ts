@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "미리 보기",
+  "status.attachment.saved": "첨부 파일을 저장했습니다.",
+  "status.attachment.saveCanceled": "저장이 취소되었습니다.",
+  "status.attachment.noImagePreview": "이 파일은 이미지 미리 보기를 지원하지 않습니다. 열기 또는 저장을 사용하세요.",
+
   'app.title': 'Qortium 채팅',
   'aria.groupMembers': '그룹 멤버',
   'aria.avatarLightbox': '아바타 이미지',

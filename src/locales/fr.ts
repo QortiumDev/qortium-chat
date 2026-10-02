@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Aperçu",
+  "status.attachment.saved": "Pièce jointe enregistrée.",
+  "status.attachment.saveCanceled": "Enregistrement annulé.",
+  "status.attachment.noImagePreview": "Ce fichier ne possède pas d’aperçu d’image. Utilisez Ouvrir ou Enregistrer.",
+
   'app.title': 'Chat Qortium',
   'aria.groupMembers': 'Membres du groupe',
   'aria.avatarLightbox': 'Image d’avatar',

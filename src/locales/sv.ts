@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Förhandsvisning",
+  "status.attachment.saved": "Bilagan sparad.",
+  "status.attachment.saveCanceled": "Sparandet avbröts.",
+  "status.attachment.noImagePreview": "Filen har ingen bildförhandsvisning. Använd Öppna eller Spara.",
+
   'app.title': 'Qortium Chatt',
   'aria.groupMembers': 'Gruppmedlemmar',
   'aria.avatarLightbox': 'Avatarbild',

@@ -80,17 +80,21 @@ mistaken for one of Chat's own attachments.
 
 ## Rendering
 
-`MessageList.tsx` filters `decoded.attachments` through
-`isPrivateAttachmentDescriptor`, then for each validated descriptor:
+`MessageList.tsx` validates descriptors, then renders `MessagePrivateAttachment`.
+For direct messages, the stored `conversation.otherAddress` is the message's
+recipient (sender-relative). Before **every** preview, Open or Save, Chat checks
+the network and message participants and sends a copy with the viewer's peer as
+`otherAddress`. The resource, ciphertext hash, size and transaction signature
+stay unchanged. Home still checks both encrypted recipients and the immutable
+ciphertext. This also fixes descriptors in already-sent messages.
 
-- `resource.service === 'IMAGE'` **and** `GET_CHAT_ATTACHMENT_STREAM_URL` is
-  advertised: a click-gated reveal button, matching the existing public
-  image-preview pattern — a fresh stream URL is fetched only when the user
-  clicks, never cached (the capability expires after 10 minutes and is
-  meant to be single-use per review/schemas-publish-attachments.md § 4).
-- otherwise: a file chip labelled generically (the descriptor carries no
-  plaintext filename) with the ciphertext size, plus Open/Save buttons
-  gated on `OPEN_CHAT_ATTACHMENT_VIEWER`/`SAVE_CHAT_ATTACHMENT`.
+Every encrypted attachment offers Preview when the stream action is available.
+A click obtains a fresh Home stream and reads at most 1 MiB; only Home's raster
+content types are turned into a local blob for the image and lightbox. The QDN
+service is not a plaintext type hint: Qortium images use
+`QCHAT_ATTACHMENT_PRIVATE` too. Non-images remain file chips. URLs are revoked
+on unmount; pending preview fetches are aborted. Open/Save stay available after
+preview errors, with busy state, visible errors and explicit save outcomes.
 
 Public `qdn://` links keep rendering exactly as before, including the
 existing "Public resource" label inside encrypted conversations.
@@ -114,9 +118,8 @@ version string):
 
 - **picker**: `SELECT_QDN_PUBLISH_SOURCE` → `sourceToken` → `publishQdnResource`
   / `publishChatAttachment` (the P4 flow, unchanged).
-- **bytes**: the app reads the `File` itself (`prepareLocalAttachment`:
-  WebP re-encode at max width 1200 / quality 0.6 for non-GIF images, which
-  also strips metadata — Hub's own parameters), base64-encodes it, and calls
+- **bytes**: the app reads the original `File` itself (`prepareLocalAttachment`),
+  preserves its bytes, base64-encodes it, and calls
   `publishQdnResourceBytes`, which sends the pre-P4 inline shape
   `{ action: 'PUBLISH_QDN_RESOURCE', base64, filename, identifier, name, service }`.
   Every Home 1.x reads `data64 || base64`; Hub reads `data64 || base64 || file`.
@@ -182,3 +185,16 @@ code (both are exported and printed by the in-app Developers reference):
 - `MAX_ENVELOPE_CANDIDATES` (`src/chatText.ts`): at most 12 `attachments`
   candidates (Chat envelope) or 12 `images[]` entries (Hub v3 envelope) are
   read from one message; later entries are dropped before validation.
+
+### Source selection update (2.0.35)
+
+The paperclip now uses the local file input whenever `canStageLocalFile` is true,
+then calls the same `stageFileOrInline` handler as paste/drop. Home's native
+picker is the fallback on hosts without a local-file staging path. This keeps
+MIME metadata and the small-inline/large-QDN decision consistent on modern Home.
+The historical host matrix above describes the original P4 implementation.
+
+Verification: `npm test`, `npm run build`, `node scripts/smoke-private-attachments.mjs`,
+`npm run smoke:hub-attachments`, and
+`node scripts/smoke-hub-attachments.mjs --home-stage`. The browser smoke uses synthetic bridge
+responses; it does not claim live wallet, QDN retrieval or native-save acceptance.

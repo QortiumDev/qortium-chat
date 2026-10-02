@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Voorbeeld",
+  "status.attachment.saved": "Bijlage opgeslagen.",
+  "status.attachment.saveCanceled": "Opslaan geannuleerd.",
+  "status.attachment.noImagePreview": "Dit bestand heeft geen afbeeldingsvoorbeeld. Gebruik Openen of Opslaan.",
+
   'app.title': 'Qortium-chat',
   'aria.groupMembers': 'Groepsleden',
   'aria.avatarLightbox': 'Avatarafbeelding',

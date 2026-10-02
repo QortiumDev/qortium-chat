@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "預覽",
+  "status.attachment.saved": "附件已儲存。",
+  "status.attachment.saveCanceled": "已取消儲存。",
+  "status.attachment.noImagePreview": "此檔案沒有圖片預覽。請使用開啟或儲存。",
+
   'app.title': 'Qortium 聊天',
   'aria.groupMembers': '群組成員',
   'aria.avatarLightbox': '頭像圖片',

@@ -53,14 +53,11 @@ import {
   type QdnImageResource,
   type QdnMediaResource,
 } from './messageLinks';
-import { formatAttachmentSize } from './attachments';
+import { MessagePrivateAttachment } from './MessagePrivateAttachment';
 import { inlineImageToFile, type InlineImageFile } from './inlineImageFile';
 import { copyTextToClipboard } from './clipboard';
 import {
-  getChatAttachmentStreamUrl,
   isPrivateAttachmentDescriptor,
-  openChatAttachmentViewer,
-  saveChatAttachment,
   saveFileBytes,
 } from './coreApi';
 import {
@@ -76,7 +73,6 @@ import {
   type ChatMessage,
   type ChatNetwork,
   type ChatScrollPosition,
-  type PrivateAttachmentDescriptor,
   type QdnAction,
   type TrackedTransaction,
 } from './types';
@@ -213,160 +209,6 @@ function MessageImagePreviews({
         </figure>
         );
       })}
-    </div>
-  );
-}
-
-type PrivateAttachmentImageState =
-  | { phase: 'idle' }
-  | { phase: 'loading' }
-  | { message: string; phase: 'error' }
-  | { phase: 'ready'; url: string };
-
-// A private IMAGE attachment's stream URL is a 10-minute, one-shot opaque
-// capability (review/schemas-publish-attachments.md § 4) — never cached, and
-// only fetched once the user asks to see it (same click-gate the public
-// MessageImagePreviews above uses, but this fetches on every reveal rather
-// than once per resource, since the URL itself must not be reused).
-function MessagePrivateAttachmentImage({
-  descriptor,
-  network,
-  onOpen,
-  onOpenImage,
-  onSave,
-  t,
-}: {
-  descriptor: PrivateAttachmentDescriptor;
-  network: ChatNetwork;
-  /** Home's attachment viewer (decrypts, zooms, saves) — null when the host lacks it. */
-  onOpen: (() => void) | null;
-  onOpenImage: (image: AvatarLightboxImage) => void;
-  /** Home's native save dialog for the attachment — null when the host lacks it. */
-  onSave: (() => void) | null;
-  t: TranslateFunction;
-}) {
-  const [state, setState] = useState<PrivateAttachmentImageState>({ phase: 'idle' });
-
-  if (state.phase === 'idle') {
-    return (
-      <button
-        className="message__image-preview-reveal"
-        onClick={() => {
-          setState({ phase: 'loading' });
-
-          void getChatAttachmentStreamUrl(network, descriptor)
-            .then((url) => setState({ phase: 'ready', url }))
-            .catch((error) =>
-              setState({
-                message: error instanceof Error ? error.message : t('status.loadingError.imagePreview'),
-                phase: 'error',
-              }),
-            );
-        }}
-        type="button"
-      >
-        {t('button.viewImagePreview')}
-      </button>
-    );
-  }
-
-  if (state.phase === 'loading') {
-    return <div className="message__image-preview message__image-preview--loading">{t('status.loading.imagePreview')}</div>;
-  }
-
-  if (state.phase === 'error') {
-    return <div className="message__image-preview message__image-preview--error">{state.message}</div>;
-  }
-
-  // Same affordances a file chip has: the image is clickable (lightbox, with
-  // Home's viewer and save behind it) and carries Open/Save of its own, so an
-  // image attachment is never less actionable than a file attachment.
-  const actions = { onOpen: onOpen ?? undefined, onSave: onSave ?? undefined };
-
-  return (
-    <figure className="message__image-preview">
-      <button
-        aria-label={`${t('button.viewImagePreview')}: ${t('label.attachment.image')}`}
-        className="message__image-preview-button"
-        onClick={() => onOpenImage({ actions, alt: t('label.attachment.image'), name: t('label.attachment.image'), src: state.url })}
-        type="button"
-      >
-        <img alt={t('label.attachment.image')} src={state.url} />
-      </button>
-      {onOpen || onSave ? (
-        <div className="message__image-preview-actions">
-          {onOpen ? (
-            <button onClick={onOpen} type="button">
-              {t('button.open')}
-            </button>
-          ) : null}
-          {onSave ? (
-            <button onClick={onSave} type="button">
-              {t('button.save')}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </figure>
-  );
-}
-
-function MessagePrivateAttachments({
-  descriptors,
-  hasAccess,
-  network,
-  onOpen,
-  onOpenImage,
-  onSave,
-  t,
-}: {
-  descriptors: PrivateAttachmentDescriptor[];
-  hasAccess: { save: boolean; stream: boolean; viewer: boolean };
-  network: ChatNetwork;
-  onOpen: (descriptor: PrivateAttachmentDescriptor) => void;
-  onOpenImage: (image: AvatarLightboxImage) => void;
-  onSave: (descriptor: PrivateAttachmentDescriptor) => void;
-  t: TranslateFunction;
-}) {
-  if (descriptors.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="message__private-attachments">
-      {descriptors.map((descriptor, index) => (
-        <div
-          className="message__private-attachment"
-          key={`${descriptor.resource.name}:${descriptor.resource.identifier}:${index}`}
-        >
-          {descriptor.resource.service === 'IMAGE' && hasAccess.stream ? (
-            <MessagePrivateAttachmentImage
-              descriptor={descriptor}
-              network={network}
-              onOpen={hasAccess.viewer ? () => onOpen(descriptor) : null}
-              onOpenImage={onOpenImage}
-              onSave={hasAccess.save ? () => onSave(descriptor) : null}
-              t={t}
-            />
-          ) : (
-            <div className="message__attachment-chip">
-              <span aria-hidden="true">📎</span>
-              <span className="message__attachment-chip-label">{t('label.attachment.file')}</span>
-              <span className="message__attachment-chip-size">{formatAttachmentSize(descriptor.ciphertext.size)}</span>
-              {hasAccess.viewer ? (
-                <button onClick={() => onOpen(descriptor)} type="button">
-                  {t('button.open')}
-                </button>
-              ) : null}
-              {hasAccess.save ? (
-                <button onClick={() => onSave(descriptor)} type="button">
-                  {t('button.save')}
-                </button>
-              ) : null}
-            </div>
-          )}
-        </div>
-      ))}
     </div>
   );
 }
@@ -1965,26 +1807,6 @@ export const MessageList = memo(function MessageList({
     });
   }
 
-  function openPrivateAttachment(privateNetwork: ChatNetwork, descriptor: PrivateAttachmentDescriptor) {
-    void openChatAttachmentViewer(
-      privateNetwork,
-      descriptor,
-      privateNetwork === 'qortal' ? qortalResourceActions : qortiumResourceActions,
-    ).catch((error) => {
-      console.warn('Unable to open chat attachment viewer.', error);
-    });
-  }
-
-  function savePrivateAttachment(privateNetwork: ChatNetwork, descriptor: PrivateAttachmentDescriptor) {
-    void saveChatAttachment(
-      privateNetwork,
-      descriptor,
-      privateNetwork === 'qortal' ? qortalResourceActions : qortiumResourceActions,
-    ).catch((error) => {
-      console.warn('Unable to save chat attachment.', error);
-    });
-  }
-
   if (visibleMessages.length === 0 && systemMessages.length === 0 && groupEvents.length === 0) {
     return <p className="empty">{emptyHint ?? t('hint.noMessages')}</p>;
   }
@@ -2158,11 +1980,6 @@ export const MessageList = memo(function MessageList({
             const privateAttachments = decoded.kind === 'text'
               ? (decoded.attachments ?? []).filter(isPrivateAttachmentDescriptor)
               : [];
-            const privateAttachmentAccess = {
-              save: hasResourceAction(network, 'SAVE_CHAT_ATTACHMENT'),
-              stream: hasResourceAction(network, 'GET_CHAT_ATTACHMENT_STREAM_URL'),
-              viewer: hasResourceAction(network, 'OPEN_CHAT_ATTACHMENT_VIEWER'),
-            };
             const documentResources = decoded.kind === 'text' ? getDocumentQdnResources(decoded.body, network) : [];
             const viewableDocumentResources = documentResources.filter((resource) =>
               hasResourceAction(resource.network, 'OPEN_QDN_DOCUMENT_VIEWER'),
@@ -2397,7 +2214,7 @@ export const MessageList = memo(function MessageList({
                         });
                       },
                     })
-                  ) : imageResources.length > 0 ? null : (
+                  ) : imageResources.length > 0 || privateAttachments.length > 0 ? null : (
                     <span className="message__body-placeholder">
                       {t('message.empty')}
                     </span>
@@ -2413,15 +2230,20 @@ export const MessageList = memo(function MessageList({
                     t={t}
                   />
                 ) : null}
-                <MessagePrivateAttachments
-                  descriptors={privateAttachments}
-                  hasAccess={privateAttachmentAccess}
-                  network={network}
-                  onOpen={(descriptor) => openPrivateAttachment(network, descriptor)}
-                  onOpenImage={onOpenImage}
-                  onSave={(descriptor) => savePrivateAttachment(network, descriptor)}
-                  t={t}
-                />
+                {privateAttachments.length > 0 ? <div className="message__private-attachments">
+                  {privateAttachments.map((descriptor, attachmentIndex) => (
+                    <MessagePrivateAttachment
+                      key={`${selfAddress}:${network}:${latest.signature}:${descriptor.ciphertext.hash}:${attachmentIndex}`}
+                      descriptor={descriptor}
+                      message={latest}
+                      selfAddress={selfAddress}
+                      network={network}
+                      actions={network === 'qortal' ? qortalResourceActions : qortiumResourceActions}
+                      onOpenImage={onOpenImage}
+                      t={t}
+                    />
+                  ))}
+                </div> : null}
                 <MessageReactionChips
                   onToggleReactionDetails={toggleReactionDetails}
                   openReactionDetailsKey={openReactionDetailsKey}

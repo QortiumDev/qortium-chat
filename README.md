@@ -80,7 +80,7 @@ resource.
 ## Versioning
 
 Chat follows the Qortium app versioning standard (QAVS): the current app
-version is 2.0.34, where the `2.0` prefix declares the minimum Qortium platform
+version is 2.0.35, where the `2.0` prefix declares the minimum Qortium platform
 level the app is built against (Qortium Home 2) and the last number is the
 app's own release counter. The build emits a `qortium-app.json` manifest (see
 `vite.config.ts`) that Qortium Home reads from the published root to show the
@@ -174,6 +174,21 @@ proof-of-work — so since 2.0.32 the Send button names each wait ("Preparing",
 the attachment publishes but the message is not sent, its link is folded into
 the draft so pressing Send again never publishes the file twice. Qortal conversations keep
 the attachment path only, since Qortal Hub carries images as QDN resources.
+
+### Fix private attachment viewing (2.0.35)
+
+Received private attachments now send Home the other participant relative to the
+viewer, correcting Open, Save and preview requests for existing messages without
+changing their encrypted files. Preview reads Home's verified content type, so
+images inside `QCHAT_ATTACHMENT_PRIVATE` can be viewed in chat. Non-images retain
+Open/Save. Errors, progress and save results appear beside the attachment, and an
+attachment-only message no longer says "Empty message". Private previews remain
+click-to-load and are released when their message unmounts.
+
+Where Home can stage app-held bytes, the paperclip uses the same original-file
+and inline-image decision as paste/drop. Older picker-only hosts retain their
+native picker. Small Qortium images can travel inside the message; larger ones
+use QDN, with their original bytes preserved.
 
 Since Chat 2.0.34 a sent message no longer sits on "Sending…" for two
 minutes and then fails while re-opening the group shows it confirmed. A

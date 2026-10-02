@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const repoRoot = process.cwd();
+const homeStage = process.argv.includes('--home-stage');
 const previewPort = 4189;
 const cdpPort = 9349;
 const previewUrl = `http://127.0.0.1:${previewPort}/`;
@@ -164,7 +165,11 @@ const bootstrap = `
       window.__hubAttachSmoke.calls.push(JSON.parse(JSON.stringify({ ...request })));
       switch (action) {
         case 'SHOW_ACTIONS':
-          return HUB_ACTIONS;
+          return ${homeStage} ? [...HUB_ACTIONS, 'PUBLISH_CHAT_ATTACHMENT', 'SELECT_QDN_PUBLISH_SOURCE', 'STAGE_QDN_PUBLISH_SOURCE'] : HUB_ACTIONS;
+        case 'SELECT_QDN_PUBLISH_SOURCE':
+          throw new Error('Paperclip must use the same local-file path as paste/drop.');
+        case 'STAGE_QDN_PUBLISH_SOURCE':
+          return { canceled: false, sourceToken: 'fixture-source', fileName: request.fileName, mimeType: request.mimeType, size: atob(request.bytesBase64).length };
         case 'WHICH_UI':
           return 'HUB_ELECTRON';
         case 'IS_USING_PUBLIC_NODE':
@@ -177,7 +182,7 @@ const bootstrap = `
           return [];
         case 'PUBLISH_QDN_RESOURCE':
           // Hub returns the node's transaction response; any resolve = published.
-          return { signature: 'smoke-tx-signature', type: 'ARBITRARY' };
+          return ${homeStage} ? { accepted: true, transactionSignature: 'fixture-publish' } : { signature: 'smoke-tx-signature', type: 'ARBITRARY' };
         case 'SEND_CHAT_MESSAGE':
           return { signature: 'smoke-chat-signature', timestamp: Date.now() };
         default:
@@ -265,6 +270,31 @@ try {
     })()`),
   );
 
+  // Exercise replacement through drag/drop and the paperclip input too.
+  // Qortal always attaches (never inlines); all inputs must preserve the PNG.
+  for (const source of ['drop', 'picker']) {
+    await evaluate(client, `(() => {
+      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNiYGBgAAAABQABp/uV2QAAAABJRU5ErkJggg==';
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([Uint8Array.from(atob(png), c => c.charCodeAt(0))], '${source}.png', {type: 'image/png'}));
+      if ('${source}' === 'picker') {
+        const input = document.querySelector('.composer input[type=file]');
+        const originalClick = input.click;
+        let openedLocalPicker = false;
+        input.click = () => { openedLocalPicker = true; };
+        document.querySelector('.composer__attach').click();
+        input.click = originalClick;
+        if (!openedLocalPicker) throw new Error('Paperclip did not open the local file picker.');
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', {bubbles: true}));
+      } else {
+        document.querySelector('.composer textarea').dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer}));
+      }
+    })()`);
+    await waitUntil(`${source} image staged`, 10000, () => evaluate(client,
+      `document.querySelector('.composer__attachment-name')?.textContent.trim() === '${source}.png' && !!document.querySelector('.composer__attachment-size')?.textContent.trim()`));
+  }
+
   // 3. Send: publish must go out as inline base64 and the message must carry
   //    the use-embed link.
   await evaluate(client, `document.querySelector('.composer button[type="submit"]')?.click()`);
@@ -289,17 +319,24 @@ try {
   );
 
   if (
-    wire.publish.base64Bytes < 10 ||
-    !String(wire.publish.filename).startsWith('tiny') ||
+    (!homeStage && (wire.publish.base64Bytes < 10 || wire.publish.filename !== 'picker.png')) ||
     wire.publish.service !== 'IMAGE' ||
     wire.publish.name !== 'hubuser' ||
     !String(wire.publish.identifier).startsWith('qtm-chat_group_12_') ||
-    wire.publish.hasSourceToken
+    wire.publish.hasSourceToken !== homeStage
   ) {
     throw new Error(`Publish wire shape wrong: ${JSON.stringify(wire.publish)}`);
   }
   if (!wire.sendSerialized.includes('qortal://use-embed/IMAGE?name=hubuser&service=IMAGE&identifier=qtm-chat_group_12_')) {
     throw new Error(`Sent message lacks the use-embed link: ${wire.sendSerialized.slice(0, 400)}`);
+  }
+
+  if (homeStage) {
+    const sources = await evaluate(client, `window.__hubAttachSmoke.calls.filter(c => c.action === 'STAGE_QDN_PUBLISH_SOURCE').map(c => ({name: c.fileName, mime: c.mimeType, bytes: c.bytesBase64}))`);
+    if (sources.length !== 3 || sources.some(s => s.mime !== 'image/png' || s.bytes !== sources[0].bytes)) {
+      throw new Error('Paste/drop/picker did not stage identical original PNG bytes and MIME.');
+    }
+    console.log('PASS: Home stage bridge preserves identical PNG bytes/MIME across paste, drop and paperclip.');
   }
 
   // 4. Link dialog: search any publisher's resources and insert a use-embed link.

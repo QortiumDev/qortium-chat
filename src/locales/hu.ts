@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Előnézet",
+  "status.attachment.saved": "Melléklet mentve.",
+  "status.attachment.saveCanceled": "Mentés megszakítva.",
+  "status.attachment.noImagePreview": "Ehhez a fájlhoz nincs képelőnézet. Használd a Megnyitás vagy Mentés lehetőséget.",
+
   'app.title': 'Qortium Csevegés',
   'aria.groupMembers': 'Csoporttagok',
   'aria.avatarLightbox': 'Avatarkép',
