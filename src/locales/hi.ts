@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "अटैचमेंट प्रकाशित हो रहा है…",
+  "status.attachment.publishing": "आपका अटैचमेंट प्रकाशित हो रहा है। इसमें थोड़ा समय लग सकता है।",
+  "status.attachment.publishPending": "आपका अटैचमेंट प्रकाशित हो रहा है। यदि Home मंज़ूरी माँगे, तो अनुरोध स्वीकार करें। मंज़ूरी के बाद प्रकाशन में थोड़ा समय लग सकता है।",
+
   "button.previewAttachment": "पूर्वावलोकन",
   "status.attachment.saved": "अटैचमेंट सहेजा गया।",
   "status.attachment.saveCanceled": "सहेजना रद्द किया गया।",

@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "正在發布附件…",
+  "status.attachment.publishing": "正在發布你的附件。這可能需要一點時間。",
+  "status.attachment.publishPending": "正在發布你的附件。如果 Home 請求批准，請批准該請求。批准後，發布仍可能需要一點時間。",
+
   "button.previewAttachment": "預覽",
   "status.attachment.saved": "附件已儲存。",
   "status.attachment.saveCanceled": "已取消儲存。",

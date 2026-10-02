@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Bijlage publiceren…",
+  "status.attachment.publishing": "Je bijlage wordt gepubliceerd. Dit kan even duren.",
+  "status.attachment.publishPending": "Je bijlage wordt gepubliceerd. Als Home om toestemming vraagt, keur het verzoek dan goed. Het publiceren kan daarna nog even duren.",
+
   "button.previewAttachment": "Voorbeeld",
   "status.attachment.saved": "Bijlage opgeslagen.",
   "status.attachment.saveCanceled": "Opslaan geannuleerd.",

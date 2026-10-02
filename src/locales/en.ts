@@ -1,4 +1,8 @@
 export const EN_STRINGS = {
+  "button.sending.publishing": "Publishing attachment…",
+  "status.attachment.publishing": "Publishing your attachment. This may take a little while.",
+  "status.attachment.publishPending": "Publishing your attachment. If Home asks for approval, approve its prompt. Publishing may take a little while after approval.",
+
   'app.title': 'Qortium Chat',
   'aria.groupMembers': 'Group members',
   'aria.avatarLightbox': 'Avatar image',

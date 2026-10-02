@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "첨부 파일 게시 중…",
+  "status.attachment.publishing": "첨부 파일을 게시하고 있습니다. 잠시 시간이 걸릴 수 있습니다.",
+  "status.attachment.publishPending": "첨부 파일을 게시하고 있습니다. Home에서 승인을 요청하면 승인해 주세요. 승인 후에도 게시에 시간이 걸릴 수 있습니다.",
+
   "button.previewAttachment": "미리 보기",
   "status.attachment.saved": "첨부 파일을 저장했습니다.",
   "status.attachment.saveCanceled": "저장이 취소되었습니다.",

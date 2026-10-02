@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Julkaistaan liitettä…",
+  "status.attachment.publishing": "Liitettä julkaistaan. Tämä voi kestää hetken.",
+  "status.attachment.publishPending": "Liitettä julkaistaan. Jos Home pyytää hyväksyntää, hyväksy pyyntö. Julkaisu voi kestää hetken hyväksynnän jälkeen.",
+
   "button.previewAttachment": "Esikatselu",
   "status.attachment.saved": "Liite tallennettu.",
   "status.attachment.saveCanceled": "Tallennus peruttu.",

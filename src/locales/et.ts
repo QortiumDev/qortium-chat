@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Manuse avaldamine…",
+  "status.attachment.publishing": "Manust avaldatakse. See võib veidi aega võtta.",
+  "status.attachment.publishPending": "Manust avaldatakse. Kui Home küsib kinnitust, kinnita taotlus. Avaldamine võib pärast kinnitamist veidi aega võtta.",
+
   "button.previewAttachment": "Eelvaade",
   "status.attachment.saved": "Manus salvestatud.",
   "status.attachment.saveCanceled": "Salvestamine tühistatud.",

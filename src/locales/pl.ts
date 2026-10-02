@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Publikowanie załącznika…",
+  "status.attachment.publishing": "Twój załącznik jest publikowany. To może chwilę potrwać.",
+  "status.attachment.publishPending": "Twój załącznik jest publikowany. Jeśli Home poprosi o zgodę, zatwierdź prośbę. Publikowanie może potrwać chwilę po zatwierdzeniu.",
+
   "button.previewAttachment": "Podgląd",
   "status.attachment.saved": "Załącznik zapisany.",
   "status.attachment.saveCanceled": "Zapisywanie anulowane.",

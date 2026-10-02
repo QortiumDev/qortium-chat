@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Melléklet közzététele…",
+  "status.attachment.publishing": "A melléklet közzététele folyamatban van. Ez eltarthat egy ideig.",
+  "status.attachment.publishPending": "A melléklet közzététele folyamatban van. Ha a Home jóváhagyást kér, fogadd el a kérést. A közzététel a jóváhagyás után is eltarthat egy ideig.",
+
   "button.previewAttachment": "Előnézet",
   "status.attachment.saved": "Melléklet mentve.",
   "status.attachment.saveCanceled": "Mentés megszakítva.",

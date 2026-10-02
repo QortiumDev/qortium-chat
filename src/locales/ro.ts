@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Se publică atașamentul…",
+  "status.attachment.publishing": "Se publică atașamentul. Acest lucru poate dura puțin.",
+  "status.attachment.publishPending": "Se publică atașamentul. Dacă Home solicită aprobarea, acceptă cererea. Publicarea poate dura puțin după aprobare.",
+
   "button.previewAttachment": "Previzualizare",
   "status.attachment.saved": "Atașament salvat.",
   "status.attachment.saveCanceled": "Salvare anulată.",

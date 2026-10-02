@@ -1,3 +1,4 @@
+import type { PublishPhase } from './publishProgress';
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -1721,7 +1722,7 @@ export default function App() {
   // seconds to stage and hash before Home can even ask for approval, then the
   // approval itself can sit unnoticed in Home chrome; "Sending" alone left the
   // user (and the owner, 2026-09-16) unable to tell either from a hang.
-  const [sendPhase, setSendPhase] = useState<'idle' | 'preparing' | 'approval' | 'publishing'>('idle');
+  const [sendPhase, setSendPhase] = useState<'idle' | 'pending' | PublishPhase>('idle');
   const [accountRefreshPending, setAccountRefreshPending] = useState(false);
   const accountRefreshPendingRef = useRef(false);
   const accountRefreshGenerationRef = useRef(0);
@@ -6969,6 +6970,9 @@ export default function App() {
         return;
       }
 
+      const onPublishProgress = (phase: PublishPhase) => {
+        if (isCurrentWritablePendingTarget(target, pendingOwnerAddress)) setSendPhase(phase);
+      };
       if (staged) {
         const isOpenGroup = chat.kind === 'group' && chat.group.isOpen !== false;
         const isPrivateConversation =
@@ -6996,11 +7000,9 @@ export default function App() {
               // approval prompt and signs; a rejection throws.
               service = staged.service;
 
-              // Home stages and hashes the bytes (seconds for a large image)
-              // before it can show its approval prompt, then publishes after
-              // approval; the composer names each wait so it never reads as
-              // a hang.
-              setSendPhase('approval');
+              // Only host progress can distinguish approval from publishing.
+              // Older hosts keep the neutral pending message throughout.
+              setSendPhase('pending');
               await publishQdnResourceBytes(
                 attachNetwork,
                 {
@@ -7011,6 +7013,7 @@ export default function App() {
                   service,
                 },
                 attachActions,
+                onPublishProgress,
               );
 
               if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
@@ -7023,11 +7026,12 @@ export default function App() {
             } else {
               service = getAttachmentServiceFromMime(staged.mimeType);
 
-              setSendPhase('approval');
+              setSendPhase('pending');
               const outcome = await publishQdnResource(
                 attachNetwork,
                 { identifier, name: publisherName, service, sourceToken: staged.sourceToken },
                 attachActions,
+                onPublishProgress,
               );
 
               if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
@@ -7061,8 +7065,8 @@ export default function App() {
                 ? { kind: 'direct', otherAddress: chat.direct.address }
                 : { groupId: chat.group.groupId, kind: 'group' };
 
-            setSendPhase('approval');
-            const outcome = await publishChatAttachment(attachNetwork, staged.sourceToken, conversation, attachActions);
+            setSendPhase('pending');
+            const outcome = await publishChatAttachment(attachNetwork, staged.sourceToken, conversation, attachActions, onPublishProgress);
 
             if (!isCurrentWritablePendingTarget(target, pendingOwnerAddress)) {
               return;
@@ -7086,6 +7090,7 @@ export default function App() {
         }
       }
 
+      setSendPhase('idle'); // Publication finished; message sending has its own pending bubble.
       const inlineMarkup = context?.kind !== 'edit' && chat.network !== 'qortal' ? stagedInlineImage?.markup ?? '' : '';
       const withImage = inlineMarkup ? (text ? `${text}\n${inlineMarkup}` : inlineMarkup) : text;
       const bodyText = publishedLink ? (withImage ? `${withImage}\n${publishedLink}` : publishedLink) : withImage;
@@ -12195,14 +12200,20 @@ export default function App() {
                   ? t('button.sending.approval')
                   : sendPhase === 'preparing'
                     ? t('button.sending.preparing')
-                    : t('button.sending')
+                    : sendPhase === 'pending' || sendPhase === 'publishing'
+                      ? t('button.sending.publishing')
+                      : t('button.sending')
               }
               sendPendingNotice={
                 sendPhase === 'approval'
                   ? t('status.attachment.awaitingApproval')
                   : sendPhase === 'preparing'
                     ? t('status.attachment.preparing')
-                    : null
+                    : sendPhase === 'pending'
+                      ? t('status.attachment.publishPending')
+                      : sendPhase === 'publishing'
+                        ? t('status.attachment.publishing')
+                        : null
               }
               sendTitle={
                 selectedChat?.kind === 'direct'

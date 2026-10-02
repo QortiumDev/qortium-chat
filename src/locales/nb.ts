@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Publiserer vedlegg…",
+  "status.attachment.publishing": "Publiserer vedlegget ditt. Dette kan ta litt tid.",
+  "status.attachment.publishPending": "Publiserer vedlegget ditt. Hvis Home ber om godkjenning, godkjenn forespørselen. Publiseringen kan ta litt tid etter godkjenning.",
+
   "button.previewAttachment": "Forhåndsvisning",
   "status.attachment.saved": "Vedlegg lagret.",
   "status.attachment.saveCanceled": "Lagring avbrutt.",

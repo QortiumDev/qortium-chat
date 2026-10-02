@@ -1,3 +1,4 @@
+import { publishRequest, type PublishProgress } from './publishProgress';
 import { buildNodeWebSocketUrl, buildQortalNodeWebSocketUrl, qdnRequest } from './qdnRequest';
 import { bridgeRequest } from './chatNetwork';
 import { sortMessagesByTimestamp } from './messageThreads';
@@ -1107,6 +1108,7 @@ export async function publishQdnResourceBytes(
     service: 'ATTACHMENT' | 'IMAGE';
   },
   actions?: QdnAction[],
+  onProgress?: PublishProgress,
 ): Promise<void> {
   if (!hasBridgeAction(actions, 'PUBLISH_QDN_RESOURCE')) {
     throw new Error('Publishing a QDN resource requires a newer Qortium Home bridge.');
@@ -1124,14 +1126,14 @@ export async function publishQdnResourceBytes(
   assertNotDotSegment('Resource identifier', request.identifier);
   assertQdnPublishTextField('Resource identifier', request.identifier, QDN_PUBLISH_IDENTIFIER_MAX_BYTES);
 
-  const raw = await bridgeRequest<unknown>(network, {
+  const raw = await publishRequest<unknown>(network, {
     action: 'PUBLISH_QDN_RESOURCE',
     base64: request.dataBase64,
     filename: request.fileName,
     identifier: request.identifier,
     name: request.name,
     service: request.service,
-  });
+  }, onProgress);
 
   const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
 
@@ -1260,6 +1262,7 @@ export async function publishQdnResource(
   network: ChatNetwork,
   request: QdnPublishRequest,
   actions?: QdnAction[],
+  onProgress?: PublishProgress,
 ): Promise<QdnPublishOutcome> {
   if (!hasBridgeAction(actions, 'PUBLISH_QDN_RESOURCE')) {
     throw new Error('Publishing a QDN resource requires a newer Qortium Home bridge.');
@@ -1325,7 +1328,7 @@ export async function publishQdnResource(
   if (request.category) wireRequest.category = request.category;
   if (request.tags) wireRequest.tags = request.tags;
 
-  return normalizeQdnPublishOutcome(await bridgeRequest<Record<string, unknown>>(network, wireRequest));
+  return normalizeQdnPublishOutcome(await publishRequest<Record<string, unknown>>(network, wireRequest, onProgress));
 }
 
 // -------- P4a: private chat attachments --------
@@ -1376,6 +1379,7 @@ export async function publishChatAttachment(
   sourceToken: string,
   conversation: PrivateAttachmentConversation,
   actions?: QdnAction[],
+  onProgress?: PublishProgress,
 ): Promise<ChatAttachmentOutcome> {
   if (!hasBridgeAction(actions, 'PUBLISH_CHAT_ATTACHMENT')) {
     throw new Error('Private chat attachments require a newer Qortium Home bridge.');
@@ -1388,11 +1392,11 @@ export async function publishChatAttachment(
   assertPrivateAttachmentConversation(conversation);
 
   return normalizeChatAttachmentOutcome(
-    await bridgeRequest<Record<string, unknown>>(network, {
+    await publishRequest<Record<string, unknown>>(network, {
       action: 'PUBLISH_CHAT_ATTACHMENT',
       conversation,
       sourceToken,
-    }),
+    }, onProgress),
   );
 }
 

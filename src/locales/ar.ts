@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "جارٍ نشر المرفق…",
+  "status.attachment.publishing": "جارٍ نشر المرفق. قد يستغرق ذلك بعض الوقت.",
+  "status.attachment.publishPending": "جارٍ نشر المرفق. إذا طلب Home الموافقة، وافق على الطلب. قد يستغرق النشر بعض الوقت بعد الموافقة.",
+
   "button.previewAttachment": "معاينة",
   "status.attachment.saved": "تم حفظ المرفق.",
   "status.attachment.saveCanceled": "أُلغي الحفظ.",
