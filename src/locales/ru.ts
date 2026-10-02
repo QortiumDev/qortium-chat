@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Предпросмотр",
+  "status.attachment.saved": "Вложение сохранено.",
+  "status.attachment.saveCanceled": "Сохранение отменено.",
+  "status.attachment.noImagePreview": "Для этого файла нет предпросмотра изображения. Используйте Открыть или Сохранить.",
+
   'app.title': 'Чат Qortium',
   'aria.groupMembers': 'Участники группы',
   'aria.avatarLightbox': 'Изображение аватара',

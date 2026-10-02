@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Pré-visualização",
+  "status.attachment.saved": "Anexo guardado.",
+  "status.attachment.saveCanceled": "Gravação cancelada.",
+  "status.attachment.noImagePreview": "Este ficheiro não tem pré-visualização de imagem. Use Abrir ou Guardar.",
+
   'app.title': 'Chat do Qortium',
   'aria.groupMembers': 'Membros do grupo',
   'aria.avatarLightbox': 'Imagem do avatar',

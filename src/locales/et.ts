@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Eelvaade",
+  "status.attachment.saved": "Manus salvestatud.",
+  "status.attachment.saveCanceled": "Salvestamine tühistatud.",
+  "status.attachment.noImagePreview": "Sellel failil pole pildi eelvaadet. Kasuta Ava või Salvesta.",
+
   'app.title': 'Qortium vestlus',
   'aria.groupMembers': 'Grupi liikmed',
   'aria.avatarLightbox': 'Avatari pilt',

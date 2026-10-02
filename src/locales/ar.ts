@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "معاينة",
+  "status.attachment.saved": "تم حفظ المرفق.",
+  "status.attachment.saveCanceled": "أُلغي الحفظ.",
+  "status.attachment.noImagePreview": "لا تتوفر معاينة صورة لهذا الملف. استخدم فتح أو حفظ.",
+
   'app.title': 'دردشة Qortium',
   'aria.groupMembers': 'أعضاء المجموعة',
   'aria.avatarLightbox': 'صورة الصورة الرمزية',

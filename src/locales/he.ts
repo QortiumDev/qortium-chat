@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "תצוגה מקדימה",
+  "status.attachment.saved": "הקובץ המצורף נשמר.",
+  "status.attachment.saveCanceled": "השמירה בוטלה.",
+  "status.attachment.noImagePreview": "אין תצוגה מקדימה של תמונה לקובץ זה. השתמשו בפתיחה או בשמירה.",
+
   'app.title': 'צ׳אט Qortium',
   'aria.groupMembers': 'חברי קבוצה',
   'aria.avatarLightbox': 'תמונת אווטאר',

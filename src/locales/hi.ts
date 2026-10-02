@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "पूर्वावलोकन",
+  "status.attachment.saved": "अटैचमेंट सहेजा गया।",
+  "status.attachment.saveCanceled": "सहेजना रद्द किया गया।",
+  "status.attachment.noImagePreview": "इस फ़ाइल का चित्र पूर्वावलोकन उपलब्ध नहीं है। खोलें या सहेजें का उपयोग करें।",
+
   'app.title': 'Qortium Chat',
   'aria.groupMembers': 'समूह के सदस्य',
   'aria.avatarLightbox': 'अवतार छवि',

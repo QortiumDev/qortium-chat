@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Vorschau",
+  "status.attachment.saved": "Anhang gespeichert.",
+  "status.attachment.saveCanceled": "Speichern abgebrochen.",
+  "status.attachment.noImagePreview": "Für diese Datei ist keine Bildvorschau verfügbar. Verwende Öffnen oder Speichern.",
+
   'app.title': 'Qortium-Chat',
   'aria.groupMembers': 'Gruppenmitglieder',
   'aria.avatarLightbox': 'Avatarbild',

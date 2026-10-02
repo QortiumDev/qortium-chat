@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Podgląd",
+  "status.attachment.saved": "Załącznik zapisany.",
+  "status.attachment.saveCanceled": "Zapisywanie anulowane.",
+  "status.attachment.noImagePreview": "Ten plik nie ma podglądu obrazu. Użyj Otwórz lub Zapisz.",
+
   'app.title': 'Czat Qortium',
   'aria.groupMembers': 'Członkowie grupy',
   'aria.avatarLightbox': 'Obraz awatara',

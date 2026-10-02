@@ -1,4 +1,9 @@
 export const STRINGS = {
+  "button.previewAttachment": "Esikatselu",
+  "status.attachment.saved": "Liite tallennettu.",
+  "status.attachment.saveCanceled": "Tallennus peruttu.",
+  "status.attachment.noImagePreview": "Tiedostolle ei ole kuvan esikatselua. Valitse Avaa tai Tallenna.",
+
   'app.title': 'Qortium-keskustelu',
   'aria.groupMembers': 'Ryhmän jäsenet',
   'aria.avatarLightbox': 'Avatarikuva',

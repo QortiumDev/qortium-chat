@@ -13,6 +13,8 @@ export type AvatarLightboxImage = {
   actions?: {
     onOpen?: () => void;
     onSave?: () => void;
+    /** Return to the message where this action reports progress and errors. */
+    closeOnSave?: boolean;
   };
 };
 
@@ -66,7 +68,10 @@ export function AvatarLightbox({
               </button>
             ) : null}
             {image.actions.onSave ? (
-              <button onClick={() => image.actions?.onSave?.()} type="button">
+              <button onClick={() => {
+                image.actions?.onSave?.();
+                if (image.actions?.closeOnSave) onClose();
+              }} type="button">
                 {t('button.save')}
               </button>
             ) : null}
