@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "添付ファイルを公開中…",
+  "status.attachment.publishing": "添付ファイルを公開しています。少し時間がかかる場合があります。",
+  "status.attachment.publishPending": "添付ファイルを公開しています。Homeで承認を求められた場合は承認してください。承認後も公開に少し時間がかかる場合があります。",
+
   "button.previewAttachment": "プレビュー",
   "status.attachment.saved": "添付ファイルを保存しました。",
   "status.attachment.saveCanceled": "保存をキャンセルしました。",

@@ -175,6 +175,15 @@ the attachment publishes but the message is not sent, its link is folded into
 the draft so pressing Send again never publishes the file twice. Qortal conversations keep
 the attachment path only, since Qortal Hub carries images as QDN resources.
 
+### Show attachment publishing progress (unreleased)
+
+Attachment sends now use Home's request-scoped progress updates to distinguish preparation,
+approval, and publishing. After approval the composer shows “Publishing attachment…” while
+Home finishes its work; the normal pending message takes over once publication returns.
+Older Home versions and Qortal Hub show neutral publishing guidance, without claiming
+that approval is still required. Errors and unknown publication outcomes retain their
+existing handling. Progress messages do not trigger retries or grant permissions.
+
 ### Fix private attachment viewing (2.0.35)
 
 Received private attachments now send Home the other participant relative to the

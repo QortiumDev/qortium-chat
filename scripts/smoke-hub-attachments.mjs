@@ -18,6 +18,8 @@ import path from 'node:path';
 
 const repoRoot = process.cwd();
 const homeStage = process.argv.includes('--home-stage');
+const publishProgress = process.argv.includes('--publish-progress');
+const publishFallback = process.argv.includes('--publish-fallback');
 const previewPort = 4189;
 const cdpPort = 9349;
 const previewUrl = `http://127.0.0.1:${previewPort}/`;
@@ -181,6 +183,9 @@ const bootstrap = `
         case 'SEARCH_CHAT_MESSAGES':
           return [];
         case 'PUBLISH_QDN_RESOURCE':
+          if (${publishProgress || publishFallback}) return new Promise((resolve, reject) => {
+            window.__pendingPublish = { request, resolve, reject };
+          });
           // Hub returns the node's transaction response; any resolve = published.
           return ${homeStage} ? { accepted: true, transactionSignature: 'fixture-publish' } : { signature: 'smoke-tx-signature', type: 'ARBITRARY' };
         case 'SEND_CHAT_MESSAGE':
@@ -298,6 +303,28 @@ try {
   // 3. Send: publish must go out as inline base64 and the message must carry
   //    the use-embed link.
   await evaluate(client, `document.querySelector('.composer button[type="submit"]')?.click()`);
+  if (publishProgress || publishFallback) {
+    await waitUntil('pending publish', 10000, () => evaluate(client, `!!window.__pendingPublish`));
+    await waitUntil('honest fallback notice', 10000, () => evaluate(client,
+      `document.body.textContent.includes('If Home asks for approval') && !document.body.textContent.includes('Waiting for you to approve')`));
+    if (publishProgress) {
+      for (const [phase, expected] of [
+        ['preparing', 'Preparing the attachment for Qortium Home'],
+        ['approval', 'Waiting for you to approve'],
+        ['publishing', 'Publishing your attachment. This may take a little while.'],
+      ]) {
+        await evaluate(client, `window.postMessage({type: 'QDN_PUBLISH_PROGRESS', protocol: 'qortalRequest',
+          progressId: window.__pendingPublish.request.progressId, action: 'PUBLISH_QDN_RESOURCE', phase: '${phase}'}, '*')`);
+        await waitUntil(phase + ' notice', 10000, () => evaluate(client, `document.body.textContent.includes(${JSON.stringify(expected)})`));
+      }
+      const correct = await evaluate(client, `!document.body.textContent.includes('Waiting for you to approve') &&
+        !window.__hubAttachSmoke.calls.some(call => call.action === 'SEND_CHAT_MESSAGE')`);
+      if (!correct) throw Error('Post-approval status must change while publication is still pending.');
+      const capture = await client.send('Page.captureScreenshot', { format: 'png' });
+      writeFileSync(path.join(tmpdir(), 'qortium-chat-publish-progress.png'), Buffer.from(capture.data, 'base64'));
+    }
+    await evaluate(client, `window.__pendingPublish.resolve({ accepted: true, transactionSignature: 'fixture-publish' })`);
+  }
   const wire = await waitUntil('publish + send captured', 15_000, async () =>
     evaluate(client, `(() => {
       const calls = window.__hubAttachSmoke.calls;

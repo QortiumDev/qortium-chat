@@ -198,3 +198,18 @@ Verification: `npm test`, `npm run build`, `node scripts/smoke-private-attachmen
 `npm run smoke:hub-attachments`, and
 `node scripts/smoke-hub-attachments.mjs --home-stage`. The browser smoke uses synthetic bridge
 responses; it does not claim live wallet, QDN retrieval or native-save acceptance.
+
+## Publishing progress
+
+Chat adds a random `progressId` to attachment `PUBLISH_QDN_RESOURCE` and
+`PUBLISH_CHAT_ATTACHMENT` requests. Home may post `QDN_PUBLISH_PROGRESS` with the
+same `progressId`, `protocol` (`qdnRequest` or `qortalRequest`), `action`, and
+`phase` (`preparing`, `approval`, `publishing`). Chat listens only for the duration
+of that request, accepts its own window (desktop preload) or its parent (Android
+Home), and ignores mismatched, duplicate, regressive, and late events.
+
+The final bridge response remains authoritative. An event means neither success
+nor permission to resend. Hosts without these events keep the neutral publishing
+notice; Chat never estimates approval from elapsed time. Test the built composer
+with `node scripts/smoke-hub-attachments.mjs --home-stage --publish-progress` and
+`--publish-fallback` for a host without progress support.

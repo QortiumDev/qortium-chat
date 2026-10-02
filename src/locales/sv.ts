@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Publicerar bilaga…",
+  "status.attachment.publishing": "Publicerar din bilaga. Det kan ta en liten stund.",
+  "status.attachment.publishPending": "Publicerar din bilaga. Om Home ber om godkännande, godkänn begäran. Publiceringen kan ta en stund efter godkännandet.",
+
   "button.previewAttachment": "Förhandsvisning",
   "status.attachment.saved": "Bilagan sparad.",
   "status.attachment.saveCanceled": "Sparandet avbröts.",

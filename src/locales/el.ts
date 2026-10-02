@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Δημοσίευση συνημμένου…",
+  "status.attachment.publishing": "Το συνημμένο δημοσιεύεται. Αυτό μπορεί να πάρει λίγο χρόνο.",
+  "status.attachment.publishPending": "Το συνημμένο δημοσιεύεται. Αν το Home ζητήσει έγκριση, εγκρίνετε το αίτημα. Η δημοσίευση μπορεί να πάρει λίγο χρόνο μετά την έγκριση.",
+
   "button.previewAttachment": "Προεπισκόπηση",
   "status.attachment.saved": "Το συνημμένο αποθηκεύτηκε.",
   "status.attachment.saveCanceled": "Η αποθήκευση ακυρώθηκε.",

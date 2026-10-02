@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Публикация вложения…",
+  "status.attachment.publishing": "Ваше вложение публикуется. Это может занять некоторое время.",
+  "status.attachment.publishPending": "Ваше вложение публикуется. Если Home запросит разрешение, подтвердите запрос. Публикация может занять некоторое время после подтверждения.",
+
   "button.previewAttachment": "Предпросмотр",
   "status.attachment.saved": "Вложение сохранено.",
   "status.attachment.saveCanceled": "Сохранение отменено.",

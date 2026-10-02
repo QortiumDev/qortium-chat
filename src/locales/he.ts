@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "מפרסם קובץ מצורף…",
+  "status.attachment.publishing": "הקובץ המצורף מתפרסם. הפעולה עשויה להימשך זמן מה.",
+  "status.attachment.publishPending": "הקובץ המצורף מתפרסם. אם Home מבקש אישור, אשרו את הבקשה. הפרסום עשוי להימשך זמן מה לאחר האישור.",
+
   "button.previewAttachment": "תצוגה מקדימה",
   "status.attachment.saved": "הקובץ המצורף נשמר.",
   "status.attachment.saveCanceled": "השמירה בוטלה.",

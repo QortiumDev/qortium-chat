@@ -1,4 +1,8 @@
 export const STRINGS = {
+  "button.sending.publishing": "Publication de la pièce jointe…",
+  "status.attachment.publishing": "Publication de votre pièce jointe. Cela peut prendre un moment.",
+  "status.attachment.publishPending": "Publication de votre pièce jointe. Si Home demande une autorisation, acceptez la demande. La publication peut prendre un moment après votre accord.",
+
   "button.previewAttachment": "Aperçu",
   "status.attachment.saved": "Pièce jointe enregistrée.",
   "status.attachment.saveCanceled": "Enregistrement annulé.",
